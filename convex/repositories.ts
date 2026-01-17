@@ -1,10 +1,18 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { auth } from "./auth";
 
 // List all repositories for a user
 export const list = query({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
+    // Authorization check: verify the caller owns this userId
+    // For queries, return empty array if not authorized (don't throw)
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId || authenticatedUserId !== args.userId) {
+      return [];
+    }
+
     return await ctx.db
       .query("repositories")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
@@ -16,7 +24,17 @@ export const list = query({
 export const get = query({
   args: { id: v.id("repositories") },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.id);
+    // Authorization check: verify the caller owns this repository
+    // For queries, return null if not authorized (don't throw)
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId) {
+      return null;
+    }
+    const repository = await ctx.db.get(args.id);
+    if (!repository || repository.userId !== authenticatedUserId) {
+      return null;
+    }
+    return repository;
   },
 });
 
@@ -24,8 +42,16 @@ export const get = query({
 export const getWithTrackedFiles = query({
   args: { id: v.id("repositories") },
   handler: async (ctx, args) => {
+    // Authorization check: verify the caller owns this repository
+    // For queries, return null if not authorized (don't throw)
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId) {
+      return null;
+    }
     const repository = await ctx.db.get(args.id);
-    if (!repository) return null;
+    if (!repository || repository.userId !== authenticatedUserId) {
+      return null;
+    }
 
     const trackedFiles = await ctx.db
       .query("trackedFiles")
@@ -36,15 +62,26 @@ export const getWithTrackedFiles = query({
   },
 });
 
-// Parse GitHub URL to extract owner and repo name
-function parseGitUrl(url: string): { owner: string; repo: string; provider: "github" | "gitlab" | "overleaf" | "generic" } {
+// Parse Git URL to extract owner and repo name
+// Only accepts known providers (GitHub, GitLab, Overleaf) to prevent arbitrary URL injection
+function parseGitUrl(url: string): { owner: string; repo: string; provider: "github" | "gitlab" | "overleaf" | "selfhosted-gitlab" } {
+  // Validate URL format first
+  try {
+    const parsed = new URL(url);
+    if (!["https:", "http:"].includes(parsed.protocol)) {
+      throw new Error("Invalid git URL: Only HTTP(S) URLs are supported");
+    }
+  } catch {
+    throw new Error("Invalid git URL format");
+  }
+
   // GitHub: https://github.com/owner/repo or git@github.com:owner/repo.git
   const githubMatch = url.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(\.git)?$/);
   if (githubMatch) {
     return { owner: githubMatch[1], repo: githubMatch[2], provider: "github" };
   }
 
-  // GitLab: https://gitlab.com/owner/repo
+  // GitLab.com: https://gitlab.com/owner/repo
   const gitlabMatch = url.match(/gitlab\.com[/:]([\w-]+)\/([\w.-]+?)(\.git)?$/);
   if (gitlabMatch) {
     return { owner: gitlabMatch[1], repo: gitlabMatch[2], provider: "gitlab" };
@@ -56,13 +93,14 @@ function parseGitUrl(url: string): { owner: string; repo: string; provider: "git
     return { owner: "overleaf", repo: overleafMatch[1], provider: "overleaf" };
   }
 
-  // Generic git URL
-  const genericMatch = url.match(/\/([\w.-]+?)(\.git)?$/);
-  if (genericMatch) {
-    return { owner: "unknown", repo: genericMatch[1], provider: "generic" };
+  // Self-hosted GitLab: Check if it looks like a GitLab-style URL (has /owner/repo pattern)
+  // This will be validated against configured instances in the git.ts module
+  const selfHostedMatch = url.match(/https:\/\/[^/]+\/([\w-]+)\/([\w.-]+?)(\.git)?$/);
+  if (selfHostedMatch) {
+    return { owner: selfHostedMatch[1], repo: selfHostedMatch[2], provider: "selfhosted-gitlab" };
   }
 
-  throw new Error("Invalid git URL");
+  throw new Error("Invalid git URL. Supported providers: GitHub, GitLab, Overleaf, or configured self-hosted GitLab instances.");
 }
 
 // Add a new repository
@@ -74,6 +112,12 @@ export const add = mutation({
     defaultBranch: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // Authorization check: verify the caller owns this userId
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId || authenticatedUserId !== args.userId) {
+      throw new Error("Unauthorized");
+    }
+
     const parsed = parseGitUrl(args.gitUrl);
 
     const repositoryId = await ctx.db.insert("repositories", {
@@ -102,6 +146,16 @@ export const update = mutation({
     lastCommitHash: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // Authorization check: verify the caller owns this repository
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
+    const repository = await ctx.db.get(args.id);
+    if (!repository || repository.userId !== authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
+
     const { id, ...updates } = args;
     // Filter out undefined values
     const filteredUpdates = Object.fromEntries(
@@ -115,6 +169,16 @@ export const update = mutation({
 export const remove = mutation({
   args: { id: v.id("repositories") },
   handler: async (ctx, args) => {
+    // Authorization check: verify the caller owns this repository
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
+    const repository = await ctx.db.get(args.id);
+    if (!repository || repository.userId !== authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
+
     // Delete tracked files
     const trackedFiles = await ctx.db
       .query("trackedFiles")
@@ -156,6 +220,16 @@ export const addTrackedFile = mutation({
     releasePattern: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // Authorization check: verify the caller owns this repository
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.userId !== authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
+
     const trackedFileId = await ctx.db.insert("trackedFiles", {
       repositoryId: args.repositoryId,
       filePath: args.filePath,
@@ -190,6 +264,20 @@ export const addTrackedFile = mutation({
 export const removeTrackedFile = mutation({
   args: { id: v.id("trackedFiles") },
   handler: async (ctx, args) => {
+    // Authorization check: verify the caller owns this tracked file's repository
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
+    const trackedFile = await ctx.db.get(args.id);
+    if (!trackedFile) {
+      throw new Error("Tracked file not found");
+    }
+    const repository = await ctx.db.get(trackedFile.repositoryId);
+    if (!repository || repository.userId !== authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
+
     // Delete associated papers
     const papers = await ctx.db
       .query("papers")

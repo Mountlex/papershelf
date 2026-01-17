@@ -4,6 +4,7 @@ import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { useUser } from "../hooks/useUser";
+import { ConfirmDialog, Toast } from "../components/ConfirmDialog";
 
 export const Route = createFileRoute("/repositories")({
   component: RepositoriesPage,
@@ -17,13 +18,49 @@ function RepositoriesPage() {
   );
   const addRepository = useMutation(api.repositories.add);
   const removeRepository = useMutation(api.repositories.remove);
+  const updateRepository = useMutation(api.repositories.update);
   const syncRepository = useAction(api.sync.syncRepository);
-  const fetchRepoInfo = useAction(api.sync.fetchRepoInfo);
-  const listUserRepos = useAction(api.sync.listUserRepos);
-  const listRepositoryFiles = useAction(api.sync.listRepositoryFiles);
+  const syncPaper = useAction(api.sync.syncPaper);
+  const fetchRepoInfo = useAction(api.git.fetchRepoInfo);
+  const listUserRepos = useAction(api.git.listUserRepos);
+  const listRepositoryFiles = useAction(api.git.listRepositoryFiles);
   const addTrackedFile = useMutation(api.papers.addTrackedFile);
 
+  // Overleaf credential management
+  const hasOverleafCreds = useQuery(api.users.hasOverleafCredentials);
+  const saveOverleafCredentials = useMutation(api.users.saveOverleafCredentials);
+  const clearOverleafCredentials = useMutation(api.users.clearOverleafCredentials);
+
+  // Self-hosted GitLab instance management (multiple instances)
+  const selfHostedGitLabInstances = useQuery(api.users.getSelfHostedGitLabInstances);
+  const addSelfHostedGitLabInstance = useMutation(api.users.addSelfHostedGitLabInstance);
+  const deleteSelfHostedGitLabInstance = useMutation(api.users.deleteSelfHostedGitLabInstance);
+
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+
+  // Overleaf setup state
+  const [showOverleafSetup, setShowOverleafSetup] = useState(false);
+  const [overleafEmail, setOverleafEmail] = useState("");
+  const [overleafToken, setOverleafToken] = useState("");
+  const [isSavingOverleaf, setIsSavingOverleaf] = useState(false);
+  const [overleafError, setOverleafError] = useState<string | null>(null);
+  const [overleafGitUrl, setOverleafGitUrl] = useState("");
+  const [isAddingOverleaf, setIsAddingOverleaf] = useState(false);
+
+  // Self-hosted GitLab setup state (for adding new instances)
+  const [showSelfHostedGitLabSetup, setShowSelfHostedGitLabSetup] = useState(false);
+  const [selfHostedGitLabName, setSelfHostedGitLabName] = useState("");
+  const [selfHostedGitLabUrlInput, setSelfHostedGitLabUrlInput] = useState("");
+  const [selfHostedGitLabToken, setSelfHostedGitLabToken] = useState("");
+  const [isSavingSelfHostedGitLab, setIsSavingSelfHostedGitLab] = useState(false);
+  const [selfHostedGitLabError, setSelfHostedGitLabError] = useState<string | null>(null);
+  const [selfHostedGitLabRepoUrl, setSelfHostedGitLabRepoUrl] = useState("");
+  const [isAddingSelfHostedGitLab, setIsAddingSelfHostedGitLab] = useState(false);
+  const [selectedSelfHostedInstance, setSelectedSelfHostedInstance] = useState<string | null>(null);
+
+  // Inline edit state for repository name
+  const [editingRepoId, setEditingRepoId] = useState<Id<"repositories"> | null>(null);
+  const [editingRepoName, setEditingRepoName] = useState("");
 
   // Configure modal state
   const [configureRepo, setConfigureRepo] = useState<{
@@ -61,6 +98,18 @@ function RepositoriesPage() {
   }> | null>(null);
   const [isLoadingRepos, setIsLoadingRepos] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
+
+  // Confirm dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    variant: "danger" | "warning" | "default";
+    onConfirm: () => void | Promise<void>;
+  }>({ isOpen: false, title: "", message: "", variant: "default", onConfirm: () => {} });
+
+  // Toast state
+  const [toast, setToast] = useState<{ message: string; type: "error" | "success" | "info" } | null>(null);
 
   // Load user repos when modal opens
   useEffect(() => {
@@ -111,6 +160,33 @@ function RepositoriesPage() {
     }
   };
 
+  const handleAddOverleafRepository = async () => {
+    if (!user || !overleafGitUrl.trim()) return;
+
+    setIsAddingOverleaf(true);
+    setAddError(null);
+    try {
+      // Fetch repo info to verify access and get default branch
+      const repoInfo = await fetchRepoInfo({ gitUrl: overleafGitUrl.trim() });
+
+      await addRepository({
+        userId: user._id,
+        gitUrl: overleafGitUrl.trim(),
+        name: repoInfo.name,
+        defaultBranch: repoInfo.defaultBranch,
+      });
+      setIsAddModalOpen(false);
+      setOverleafGitUrl("");
+      setRepoSearch("");
+    } catch (error) {
+      console.error("Failed to add Overleaf repository:", error);
+      const message = error instanceof Error ? error.message : "Failed to add Overleaf repository";
+      setAddError(message);
+    } finally {
+      setIsAddingOverleaf(false);
+    }
+  };
+
   const handleAddFromList = async (repo: {
     url: string;
     name: string;
@@ -144,19 +220,28 @@ function RepositoriesPage() {
       await syncRepository({ repositoryId: repoId });
     } catch (error) {
       console.error("Failed to sync repository:", error);
-      alert("Failed to sync repository.");
+      setToast({ message: "Failed to sync repository.", type: "error" });
     } finally {
       setSyncingRepoId(null);
     }
   };
 
-  const handleDelete = async (repoId: Id<"repositories">) => {
-    if (!confirm("Are you sure you want to delete this repository?")) return;
-    try {
-      await removeRepository({ id: repoId });
-    } catch (error) {
-      console.error("Failed to delete repository:", error);
-    }
+  const handleDelete = (repoId: Id<"repositories">) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: "Delete Repository",
+      message: "Are you sure you want to delete this repository? This will also remove all tracked papers from this repository.",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          await removeRepository({ id: repoId });
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        } catch (error) {
+          console.error("Failed to delete repository:", error);
+          setToast({ message: "Failed to delete repository.", type: "error" });
+        }
+      },
+    });
   };
 
   // Configure modal handlers
@@ -222,22 +307,189 @@ function RepositoriesPage() {
 
     setIsAddingFiles(true);
     try {
+      const paperIds: string[] = [];
       for (const file of selectedFiles) {
-        await addTrackedFile({
+        const result = await addTrackedFile({
           repositoryId: configureRepo._id,
           filePath: file.path,
           title: file.title,
           pdfSourceType: file.pdfSourceType,
         });
+        paperIds.push(result.paperId);
       }
       setConfigureRepo(null);
       setSelectedFiles([]);
+
+      // Auto-sync each paper in the background (don't block UI)
+      for (const paperId of paperIds) {
+        syncPaper({ paperId: paperId as Id<"papers"> }).catch((error) => {
+          console.error("Failed to sync paper:", error);
+        });
+      }
     } catch (error) {
       console.error("Failed to add tracked files:", error);
-      alert("Failed to add files. Please try again.");
+      setToast({ message: "Failed to add files. Please try again.", type: "error" });
     } finally {
       setIsAddingFiles(false);
     }
+  };
+
+  // Overleaf credential handlers
+  const handleSaveOverleafCredentials = async () => {
+    if (!overleafEmail.trim() || !overleafToken.trim()) {
+      setOverleafError("Please enter both email and token");
+      return;
+    }
+
+    setIsSavingOverleaf(true);
+    setOverleafError(null);
+    try {
+      await saveOverleafCredentials({
+        email: overleafEmail.trim(),
+        token: overleafToken.trim(),
+      });
+      setShowOverleafSetup(false);
+      setOverleafEmail("");
+      setOverleafToken("");
+    } catch (error) {
+      console.error("Failed to save Overleaf credentials:", error);
+      setOverleafError("Failed to save credentials");
+    } finally {
+      setIsSavingOverleaf(false);
+    }
+  };
+
+  const handleClearOverleafCredentials = () => {
+    setConfirmDialog({
+      isOpen: true,
+      title: "Disconnect Overleaf",
+      message: "Are you sure you want to disconnect your Overleaf account? You will need to re-enter your credentials to access Overleaf projects.",
+      variant: "warning",
+      onConfirm: async () => {
+        try {
+          await clearOverleafCredentials();
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        } catch (error) {
+          console.error("Failed to clear Overleaf credentials:", error);
+          setToast({ message: "Failed to disconnect Overleaf account.", type: "error" });
+        }
+      },
+    });
+  };
+
+  // Self-hosted GitLab handlers
+  const handleAddSelfHostedGitLabRepository = async () => {
+    if (!user || !selfHostedGitLabRepoUrl.trim()) return;
+
+    setIsAddingSelfHostedGitLab(true);
+    setAddError(null);
+    try {
+      // Fetch repo info to verify access and get default branch
+      const repoInfo = await fetchRepoInfo({ gitUrl: selfHostedGitLabRepoUrl.trim() });
+
+      await addRepository({
+        userId: user._id,
+        gitUrl: selfHostedGitLabRepoUrl.trim(),
+        name: repoInfo.name,
+        defaultBranch: repoInfo.defaultBranch,
+      });
+      setIsAddModalOpen(false);
+      setSelfHostedGitLabRepoUrl("");
+      setRepoSearch("");
+    } catch (error) {
+      console.error("Failed to add self-hosted GitLab repository:", error);
+      const message = error instanceof Error ? error.message : "Failed to add self-hosted GitLab repository";
+      setAddError(message);
+    } finally {
+      setIsAddingSelfHostedGitLab(false);
+    }
+  };
+
+  const handleAddSelfHostedGitLabInstance = async () => {
+    if (!selfHostedGitLabName.trim()) {
+      setSelfHostedGitLabError("Please enter a name for this instance");
+      return;
+    }
+    if (!selfHostedGitLabUrlInput.trim() || !selfHostedGitLabToken.trim()) {
+      setSelfHostedGitLabError("Please enter both instance URL and token");
+      return;
+    }
+
+    // Validate URL format
+    try {
+      new URL(selfHostedGitLabUrlInput.trim());
+    } catch {
+      setSelfHostedGitLabError("Please enter a valid URL (e.g., https://gitlab.mycompany.com)");
+      return;
+    }
+
+    setIsSavingSelfHostedGitLab(true);
+    setSelfHostedGitLabError(null);
+    try {
+      await addSelfHostedGitLabInstance({
+        name: selfHostedGitLabName.trim(),
+        url: selfHostedGitLabUrlInput.trim(),
+        token: selfHostedGitLabToken.trim(),
+      });
+      setShowSelfHostedGitLabSetup(false);
+      setSelfHostedGitLabName("");
+      setSelfHostedGitLabUrlInput("");
+      setSelfHostedGitLabToken("");
+    } catch (error) {
+      console.error("Failed to add self-hosted GitLab instance:", error);
+      const message = error instanceof Error ? error.message : "Failed to add instance";
+      setSelfHostedGitLabError(message);
+    } finally {
+      setIsSavingSelfHostedGitLab(false);
+    }
+  };
+
+  const handleDeleteSelfHostedGitLabInstance = (instanceId: Id<"selfHostedGitLabInstances">, instanceName: string) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: "Delete GitLab Instance",
+      message: `Are you sure you want to delete "${instanceName}"? You will need to re-add this instance to access its repositories.`,
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          await deleteSelfHostedGitLabInstance({ id: instanceId });
+          // Clear selection if we deleted the selected instance
+          if (selectedSelfHostedInstance === instanceId) {
+            setSelectedSelfHostedInstance(null);
+            setSelfHostedGitLabRepoUrl("");
+          }
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        } catch (error) {
+          console.error("Failed to delete self-hosted GitLab instance:", error);
+          setToast({ message: "Failed to delete GitLab instance.", type: "error" });
+        }
+      },
+    });
+  };
+
+  // Repository name edit handlers
+  const startEditingRepoName = (repoId: Id<"repositories">, currentName: string) => {
+    setEditingRepoId(repoId);
+    setEditingRepoName(currentName);
+  };
+
+  const saveRepoName = async () => {
+    if (!editingRepoId || !editingRepoName.trim()) return;
+    try {
+      await updateRepository({
+        id: editingRepoId,
+        name: editingRepoName.trim(),
+      });
+    } catch (error) {
+      console.error("Failed to update repository name:", error);
+    }
+    setEditingRepoId(null);
+    setEditingRepoName("");
+  };
+
+  const cancelEditingRepoName = () => {
+    setEditingRepoId(null);
+    setEditingRepoName("");
   };
 
   if (isUserLoading) {
@@ -303,7 +555,7 @@ function RepositoriesPage() {
             No repositories connected
           </h3>
           <p className="mb-4 text-sm text-gray-500">
-            Add a GitHub repository to start tracking your LaTeX papers.
+            Add a GitHub, GitLab, or Overleaf repository to start tracking your LaTeX papers.
           </p>
           <button
             onClick={() => {
@@ -340,9 +592,52 @@ function RepositoriesPage() {
                       />
                     </svg>
                   </div>
-                  <div>
-                    <h3 className="font-medium text-gray-900">{repo.name}</h3>
-                    <p className="text-sm text-gray-500">{repo.gitUrl}</p>
+                  <div className="min-w-0 flex-1">
+                    {editingRepoId === repo._id ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={editingRepoName}
+                          onChange={(e) => setEditingRepoName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") saveRepoName();
+                            if (e.key === "Escape") cancelEditingRepoName();
+                          }}
+                          autoFocus
+                          className="w-full rounded border border-blue-300 px-2 py-1 text-sm font-medium focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                        <button
+                          onClick={saveRepoName}
+                          className="rounded p-1 text-green-600 hover:bg-green-50"
+                          title="Save"
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={cancelEditingRepoName}
+                          className="rounded p-1 text-gray-400 hover:bg-gray-100"
+                          title="Cancel"
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => startEditingRepoName(repo._id, repo.name)}
+                        className="group flex items-center gap-1 text-left"
+                        title="Click to edit name"
+                      >
+                        <h3 className="font-medium text-gray-900">{repo.name}</h3>
+                        <svg className="h-3 w-3 text-gray-400 opacity-0 group-hover:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
+                    )}
+                    <p className="text-sm text-gray-500 truncate">{repo.gitUrl}</p>
                     <div className="mt-2 flex items-center space-x-4 text-xs text-gray-400">
                       <span className="capitalize">{repo.provider}</span>
                       <span>Branch: {repo.defaultBranch}</span>
@@ -459,6 +754,8 @@ function RepositoriesPage() {
                   setIsAddModalOpen(false);
                   setAddError(null);
                   setRepoSearch("");
+                  setOverleafGitUrl("");
+                  setSelfHostedGitLabRepoUrl("");
                 }}
                 className="text-gray-400 hover:text-gray-600"
               >
@@ -557,8 +854,179 @@ function RepositoriesPage() {
               )}
             </div>
 
+            {/* Overleaf Section */}
             <div className="border-t p-4">
-              <p className="mb-2 text-xs text-gray-500">Or enter a URL manually:</p>
+              <div className="mb-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <svg className="h-5 w-5 text-green-600" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                  </svg>
+                  <span className="text-sm font-medium text-gray-700">Overleaf</span>
+                </div>
+                {hasOverleafCreds ? (
+                  <button
+                    onClick={handleClearOverleafCredentials}
+                    className="text-xs text-red-600 hover:text-red-700"
+                  >
+                    Disconnect
+                  </button>
+                ) : null}
+              </div>
+
+              {hasOverleafCreds ? (
+                <div>
+                  <p className="mb-2 text-xs text-gray-500">
+                    Enter your Overleaf Git URL (find it in your project's Git menu):
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={overleafGitUrl}
+                      onChange={(e) => {
+                        setOverleafGitUrl(e.target.value);
+                        setAddError(null);
+                      }}
+                      placeholder="https://git.overleaf.com/abc123def456..."
+                      className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !isAddingOverleaf && overleafGitUrl.trim()) {
+                          handleAddOverleafRepository();
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={handleAddOverleafRepository}
+                      disabled={isAddingOverleaf || !overleafGitUrl.trim()}
+                      className="shrink-0 rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {isAddingOverleaf ? "Adding..." : "Add"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    setShowOverleafSetup(true);
+                    setOverleafError(null);
+                    setOverleafEmail("");
+                    setOverleafToken("");
+                  }}
+                  className="w-full rounded-md border border-green-300 bg-green-50 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-100"
+                >
+                  Connect Overleaf Account
+                </button>
+              )}
+            </div>
+
+            {/* Self-hosted GitLab Section */}
+            <div className="border-t p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <svg className="h-5 w-5 text-[#554488]" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M4.845.904c-.435 0-.82.28-.955.692C2.639 5.449 1.246 9.728.07 13.335a1.437 1.437 0 00.522 1.607l11.071 8.045c.2.145.472.144.67-.004l11.073-8.04a1.436 1.436 0 00.522-1.61c-1.285-3.942-2.683-8.256-3.817-11.746a1.004 1.004 0 00-.957-.684.987.987 0 00-.949.69l-2.405 7.408H8.203l-2.41-7.408a.987.987 0 00-.942-.69h-.006z" />
+                  </svg>
+                  <span className="text-sm font-medium text-gray-700">Self-Hosted GitLab</span>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowSelfHostedGitLabSetup(true);
+                    setSelfHostedGitLabError(null);
+                    setSelfHostedGitLabName("");
+                    setSelfHostedGitLabUrlInput("");
+                    setSelfHostedGitLabToken("");
+                  }}
+                  className="text-xs text-[#554488] hover:text-[#443377]"
+                >
+                  + Add Instance
+                </button>
+              </div>
+
+              {selfHostedGitLabInstances && selfHostedGitLabInstances.length > 0 ? (
+                <div className="space-y-2">
+                  {/* Instance selector and repo URL input */}
+                  <div className="space-y-2">
+                    {selfHostedGitLabInstances.map((instance) => (
+                      <div
+                        key={instance._id}
+                        className={`flex items-center justify-between rounded-md border p-2 ${
+                          selectedSelfHostedInstance === instance._id
+                            ? "border-[#554488] bg-[#554488]/5"
+                            : "border-gray-200 hover:border-gray-300"
+                        }`}
+                      >
+                        <button
+                          onClick={() => setSelectedSelfHostedInstance(
+                            selectedSelfHostedInstance === instance._id ? null : instance._id
+                          )}
+                          className="flex flex-1 items-center gap-2 text-left"
+                        >
+                          <input
+                            type="radio"
+                            checked={selectedSelfHostedInstance === instance._id}
+                            onChange={() => {}}
+                            className="h-4 w-4 text-[#554488]"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-gray-900">{instance.name}</p>
+                            <p className="truncate text-xs text-gray-500">{instance.url}</p>
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSelfHostedGitLabInstance(instance._id, instance.name)}
+                          className="ml-2 shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                          title="Delete instance"
+                        >
+                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Repo URL input (shown when an instance is selected) */}
+                  {selectedSelfHostedInstance && (
+                    <div className="mt-3">
+                      <p className="mb-2 text-xs text-gray-500">
+                        Enter repository URL from {selfHostedGitLabInstances.find(i => i._id === selectedSelfHostedInstance)?.name}:
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={selfHostedGitLabRepoUrl}
+                          onChange={(e) => {
+                            setSelfHostedGitLabRepoUrl(e.target.value);
+                            setAddError(null);
+                          }}
+                          placeholder={`${selfHostedGitLabInstances.find(i => i._id === selectedSelfHostedInstance)?.url}/owner/repo`}
+                          className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !isAddingSelfHostedGitLab && selfHostedGitLabRepoUrl.trim()) {
+                              handleAddSelfHostedGitLabRepository();
+                            }
+                          }}
+                        />
+                        <button
+                          onClick={handleAddSelfHostedGitLabRepository}
+                          disabled={isAddingSelfHostedGitLab || !selfHostedGitLabRepoUrl.trim()}
+                          className="shrink-0 rounded-md bg-[#554488] px-4 py-2 text-sm font-medium text-white hover:bg-[#443377] disabled:opacity-50"
+                        >
+                          {isAddingSelfHostedGitLab ? "Adding..." : "Add"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-center text-xs text-gray-500">
+                  No self-hosted GitLab instances configured.
+                </p>
+              )}
+            </div>
+
+            {/* Manual URL Input */}
+            <div className="border-t p-4">
+              <p className="mb-2 text-xs text-gray-500">Or enter a GitHub/GitLab URL manually:</p>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -567,7 +1035,7 @@ function RepositoriesPage() {
                     setGitUrl(e.target.value);
                     setAddError(null);
                   }}
-                  placeholder="https://github.com/username/repo"
+                  placeholder="https://github.com/user/repo or https://gitlab.com/user/repo"
                   className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !isAdding && gitUrl.trim()) {
@@ -586,6 +1054,186 @@ function RepositoriesPage() {
               {addError && (
                 <p className="mt-2 text-sm text-red-600">{addError}</p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Overleaf Credentials Modal */}
+      {showOverleafSetup && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">Connect Overleaf Account</h3>
+              <button
+                onClick={() => setShowOverleafSetup(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <p className="mb-4 text-sm text-gray-600">
+              To access your Overleaf projects, you'll need your Overleaf email and a Git token.
+              You can generate a Git token in your{" "}
+              <a
+                href="https://www.overleaf.com/user/settings"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                Overleaf Account Settings
+              </a>{" "}
+              under "Git Integration".
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="overleaf-email" className="block text-sm font-medium text-gray-700">
+                  Overleaf Email
+                </label>
+                <input
+                  id="overleaf-email"
+                  type="email"
+                  value={overleafEmail}
+                  onChange={(e) => setOverleafEmail(e.target.value)}
+                  placeholder="your@email.com"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="overleaf-token" className="block text-sm font-medium text-gray-700">
+                  Git Token
+                </label>
+                <input
+                  id="overleaf-token"
+                  type="password"
+                  value={overleafToken}
+                  onChange={(e) => setOverleafToken(e.target.value)}
+                  placeholder="Your Overleaf Git token"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              {overleafError && (
+                <p className="text-sm text-red-600">{overleafError}</p>
+              )}
+
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowOverleafSetup(false)}
+                  className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveOverleafCredentials}
+                  disabled={isSavingOverleaf || !overleafEmail.trim() || !overleafToken.trim()}
+                  className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {isSavingOverleaf ? "Saving..." : "Save Credentials"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Self-hosted GitLab Instance Modal */}
+      {showSelfHostedGitLabSetup && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">Add Self-Hosted GitLab Instance</h3>
+              <button
+                onClick={() => setShowSelfHostedGitLabSetup(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <p className="mb-4 text-sm text-gray-600">
+              To access your self-hosted GitLab repositories, you'll need your instance URL and a Personal Access Token (PAT).
+              You can create a PAT in your GitLab{" "}
+              <a
+                href="https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                User Settings → Access Tokens
+              </a>.
+              Required scopes: <code className="rounded bg-gray-100 px-1 text-xs">read_api</code>, <code className="rounded bg-gray-100 px-1 text-xs">read_repository</code>.
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="gitlab-name" className="block text-sm font-medium text-gray-700">
+                  Instance Name
+                </label>
+                <input
+                  id="gitlab-name"
+                  type="text"
+                  value={selfHostedGitLabName}
+                  onChange={(e) => setSelfHostedGitLabName(e.target.value)}
+                  placeholder="e.g., Work GitLab, University GitLab"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="gitlab-url" className="block text-sm font-medium text-gray-700">
+                  GitLab Instance URL
+                </label>
+                <input
+                  id="gitlab-url"
+                  type="url"
+                  value={selfHostedGitLabUrlInput}
+                  onChange={(e) => setSelfHostedGitLabUrlInput(e.target.value)}
+                  placeholder="https://gitlab.mycompany.com"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="gitlab-token" className="block text-sm font-medium text-gray-700">
+                  Personal Access Token
+                </label>
+                <input
+                  id="gitlab-token"
+                  type="password"
+                  value={selfHostedGitLabToken}
+                  onChange={(e) => setSelfHostedGitLabToken(e.target.value)}
+                  placeholder="glpat-xxxxxxxxxxxxxxxxxxxx"
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              {selfHostedGitLabError && (
+                <p className="text-sm text-red-600">{selfHostedGitLabError}</p>
+              )}
+
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowSelfHostedGitLabSetup(false)}
+                  className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddSelfHostedGitLabInstance}
+                  disabled={isSavingSelfHostedGitLab || !selfHostedGitLabName.trim() || !selfHostedGitLabUrlInput.trim() || !selfHostedGitLabToken.trim()}
+                  className="rounded-md bg-[#554488] px-4 py-2 text-sm font-medium text-white hover:bg-[#443377] disabled:opacity-50"
+                >
+                  {isSavingSelfHostedGitLab ? "Adding..." : "Add Instance"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -789,6 +1437,27 @@ function RepositoriesPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        variant={confirmDialog.variant}
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
+      />
+
+      {/* Toast Notification */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
       )}
     </div>
   );

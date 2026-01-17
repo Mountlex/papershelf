@@ -15,6 +15,11 @@ const extendedAuthTables = {
     phoneVerificationTime: v.optional(v.float64()),
     // Custom field for GitHub access token
     githubAccessToken: v.optional(v.string()),
+    // Custom field for GitLab access token
+    gitlabAccessToken: v.optional(v.string()),
+    // Custom fields for Overleaf credentials (Basic Auth: email + Git token)
+    overleafEmail: v.optional(v.string()),
+    overleafToken: v.optional(v.string()),
   })
     .index("email", ["email"])
     .index("phone", ["phone"]),
@@ -24,6 +29,16 @@ export default defineSchema({
   // Auth tables with extended users
   ...extendedAuthTables,
 
+  // Self-hosted GitLab instances (multiple per user, each with a name)
+  selfHostedGitLabInstances: defineTable({
+    userId: v.id("users"),
+    name: v.string(),                    // User-friendly name, e.g., "Work GitLab"
+    url: v.string(),                     // e.g., "https://gitlab.mycompany.com"
+    token: v.string(),                   // Personal Access Token
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"]),
+
   // Repositories
   repositories: defineTable({
     userId: v.id("users"),
@@ -32,12 +47,16 @@ export default defineSchema({
     provider: v.union(
       v.literal("github"),
       v.literal("gitlab"),
+      v.literal("selfhosted-gitlab"),
       v.literal("overleaf"),
       v.literal("generic")
     ),
+    // Reference to which self-hosted GitLab instance this repo belongs to (if provider is selfhosted-gitlab)
+    selfHostedGitLabInstanceId: v.optional(v.id("selfHostedGitLabInstances")),
     defaultBranch: v.string(),
     lastSyncedAt: v.optional(v.number()),
     lastCommitHash: v.optional(v.string()),
+    lastCommitTime: v.optional(v.number()), // Unix timestamp of the latest commit
     syncStatus: v.union(
       v.literal("idle"),
       v.literal("syncing"),
@@ -65,13 +84,18 @@ export default defineSchema({
 
   // Papers (the main gallery items)
   papers: defineTable({
-    repositoryId: v.id("repositories"),
-    trackedFileId: v.id("trackedFiles"),
+    // For repository-linked papers
+    repositoryId: v.optional(v.id("repositories")),
+    trackedFileId: v.optional(v.id("trackedFiles")),
+
+    // For direct uploads (userId is set when no repository)
+    userId: v.optional(v.id("users")),
+
     title: v.string(),
     authors: v.optional(v.array(v.string())),
     abstract: v.optional(v.string()),
 
-    // PDF caching with commit tracking
+    // PDF storage
     pdfFileId: v.optional(v.id("_storage")),
     thumbnailFileId: v.optional(v.id("_storage")),
     cachedCommitHash: v.optional(v.string()),
@@ -79,6 +103,12 @@ export default defineSchema({
     // Metadata
     pageCount: v.optional(v.number()),
     fileSize: v.optional(v.number()),
+
+    // Compilation progress (for UI feedback)
+    compilationProgress: v.optional(v.string()),
+
+    // Last sync error (persisted for UI feedback)
+    lastSyncError: v.optional(v.string()),
 
     // Sharing
     isPublic: v.boolean(),
@@ -88,6 +118,7 @@ export default defineSchema({
   })
     .index("by_repository", ["repositoryId"])
     .index("by_tracked_file", ["trackedFileId"])
+    .index("by_user", ["userId"])
     .index("by_share_slug", ["shareSlug"])
     .index("by_public", ["isPublic"]),
 

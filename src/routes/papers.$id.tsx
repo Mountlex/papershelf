@@ -119,8 +119,19 @@ function PaperDetailPage() {
                     disabled={isSyncing}
                     className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                   >
-                    {isSyncing ? "Syncing..." : "Sync Now"}
+                    {isSyncing ? (
+                      <span className="flex items-center">
+                        <svg className="mr-2 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        {paper.trackedFile?.pdfSourceType === "compile" ? "Compiling..." : "Syncing..."}
+                      </span>
+                    ) : "Sync Now"}
                   </button>
+                  {isSyncing && paper.compilationProgress && (
+                    <p className="mt-2 text-xs text-blue-600">{paper.compilationProgress}</p>
+                  )}
                   {syncError && (
                     <p className="mt-2 text-xs text-red-500">{syncError}</p>
                   )}
@@ -153,6 +164,43 @@ function PaperDetailPage() {
                   <dd className="text-gray-900">{paper.repository.name}</dd>
                 </div>
               )}
+              <div className="flex justify-between">
+                <dt className="text-gray-500">Status</dt>
+                <dd>
+                  {(syncError || paper.lastSyncError) ? (
+                    <span
+                      className="inline-flex items-center gap-1 text-red-600"
+                      title={syncError || paper.lastSyncError}
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      {paper.trackedFile?.pdfSourceType === "compile" ? "Compilation failed" : "Sync failed"}
+                    </span>
+                  ) : !paper.repository ? (
+                    <span className="inline-flex items-center gap-1 text-purple-600">
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                      Uploaded
+                    </span>
+                  ) : paper.isUpToDate === true ? (
+                    <span className="inline-flex items-center gap-1 text-green-600">
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Up to date
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-yellow-600">
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Needs sync
+                    </span>
+                  )}
+                </dd>
+              </div>
               <div className="flex justify-between">
                 <dt className="text-gray-500">Last updated</dt>
                 <dd className="text-gray-900">
@@ -202,6 +250,12 @@ function PaperDetailPage() {
                 paper.pdfUrl ? "Refresh PDF" : (paper.trackedFile?.pdfSourceType === "compile" ? "Compile LaTeX" : "Fetch PDF")
               )}
             </button>
+            {/* Compilation Progress */}
+            {isSyncing && paper.compilationProgress && (
+              <div className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">
+                {paper.compilationProgress}
+              </div>
+            )}
             {syncError && (
               <p className="text-xs text-red-500">{syncError}</p>
             )}
