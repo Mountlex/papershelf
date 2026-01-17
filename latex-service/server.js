@@ -1,5 +1,6 @@
 const express = require("express");
 const multer = require("multer");
+const compression = require("compression");
 const { spawn } = require("child_process");
 const fs = require("fs/promises");
 const path = require("path");
@@ -7,6 +8,48 @@ const { v4: uuidv4 } = require("uuid");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// CORS configuration
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",")
+  : ["*"];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  // Allow if origin matches allowed list or if wildcard is set
+  if (ALLOWED_ORIGINS.includes("*") || ALLOWED_ORIGINS.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin || "*");
+  }
+  res.header("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, X-API-Key");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Request ID tracking
+app.use((req, res, next) => {
+  const requestId = req.headers["x-request-id"] || uuidv4();
+  req.requestId = requestId;
+  res.setHeader("X-Request-Id", requestId);
+  next();
+});
+
+// Response compression (skip for binary responses like PDFs and images)
+app.use(compression({
+  filter: (req, res) => {
+    const contentType = res.getHeader("Content-Type");
+    // Skip compression for binary content types
+    if (contentType && (
+      contentType.includes("application/pdf") ||
+      contentType.includes("image/")
+    )) {
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
 
 // API Key authentication
 const API_KEY = process.env.LATEX_SERVICE_API_KEY;
@@ -19,10 +62,13 @@ function apiKeyAuth(req, res, next) {
 
   // If API key is configured, require it for all other endpoints
   if (API_KEY) {
-    const providedKey = req.headers["x-api-key"];
+    // Support both header and query param (fallback for mobile frameworks that strip headers)
+    const providedKey = req.headers["x-api-key"] || req.query.api_key;
     if (!providedKey || providedKey !== API_KEY) {
       return res.status(401).json({ error: "Unauthorized: Invalid or missing API key" });
     }
+    // Store the validated key for rate limiting
+    req.apiKey = providedKey;
   }
 
   next();
@@ -43,39 +89,55 @@ const ALLOWED_COMPILERS = ["pdflatex", "xelatex", "lualatex"];
 // Simple in-memory rate limiting
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
-const RATE_LIMIT_MAX_REQUESTS = 30; // 30 requests per minute per IP
+const RATE_LIMIT_MAX_REQUESTS = 30; // 30 requests per minute per key/IP
 
 function rateLimit(req, res, next) {
-  const ip = req.ip || req.connection.remoteAddress;
+  // Use API key for rate limiting when available, otherwise fall back to IP
+  // This prevents NAT issues where multiple mobile users share an IP
+  const rateLimitKey = req.apiKey || req.ip || req.connection.remoteAddress;
   const now = Date.now();
 
-  if (!rateLimitMap.has(ip)) {
-    rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+  if (!rateLimitMap.has(rateLimitKey)) {
+    rateLimitMap.set(rateLimitKey, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
+    res.setHeader("X-RateLimit-Limit", RATE_LIMIT_MAX_REQUESTS);
+    res.setHeader("X-RateLimit-Remaining", RATE_LIMIT_MAX_REQUESTS - 1);
     return next();
   }
 
-  const record = rateLimitMap.get(ip);
+  const record = rateLimitMap.get(rateLimitKey);
 
   if (now > record.resetTime) {
     record.count = 1;
     record.resetTime = now + RATE_LIMIT_WINDOW_MS;
+    res.setHeader("X-RateLimit-Limit", RATE_LIMIT_MAX_REQUESTS);
+    res.setHeader("X-RateLimit-Remaining", RATE_LIMIT_MAX_REQUESTS - 1);
     return next();
   }
 
   if (record.count >= RATE_LIMIT_MAX_REQUESTS) {
-    return res.status(429).json({ error: "Too many requests. Please try again later." });
+    const retryAfterSeconds = Math.ceil((record.resetTime - now) / 1000);
+    res.setHeader("Retry-After", retryAfterSeconds);
+    res.setHeader("X-RateLimit-Limit", RATE_LIMIT_MAX_REQUESTS);
+    res.setHeader("X-RateLimit-Remaining", 0);
+    res.setHeader("X-RateLimit-Reset", Math.ceil(record.resetTime / 1000));
+    return res.status(429).json({
+      error: "Too many requests. Please try again later.",
+      retryAfter: retryAfterSeconds,
+    });
   }
 
   record.count++;
+  res.setHeader("X-RateLimit-Limit", RATE_LIMIT_MAX_REQUESTS);
+  res.setHeader("X-RateLimit-Remaining", RATE_LIMIT_MAX_REQUESTS - record.count);
   next();
 }
 
 // Clean up old rate limit entries periodically
 setInterval(() => {
   const now = Date.now();
-  for (const [ip, record] of rateLimitMap.entries()) {
+  for (const [key, record] of rateLimitMap.entries()) {
     if (now > record.resetTime) {
-      rateLimitMap.delete(ip);
+      rateLimitMap.delete(key);
     }
   }
 }, RATE_LIMIT_WINDOW_MS);

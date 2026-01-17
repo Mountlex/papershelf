@@ -146,4 +146,26 @@ export default defineSchema({
   })
     .index("by_paper", ["paperId"])
     .index("by_status", ["status"]),
+
+  // Mobile authentication tokens (for JWT-based mobile app auth)
+  mobileTokens: defineTable({
+    userId: v.id("users"),
+    // Hashed refresh token (never store raw tokens)
+    refreshTokenHash: v.string(),
+    // Device identifier for multi-device support
+    deviceId: v.optional(v.string()),
+    deviceName: v.optional(v.string()),
+    // Platform info
+    platform: v.optional(v.union(v.literal("ios"), v.literal("android"), v.literal("unknown"))),
+    // Token lifecycle
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    lastUsedAt: v.optional(v.number()),
+    // Revocation support
+    isRevoked: v.boolean(),
+    revokedAt: v.optional(v.number()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_refresh_token_hash", ["refreshTokenHash"])
+    .index("by_user_and_device", ["userId", "deviceId"]),
 });

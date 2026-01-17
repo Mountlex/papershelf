@@ -66,11 +66,13 @@ export function useUser() {
   );
   const clearGitHubCredentials = useMutation(api.users.clearGitHubCredentials);
   const clearGitLabCredentials = useMutation(api.users.clearGitLabCredentials);
+  const clearOverleafCredentials = useMutation(api.users.clearOverleafCredentials);
   const { signIn, signOut } = useAuthActions();
 
   // Check which providers are connected based on flags returned by viewer query
   const hasGitHub = Boolean(user?.hasGitHubToken);
   const hasGitLab = Boolean(user?.hasGitLabToken);
+  const hasOverleaf = Boolean(user?.hasOverleafCredentials);
   const hasSelfHostedGitLab = (selfHostedGitLabInstances?.length ?? 0) > 0;
 
   // Link functions - sign out first, then store intent and start OAuth
@@ -118,11 +120,13 @@ export function useUser() {
     linkWithGitLab,
     disconnectGitHub: () => clearGitHubCredentials({}),
     disconnectGitLab: () => clearGitLabCredentials({}),
+    disconnectOverleaf: () => clearOverleafCredentials({}),
     signOut: () => signOut(),
     // Connected providers info
     connectedProviders: {
       github: hasGitHub,
       gitlab: hasGitLab,
+      overleaf: hasOverleaf,
       selfHostedGitLab: hasSelfHostedGitLab,
     },
     // List of self-hosted GitLab instances (name and URL, no tokens)

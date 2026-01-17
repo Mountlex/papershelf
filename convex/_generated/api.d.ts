@@ -15,6 +15,7 @@ import type * as latex from "../latex.js";
 import type * as lib_fileFetching from "../lib/fileFetching.js";
 import type * as lib_gitProviders from "../lib/gitProviders.js";
 import type * as lib_latexUtils from "../lib/latexUtils.js";
+import type * as mobileAuth from "../mobileAuth.js";
 import type * as papers from "../papers.js";
 import type * as repositories from "../repositories.js";
 import type * as sync from "../sync.js";
@@ -35,6 +36,7 @@ declare const fullApi: ApiFromModules<{
   "lib/fileFetching": typeof lib_fileFetching;
   "lib/gitProviders": typeof lib_gitProviders;
   "lib/latexUtils": typeof lib_latexUtils;
+  mobileAuth: typeof mobileAuth;
   papers: typeof papers;
   repositories: typeof repositories;
   sync: typeof sync;

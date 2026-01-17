@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalQuery } from "./_generated/server";
 import { auth } from "./auth";
 
 async function requireUserId(ctx: Parameters<typeof auth.getUserId>[0]) {
@@ -748,5 +748,19 @@ export const adminClearAllData = mutation({
     counts.users = users.length;
 
     return { cleared: true, counts };
+  },
+});
+
+// Internal query to get user by email (for mobile auth token issuance)
+export const getUserByEmail = internalQuery({
+  args: {
+    email: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", args.email))
+      .first();
+    return user;
   },
 });
