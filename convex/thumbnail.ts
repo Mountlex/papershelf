@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { action, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { auth } from "./auth";
 
 // Helper to get headers for LaTeX service requests (includes API key if configured)
 function getLatexServiceHeaders(): Record<string, string> {
@@ -96,9 +97,24 @@ export const generateThumbnail = internalAction({
 export const generateThumbnailForPaper = action({
   args: { paperId: v.id("papers") },
   handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+
     const paper = await ctx.runQuery(internal.git.getPaper, { id: args.paperId });
     if (!paper || !paper.pdfFileId) {
       return null;
+    }
+
+    if (paper.userId && paper.userId !== userId) {
+      throw new Error("Unauthorized");
+    }
+    if (paper.repositoryId) {
+      const repository = await ctx.runQuery(internal.git.getRepository, { id: paper.repositoryId });
+      if (!repository || repository.userId !== userId) {
+        throw new Error("Unauthorized");
+      }
     }
 
     try {
@@ -123,7 +139,7 @@ export const getPapersNeedingThumbnails = internalQuery({
 });
 
 // Regenerate thumbnails for all papers that need them
-export const regenerateAllThumbnails = action({
+export const regenerateAllThumbnails = internalAction({
   args: {},
   handler: async (ctx) => {
     const papers = await ctx.runQuery(internal.thumbnail.getPapersNeedingThumbnails, {});

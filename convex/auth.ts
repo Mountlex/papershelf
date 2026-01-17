@@ -41,12 +41,8 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       },
     }),
     GitLab({
-      authorization: {
-        params: {
-          // read_user for profile, read_api for repository access via API
-          scope: "read_user read_api",
-        },
-      },
+      // Override the default authorization URL to include read_api scope
+      authorization: "https://gitlab.com/oauth/authorize?scope=read_user+read_api",
       profile(profile: GitLabProfile, tokens: TokenSet) {
         return {
           id: profile.sub ?? String(profile.id),

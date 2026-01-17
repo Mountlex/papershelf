@@ -1,7 +1,10 @@
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/router-devtools";
 import { useState, useRef, useEffect } from "react";
-import { useUser } from "../hooks/useUser";
+import { useMutation } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { useUser, checkPendingLink, clearPendingLink, isLinkInProgress } from "../hooks/useUser";
+import type { Id } from "../../convex/_generated/dataModel";
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -26,9 +29,25 @@ function GitLabIcon({ className }: { className?: string }) {
 }
 
 function RootComponent() {
-  const { user, isLoading, isAuthenticated, signInWithGitHub, signInWithGitLab, signOut, connectedProviders, selfHostedGitLabInstances } = useUser();
+  const {
+    user,
+    isLoading,
+    isAuthenticated,
+    signInWithGitHub,
+    signInWithGitLab,
+    linkWithGitHub,
+    linkWithGitLab,
+    disconnectGitHub,
+    disconnectGitLab,
+    signOut,
+    connectedProviders,
+    selfHostedGitLabInstances,
+  } = useUser();
+  const linkProviderToAccount = useMutation(api.users.linkProviderToAccount);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [isLinking, setIsLinking] = useState(() => isLinkInProgress());
+  const [linkError, setLinkError] = useState<string | null>(null);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -40,6 +59,50 @@ function RootComponent() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  // Detect link completion after OAuth redirect
+  useEffect(() => {
+    async function handleLinkCompletion() {
+      const pendingLink = checkPendingLink();
+
+      if (!pendingLink || !user?._id) {
+        // No pending link - clear the in-progress state if set
+        if (isLinkInProgress()) {
+          setIsLinking(false);
+          clearPendingLink();
+        }
+        return;
+      }
+
+      // If current user differs from original, we need to link
+      if (user._id !== pendingLink.originalUserId) {
+        setIsLinking(true);
+        try {
+          await linkProviderToAccount({
+            originalUserId: pendingLink.originalUserId as Id<"users">,
+          });
+          clearPendingLink();
+          // Small delay to ensure session is committed, then reload
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          window.location.reload();
+        } catch (error) {
+          console.error("Failed to link accounts:", error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          setLinkError(errorMessage);
+          clearPendingLink();
+          setIsLinking(false);
+        }
+      } else {
+        // Same user - OAuth added provider to existing account (same email)
+        clearPendingLink();
+        setIsLinking(false);
+      }
+    }
+
+    if (isAuthenticated && user && !isLoading) {
+      handleLinkCompletion();
+    }
+  }, [isAuthenticated, user, isLoading, linkProviderToAccount]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -119,16 +182,19 @@ function RootComponent() {
                           <span className="text-sm">GitHub</span>
                         </div>
                         {connectedProviders.github ? (
-                          <span className="flex items-center gap-1 text-xs text-green-600">
-                            <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                            </svg>
-                            Connected
-                          </span>
+                          <button
+                            onClick={() => {
+                              disconnectGitHub();
+                              setIsMenuOpen(false);
+                            }}
+                            className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                          >
+                            Disconnect
+                          </button>
                         ) : (
                           <button
                             onClick={() => {
-                              signInWithGitHub();
+                              linkWithGitHub();
                               setIsMenuOpen(false);
                             }}
                             className="rounded bg-gray-900 px-2 py-1 text-xs text-white hover:bg-gray-800"
@@ -145,16 +211,19 @@ function RootComponent() {
                           <span className="text-sm">GitLab</span>
                         </div>
                         {connectedProviders.gitlab ? (
-                          <span className="flex items-center gap-1 text-xs text-green-600">
-                            <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                            </svg>
-                            Connected
-                          </span>
+                          <button
+                            onClick={() => {
+                              disconnectGitLab();
+                              setIsMenuOpen(false);
+                            }}
+                            className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                          >
+                            Disconnect
+                          </button>
                         ) : (
                           <button
                             onClick={() => {
-                              signInWithGitLab();
+                              linkWithGitLab();
                               setIsMenuOpen(false);
                             }}
                             className="rounded bg-[#FC6D26] px-2 py-1 text-xs text-white hover:bg-[#E24329]"
@@ -233,7 +302,24 @@ function RootComponent() {
         </div>
       </header>
       <main className="container mx-auto px-4 py-8">
-        {isLoading ? (
+        {linkError && (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-medium text-red-800">Failed to link accounts</p>
+            <p className="mt-1 text-sm text-red-600">{linkError}</p>
+            <button
+              onClick={() => setLinkError(null)}
+              className="mt-2 text-sm text-red-700 underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+        {isLinking ? (
+          <div className="flex flex-col items-center justify-center py-20">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-gray-900" />
+            <p className="mt-4 text-sm text-gray-600">Linking accounts...</p>
+          </div>
+        ) : isLoading ? (
           <div className="flex items-center justify-center py-20">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-gray-900" />
           </div>

@@ -1,6 +1,8 @@
 import { v } from "convex/values";
-import { action } from "./_generated/server";
+import type { ActionCtx } from "./_generated/server";
+import { action, internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { auth } from "./auth";
 import {
   parseOverleafUrl,
   parseRepoUrl,
@@ -13,6 +15,64 @@ import {
   getOverleafCredentials,
   getAllSelfHostedGitLabInstances,
 } from "./git";
+
+// Type for dependency with hash
+type DependencyHash = { path: string; hash: string };
+
+// Normalize a path and ensure it stays within the repository root
+// Returns null if the path would escape the root
+function normalizePath(basePath: string, relativePath: string): string | null {
+  // Combine the paths
+  const combined = basePath ? `${basePath}/${relativePath}` : relativePath;
+
+  // Split into segments and resolve . and ..
+  const segments: string[] = [];
+  for (const segment of combined.split("/")) {
+    if (segment === "" || segment === ".") {
+      continue;
+    } else if (segment === "..") {
+      if (segments.length === 0) {
+        // Would escape the root
+        return null;
+      }
+      segments.pop();
+    } else {
+      segments.push(segment);
+    }
+  }
+
+  return segments.join("/");
+}
+
+// Helper to fetch blob hashes for dependencies
+async function fetchDependencyHashes(
+  ctx: ActionCtx,
+  gitUrl: string,
+  branch: string,
+  dirPath: string,
+  dependencies: string[]
+): Promise<DependencyHash[]> {
+  const results: DependencyHash[] = [];
+
+  for (const dep of dependencies) {
+    // Build the full path for the dependency
+    const fullPath = dirPath ? `${dirPath}/${dep}` : dep;
+
+    try {
+      const hash = await ctx.runAction(internal.git.fetchFileHashInternal, {
+        gitUrl,
+        filePath: fullPath,
+        branch,
+      });
+      results.push({ path: dep, hash });
+    } catch (error) {
+      // Skip files that can't be hashed (e.g., system files, missing files)
+      console.log(`Could not fetch hash for ${fullPath}: ${error}`);
+    }
+  }
+
+  return results;
+}
 
 // Helper to get headers for LaTeX service requests (includes API key if configured)
 function getLatexServiceHeaders(): Record<string, string> {
@@ -34,13 +94,17 @@ export const compileLatex = action({
     branch: v.string(),
   },
   handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
     // Delegate to the internal implementation
     return await ctx.runAction(internal.latex.compileLatexInternal, args);
   },
 });
 
 // Internal action wrapper for compileLatex
-export const compileLatexInternal = action({
+export const compileLatexInternal = internalAction({
   args: {
     gitUrl: v.string(),
     filePath: v.string(),
@@ -65,15 +129,14 @@ export const compileLatexInternal = action({
     // Get the LaTeX service URL from environment
     const latexServiceUrl = process.env.LATEX_SERVICE_URL;
 
-    // Determine the directory and filename
+    // Determine the directory of the target file (for resolving relative paths)
     const dirPath = args.filePath.includes("/")
       ? args.filePath.substring(0, args.filePath.lastIndexOf("/"))
       : "";
-    const fileName = args.filePath.includes("/")
-      ? args.filePath.substring(args.filePath.lastIndexOf("/") + 1)
-      : args.filePath;
 
     let pdfResponse: Response;
+    // Track dependencies for file-level change detection
+    let finalDependencies: string[] = [];
 
     // Handle Overleaf projects - fetch all files via git archive endpoint
     if (provider === "overleaf") {
@@ -129,6 +192,9 @@ export const compileLatexInternal = action({
         allResources.set(relativePath, { path: relativePath, content: f.content, encoding: f.encoding });
       }
 
+      // For Overleaf, all fetched files are dependencies
+      finalDependencies = Array.from(allResources.keys());
+
       await updateProgress(`Compiling LaTeX (${allResources.size} files)...`);
 
       // Compile with all files
@@ -137,7 +203,7 @@ export const compileLatexInternal = action({
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
           resources: Array.from(allResources.values()),
-          target: fileName,
+          target: args.filePath,
           compiler: "pdflatex",
         }),
       });
@@ -205,13 +271,10 @@ export const compileLatexInternal = action({
       // Track all resources we have (relative paths)
       const allResources: Map<string, { path: string; content: string; encoding?: string }> = new Map();
 
-      // Add .tex files
+      // Add .tex files - keep full paths to preserve directory structure
+      // This allows relative references like ../file.sty to work correctly
       for (const f of texFiles) {
-        let relativePath = f.path;
-        if (dirPath && relativePath.startsWith(dirPath + "/")) {
-          relativePath = relativePath.slice(dirPath.length + 1);
-        }
-        allResources.set(relativePath, { path: relativePath, content: f.content });
+        allResources.set(f.path, { path: f.path, content: f.content });
       }
 
       // Track files we've already tried to fetch (to avoid infinite loops)
@@ -229,7 +292,7 @@ export const compileLatexInternal = action({
           headers: getLatexServiceHeaders(),
           body: JSON.stringify({
             resources: Array.from(allResources.values()),
-            target: fileName,
+            target: args.filePath,
             compiler: "pdflatex",
           }),
         });
@@ -243,6 +306,11 @@ export const compileLatexInternal = action({
         console.log("Dependencies detected:", depsResult.dependencies?.length || 0);
         console.log("Missing files:", depsResult.missingFiles);
 
+        // Store the dependencies from this iteration
+        if (depsResult.dependencies && depsResult.dependencies.length > 0) {
+          finalDependencies = depsResult.dependencies;
+        }
+
         // If no missing files, we're done with dependency resolution
         if (!depsResult.missingFiles || depsResult.missingFiles.length === 0) {
           console.log("No missing files - dependency resolution complete");
@@ -253,8 +321,14 @@ export const compileLatexInternal = action({
         const filesToFetch = new Set<string>();
 
         for (const missing of depsResult.missingFiles) {
-          // Build full path
-          const fullPath = dirPath ? `${dirPath}/${missing}` : missing;
+          // Build and normalize full path (handles .. references)
+          const fullPath = normalizePath(dirPath, missing);
+
+          // Skip if path would escape repository root
+          if (fullPath === null) {
+            console.log(`Skipping path that escapes repo root: ${missing}`);
+            continue;
+          }
 
           // Skip if already attempted
           if (attemptedFetches.has(fullPath)) continue;
@@ -298,15 +372,11 @@ export const compileLatexInternal = action({
           break;
         }
 
-        // Add new files to resources
+        // Add new files to resources - keep full paths to preserve directory structure
         for (const f of newFiles) {
-          let relativePath = f.path;
-          if (dirPath && relativePath.startsWith(dirPath + "/")) {
-            relativePath = relativePath.slice(dirPath.length + 1);
-          }
-          if (!allResources.has(relativePath)) {
-            allResources.set(relativePath, {
-              path: relativePath,
+          if (!allResources.has(f.path)) {
+            allResources.set(f.path, {
+              path: f.path,
               content: f.content,
               encoding: f.encoding,
             });
@@ -323,7 +393,7 @@ export const compileLatexInternal = action({
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
           resources: Array.from(allResources.values()),
-          target: fileName,
+          target: args.filePath,
           compiler: "pdflatex",
         }),
       });
@@ -390,11 +460,26 @@ export const compileLatexInternal = action({
     const blob = new Blob([pdfBuffer], { type: "application/pdf" });
     const storageId = await ctx.storage.store(blob);
 
+    // Fetch blob hashes for dependencies (for file-level change detection)
+    let dependencyHashes: DependencyHash[] = [];
+    if (finalDependencies.length > 0) {
+      await updateProgress("Caching dependency info...");
+      dependencyHashes = await fetchDependencyHashes(
+        ctx,
+        args.gitUrl,
+        args.branch,
+        dirPath,
+        finalDependencies
+      );
+      console.log(`Cached ${dependencyHashes.length} dependency hashes`);
+    }
+
     await updateProgress(null); // Clear progress on success
 
     return {
       storageId,
       size: pdfBuffer.byteLength,
+      dependencies: dependencyHashes,
     };
   },
 });

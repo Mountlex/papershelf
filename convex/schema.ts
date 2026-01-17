@@ -110,6 +110,15 @@ export default defineSchema({
     // Last sync error (persisted for UI feedback)
     lastSyncError: v.optional(v.string()),
 
+    // Cached dependency hashes for file-level change detection
+    cachedDependencies: v.optional(v.array(v.object({
+      path: v.string(),
+      hash: v.string(),
+    }))),
+
+    // Whether this paper needs recompilation (computed during quick sync)
+    needsSync: v.optional(v.boolean()),
+
     // Sharing
     isPublic: v.boolean(),
     shareSlug: v.optional(v.string()),

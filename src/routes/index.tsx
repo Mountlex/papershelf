@@ -31,12 +31,13 @@ function formatRelativeTime(timestamp: number | undefined): string {
 function GalleryPage() {
   const { user, isLoading: isUserLoading, isAuthenticated } = useUser();
   const papers = useQuery(api.papers.list, isAuthenticated && user ? { userId: user._id } : "skip");
+  const repositories = useQuery(api.repositories.list, isAuthenticated && user ? { userId: user._id } : "skip");
   const updatePaper = useMutation(api.papers.update);
   const deletePaper = useMutation(api.papers.deletePaper);
   const generateUploadUrl = useMutation(api.papers.generateUploadUrl);
   const uploadPdf = useMutation(api.papers.uploadPdf);
   const generateThumbnail = useAction(api.thumbnail.generateThumbnailForPaper);
-  const syncPaper = useAction(api.sync.syncPaper);
+  const syncRepository = useAction(api.sync.syncRepository);
 
   const [editingPaperId, setEditingPaperId] = useState<Id<"papers"> | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -44,7 +45,6 @@ function GalleryPage() {
   const [deletingPaperId, setDeletingPaperId] = useState<Id<"papers"> | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{ current: number; total: number } | null>(null);
-  const [syncErrors, setSyncErrors] = useState<Map<Id<"papers">, string>>(new Map());
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -80,27 +80,30 @@ function GalleryPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // Sync all papers on page load
+  // Quick sync all repositories on page load (just check for new commits, no compilation)
   useEffect(() => {
-    // Only sync once on page load, when papers are first loaded
     if (
-      papers &&
-      papers.length > 0 &&
+      repositories &&
+      repositories.length > 0 &&
       !hasSyncedOnLoad.current &&
       !isSyncing
     ) {
-      // Check if there are any repo-linked papers to sync
-      const repoPapers = papers.filter((p) => p.repository);
-      if (repoPapers.length > 0) {
-        hasSyncedOnLoad.current = true;
-        // Use setTimeout to avoid calling setState during render
-        setTimeout(() => {
-          handleSyncAll();
-        }, 0);
-      }
+      hasSyncedOnLoad.current = true;
+      // Quick sync all repositories in parallel (non-blocking)
+      setIsSyncing(true);
+      const syncPromises = repositories
+        .filter((repo) => repo.syncStatus !== "syncing")
+        .map((repo) =>
+          syncRepository({ repositoryId: repo._id }).catch((err) => {
+            console.error(`Quick sync failed for ${repo.name}:`, err);
+          })
+        );
+      Promise.all(syncPromises).finally(() => {
+        setIsSyncing(false);
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally run once on load
-  }, [papers, isSyncing]);
+  }, [repositories]);
 
   // Filter and sort papers
   const filteredPapers = useMemo(() => {
@@ -215,56 +218,29 @@ function GalleryPage() {
     }
   };
 
+  // Quick sync all repositories (just check for new commits, no compilation)
   const handleSyncAll = async () => {
-    if (!papers || isSyncing) return;
+    if (!repositories || isSyncing) return;
 
-    // Clear previous sync errors
-    setSyncErrors(new Map());
+    setIsSyncing(true);
+    setSyncProgress({ current: 0, total: repositories.length });
 
-    // Get papers that need syncing (have a repository and are not up to date)
-    const papersToSync = papers.filter(
-      (p) => p.repository && p.isUpToDate !== true
-    );
-
-    const errors = new Map<Id<"papers">, string>();
-
-    if (papersToSync.length === 0) {
-      // If no papers need syncing, sync all repo-linked papers to check for updates
-      const repoPapers = papers.filter((p) => p.repository);
-      if (repoPapers.length === 0) return;
-
-      setIsSyncing(true);
-      setSyncProgress({ current: 0, total: repoPapers.length });
-
-      for (let i = 0; i < repoPapers.length; i++) {
-        setSyncProgress({ current: i + 1, total: repoPapers.length });
+    // Quick sync all repositories in parallel
+    const syncPromises = repositories
+      .filter((repo) => repo.syncStatus !== "syncing")
+      .map(async (repo, index) => {
         try {
-          await syncPaper({ paperId: repoPapers[i]._id });
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : "Sync failed";
-          console.error(`Failed to sync paper ${repoPapers[i].title}:`, error);
-          errors.set(repoPapers[i]._id, errorMessage);
+          await syncRepository({ repositoryId: repo._id });
+        } catch (err) {
+          console.error(`Quick sync failed for ${repo.name}:`, err);
         }
-      }
-    } else {
-      setIsSyncing(true);
-      setSyncProgress({ current: 0, total: papersToSync.length });
+        setSyncProgress((prev) => prev ? { ...prev, current: index + 1 } : null);
+      });
 
-      for (let i = 0; i < papersToSync.length; i++) {
-        setSyncProgress({ current: i + 1, total: papersToSync.length });
-        try {
-          await syncPaper({ paperId: papersToSync[i]._id });
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : "Sync failed";
-          console.error(`Failed to sync paper ${papersToSync[i].title}:`, error);
-          errors.set(papersToSync[i]._id, errorMessage);
-        }
-      }
-    }
+    await Promise.all(syncPromises);
 
     setIsSyncing(false);
     setSyncProgress(null);
-    setSyncErrors(errors);
   };
 
   const handleUploadClick = () => {
@@ -377,9 +353,9 @@ function GalleryPage() {
           </select>
           <button
             onClick={handleSyncAll}
-            disabled={isSyncing || !papers || papers.filter(p => p.repository).length === 0}
+            disabled={isSyncing || !repositories || repositories.length === 0}
             className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
-            title="Sync all papers with their repositories"
+            title="Check all repositories for new commits"
           >
             {isSyncing ? (
               <>
@@ -387,14 +363,14 @@ function GalleryPage() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
-                {syncProgress ? `${syncProgress.current}/${syncProgress.total}` : "Syncing..."}
+                {syncProgress ? `${syncProgress.current}/${syncProgress.total}` : "Checking..."}
               </>
             ) : (
               <>
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
-                Sync All
+                Check All
               </>
             )}
           </button>
@@ -665,7 +641,7 @@ function GalleryPage() {
                           </span>
                         </span>
                       )}
-                      {paper.isUpToDate === false && !syncErrors.has(paper._id) && !paper.lastSyncError && (
+                      {paper.isUpToDate === false && !paper.lastSyncError && (
                         <span
                           className="flex shrink-0 items-center gap-0.5 text-yellow-600"
                           title={`New commit available - committed ${formatRelativeTime(paper.repository.lastCommitTime ?? paper.repository.lastSyncedAt)}`}
@@ -688,10 +664,10 @@ function GalleryPage() {
                           </span>
                         </span>
                       )}
-                      {(syncErrors.has(paper._id) || paper.lastSyncError) && (
+                      {paper.lastSyncError && (
                         <span
                           className="flex shrink-0 items-center gap-0.5 text-red-600"
-                          title={`${paper.pdfSourceType === "compile" ? "Compilation" : "Sync"} failed: ${syncErrors.get(paper._id) || paper.lastSyncError}`}
+                          title={`${paper.pdfSourceType === "compile" ? "Compilation" : "Sync"} failed: ${paper.lastSyncError}`}
                         >
                           <svg
                             className="h-3 w-3"

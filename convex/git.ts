@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { action, internalQuery } from "./_generated/server";
+import { action, internalAction, internalQuery } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { auth } from "./auth";
@@ -131,6 +131,10 @@ export const getRepository = internalQuery({
 export const fetchRepositoryInfo = action({
   args: { gitUrl: v.string() },
   handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
     // Get all self-hosted GitLab instances to check if URL matches any
     const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
     const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
@@ -208,6 +212,10 @@ export const fetchLatestCommit = action({
     branch: v.string(),
   },
   handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
     // Get all self-hosted GitLab instances to check if URL matches any
     const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
     const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
@@ -282,6 +290,10 @@ export const fetchFileContent = action({
     branch: v.string(),
   },
   handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
     // Get all self-hosted GitLab instances to check if URL matches any
     const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
     const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
@@ -340,6 +352,10 @@ export const listRepositoryFiles = action({
     branch: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
     // Get all self-hosted GitLab instances to check if URL matches any
     const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
     const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
@@ -472,7 +488,7 @@ export const listRepositoryFiles = action({
 });
 
 // Internal action wrapper for fetchLatestCommit
-export const fetchLatestCommitInternal = action({
+export const fetchLatestCommitInternal = internalAction({
   args: {
     gitUrl: v.string(),
     branch: v.string(),
@@ -601,7 +617,7 @@ export const fetchLatestCommitInternal = action({
 });
 
 // Internal action wrapper for fetchFileContent
-export const fetchFileContentInternal = action({
+export const fetchFileContentInternal = internalAction({
   args: {
     gitUrl: v.string(),
     filePath: v.string(),
@@ -721,10 +737,130 @@ export const fetchFileContentInternal = action({
   },
 });
 
+// Internal action to fetch file hash (blob SHA) without downloading content
+// Used for dependency change detection
+export const fetchFileHashInternal = internalAction({
+  args: {
+    gitUrl: v.string(),
+    filePath: v.string(),
+    branch: v.string(),
+  },
+  handler: async (ctx, args): Promise<string> => {
+    // Get all self-hosted GitLab instances to check if URL matches any
+    const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
+    const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
+
+    // Handle Overleaf projects via latex-service
+    if (provider === "overleaf") {
+      const overleafParsed = parseOverleafUrl(args.gitUrl);
+      if (!overleafParsed) {
+        throw new Error(`Invalid Overleaf URL: "${args.gitUrl}"`);
+      }
+
+      const credentials = await getOverleafCredentials(ctx);
+      if (!credentials) {
+        throw new Error("Overleaf credentials not configured.");
+      }
+
+      const latexServiceUrl = process.env.LATEX_SERVICE_URL;
+      if (!latexServiceUrl) {
+        throw new Error("LATEX_SERVICE_URL not configured.");
+      }
+
+      // Use latex-service /git/file-hash endpoint
+      const response = await fetch(`${latexServiceUrl}/git/file-hash`, {
+        method: "POST",
+        headers: getLatexServiceHeaders(),
+        body: JSON.stringify({
+          gitUrl: overleafParsed.gitUrl,
+          filePath: args.filePath,
+          branch: args.branch,
+          auth: credentials,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Failed to get file hash from Overleaf: ${error}`);
+      }
+
+      const data = await response.json();
+      return data.hash;
+    }
+
+    const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
+    if (!parsed) {
+      throw new Error("Invalid repository URL.");
+    }
+
+    if (parsed.provider === "github") {
+      // GitHub: GET /repos/{owner}/{repo}/contents/{path}?ref={branch}
+      // Returns: { sha: "blob_sha", type: "file", ... }
+      const token = await getGitHubToken(ctx);
+      const headers: Record<string, string> = {
+        Accept: "application/vnd.github.v3+json",
+        "User-Agent": "PaperShelf",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const encodedPath = args.filePath.split("/").map(encodeURIComponent).join("/");
+      const response = await fetch(
+        `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${encodedPath}?ref=${encodeURIComponent(args.branch)}`,
+        { headers }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch file hash: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.sha;
+    } else {
+      // GitLab API (both gitlab.com and self-hosted)
+      // GET /projects/{id}/repository/files/{path}?ref={branch}
+      // Returns: { blob_id: "sha", ... }
+      const isSelfHosted = parsed.provider === "selfhosted-gitlab";
+      const matchingInstance = isSelfHosted
+        ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
+        : null;
+      const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
+      const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
+
+      const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
+      const encodedFilePath = encodeURIComponent(args.filePath);
+
+      const headers: Record<string, string> = {
+        "User-Agent": "PaperShelf",
+      };
+      if (token) {
+        headers["PRIVATE-TOKEN"] = token;
+      }
+
+      const response = await fetch(
+        `${baseUrl}/api/v4/projects/${projectId}/repository/files/${encodedFilePath}?ref=${encodeURIComponent(args.branch)}`,
+        { headers }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch file hash: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return data.blob_id;
+    }
+  },
+});
+
 // List user's GitHub repositories
 export const listUserRepos = action({
   args: {},
   handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
     const token = await getGitHubToken(ctx);
     if (!token) {
       throw new Error("Not authenticated with GitHub");
@@ -770,10 +906,73 @@ export const listUserRepos = action({
   },
 });
 
+// List user's GitLab repositories
+export const listUserGitLabRepos = action({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+
+    const token = await getGitLabToken(ctx);
+    if (!token) {
+      throw new Error("Not authenticated with GitLab");
+    }
+
+    const url = "https://gitlab.com/api/v4/projects?membership=true&order_by=last_activity_at&per_page=100&simple=true";
+    const primaryHeaders: Record<string, string> = {
+      "User-Agent": "PaperShelf",
+      Authorization: `Bearer ${token}`,
+    };
+
+    let response = await fetch(url, { headers: primaryHeaders });
+    if (!response.ok && (response.status === 401 || response.status === 403)) {
+      const fallbackHeaders: Record<string, string> = {
+        "User-Agent": "PaperShelf",
+        "PRIVATE-TOKEN": token,
+      };
+      response = await fetch(url, { headers: fallbackHeaders });
+    }
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      const detail = errorText ? ` - ${errorText.slice(0, 200)}` : "";
+      throw new Error(`GitLab API error: ${response.status} ${response.statusText}${detail}`);
+    }
+
+    const data = await response.json();
+
+    return data.map((repo: {
+      name: string;
+      path_with_namespace: string;
+      web_url: string;
+      description: string | null;
+      visibility: string;
+      default_branch: string | null;
+      last_activity_at: string;
+      avatar_url?: string | null;
+    }) => ({
+      name: repo.name,
+      fullName: repo.path_with_namespace,
+      url: repo.web_url,
+      description: repo.description,
+      isPrivate: repo.visibility !== "public",
+      defaultBranch: repo.default_branch || "main",
+      updatedAt: repo.last_activity_at,
+      ownerAvatar: repo.avatar_url || "",
+    }));
+  },
+});
+
 // Fetch repository info and return default branch (used when adding repos)
 export const fetchRepoInfo = action({
   args: { gitUrl: v.string() },
   handler: async (ctx, args) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
     // Get all self-hosted GitLab instances to check if URL matches any
     const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
     const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);

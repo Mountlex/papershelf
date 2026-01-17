@@ -58,11 +58,17 @@ export const list = query({
         // null = no repository (uploaded PDF), true = up-to-date, false = needs sync
         let isUpToDate: boolean | null = null;
         if (paper.repositoryId && repository) {
-          if (!paper.cachedCommitHash || !paper.pdfFileId) {
+          if (!paper.pdfFileId) {
             // Paper has repo but hasn't been synced yet
             isUpToDate = false;
+          } else if (paper.needsSync === true) {
+            // Paper has been marked as needing sync (dependencies changed)
+            isUpToDate = false;
+          } else if (paper.needsSync === false) {
+            // Paper has been explicitly marked as up-to-date
+            isUpToDate = true;
           } else if (repository.lastCommitHash) {
-            // Compare commit hashes
+            // Fallback to commit hash comparison (for papers without needsSync set)
             isUpToDate = paper.cachedCommitHash === repository.lastCommitHash;
           } else {
             // Repository hasn't been synced yet
@@ -122,8 +128,23 @@ export const listPublic = query({
 export const get = query({
   args: { id: v.id("papers") },
   handler: async (ctx, args) => {
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId) {
+      return null;
+    }
+
     const paper = await ctx.db.get(args.id);
     if (!paper) return null;
+
+    if (paper.userId && paper.userId !== authenticatedUserId) {
+      return null;
+    }
+    if (paper.repositoryId) {
+      const repository = await ctx.db.get(paper.repositoryId);
+      if (!repository || repository.userId !== authenticatedUserId) {
+        return null;
+      }
+    }
 
     const repository = paper.repositoryId
       ? await ctx.db.get(paper.repositoryId)
@@ -141,11 +162,20 @@ export const get = query({
     // Determine if paper is up-to-date with repository
     let isUpToDate: boolean | null = null;
     if (paper.repositoryId && repository) {
-      if (!paper.cachedCommitHash || !paper.pdfFileId) {
+      if (!paper.pdfFileId) {
+        // Paper has repo but hasn't been synced yet
         isUpToDate = false;
+      } else if (paper.needsSync === true) {
+        // Paper has been marked as needing sync (dependencies changed)
+        isUpToDate = false;
+      } else if (paper.needsSync === false) {
+        // Paper has been explicitly marked as up-to-date
+        isUpToDate = true;
       } else if (repository.lastCommitHash) {
+        // Fallback to commit hash comparison (for papers without needsSync set)
         isUpToDate = paper.cachedCommitHash === repository.lastCommitHash;
       } else {
+        // Repository hasn't been synced yet
         isUpToDate = false;
       }
     }
@@ -275,7 +305,7 @@ export const togglePublic = mutation({
 });
 
 // Update paper with cached PDF info
-export const updatePdfCache = mutation({
+export const updatePdfCache = internalMutation({
   args: {
     id: v.id("papers"),
     pdfFileId: v.optional(v.id("_storage")),
@@ -299,6 +329,10 @@ export const updatePdfCache = mutation({
 // Generate upload URL for PDF storage
 export const generateUploadUrl = mutation({
   handler: async (ctx) => {
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
     return await ctx.storage.generateUploadUrl();
   },
 });

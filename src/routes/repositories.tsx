@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -23,6 +23,7 @@ function RepositoriesPage() {
   const syncPaper = useAction(api.sync.syncPaper);
   const fetchRepoInfo = useAction(api.git.fetchRepoInfo);
   const listUserRepos = useAction(api.git.listUserRepos);
+  const listUserGitLabRepos = useAction(api.git.listUserGitLabRepos);
   const listRepositoryFiles = useAction(api.git.listRepositoryFiles);
   const addTrackedFile = useMutation(api.papers.addTrackedFile);
 
@@ -37,6 +38,7 @@ function RepositoriesPage() {
   const deleteSelfHostedGitLabInstance = useMutation(api.users.deleteSelfHostedGitLabInstance);
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [activeAddTab, setActiveAddTab] = useState<"github" | "gitlab" | "overleaf" | "selfhosted" | "manual">("github");
 
   // Overleaf setup state
   const [showOverleafSetup, setShowOverleafSetup] = useState(false);
@@ -98,6 +100,17 @@ function RepositoriesPage() {
   }> | null>(null);
   const [isLoadingRepos, setIsLoadingRepos] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
+  const [gitlabRepos, setGitlabRepos] = useState<Array<{
+    name: string;
+    fullName: string;
+    url: string;
+    description: string | null;
+    isPrivate: boolean;
+    defaultBranch: string;
+    updatedAt: string;
+    ownerAvatar: string;
+  }> | null>(null);
+  const [isLoadingGitLabRepos, setIsLoadingGitLabRepos] = useState(false);
 
   // Confirm dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -111,9 +124,30 @@ function RepositoriesPage() {
   // Toast state
   const [toast, setToast] = useState<{ message: string; type: "error" | "success" | "info" } | null>(null);
 
-  // Load user repos when modal opens
+  // Track if we've done initial quick sync
+  const hasQuickSyncedRef = useRef(false);
+
+  const hasGitHubToken = Boolean(user?.hasGitHubToken);
+  const hasGitLabToken = Boolean(user?.hasGitLabToken);
+
+  // Quick sync all repositories on page load to check for updates
   useEffect(() => {
-    if (isAddModalOpen && userRepos === null && !isLoadingRepos) {
+    if (repositories && repositories.length > 0 && !hasQuickSyncedRef.current) {
+      hasQuickSyncedRef.current = true;
+      // Run quick sync on all repos in parallel (non-blocking)
+      repositories.forEach((repo) => {
+        if (repo.syncStatus !== "syncing") {
+          syncRepository({ repositoryId: repo._id }).catch((err) => {
+            console.error(`Quick sync failed for ${repo.name}:`, err);
+          });
+        }
+      });
+    }
+  }, [repositories, syncRepository]);
+
+  // Load user repos when GitHub tab is active
+  useEffect(() => {
+    if (isAddModalOpen && activeAddTab === "github" && hasGitHubToken && userRepos === null && !isLoadingRepos) {
       setIsLoadingRepos(true);
       listUserRepos()
         .then(setUserRepos)
@@ -123,14 +157,43 @@ function RepositoriesPage() {
         })
         .finally(() => setIsLoadingRepos(false));
     }
-  }, [isAddModalOpen, userRepos, isLoadingRepos, listUserRepos]);
+  }, [isAddModalOpen, activeAddTab, hasGitHubToken, userRepos, isLoadingRepos, listUserRepos]);
 
-  const filteredRepos = userRepos?.filter(
-    (repo) =>
-      repo.name.toLowerCase().includes(repoSearch.toLowerCase()) ||
-      repo.fullName.toLowerCase().includes(repoSearch.toLowerCase()) ||
-      repo.description?.toLowerCase().includes(repoSearch.toLowerCase())
-  );
+  useEffect(() => {
+    if (isAddModalOpen && activeAddTab === "gitlab" && hasGitLabToken && gitlabRepos === null && !isLoadingGitLabRepos) {
+      setIsLoadingGitLabRepos(true);
+      listUserGitLabRepos()
+        .then(setGitlabRepos)
+        .catch((err) => {
+          console.error("Failed to load GitLab repos:", err);
+          const message = err instanceof Error ? err.message : "Failed to load GitLab repositories";
+          const isUnauthorized = message.includes("401") || message.toLowerCase().includes("unauthorized");
+          setAddError(isUnauthorized ? "GitLab auth expired. Reconnect GitLab and try again." : "Failed to load GitLab repositories");
+          setGitlabRepos([]);
+        })
+        .finally(() => setIsLoadingGitLabRepos(false));
+    }
+  }, [isAddModalOpen, activeAddTab, hasGitLabToken, gitlabRepos, isLoadingGitLabRepos, listUserGitLabRepos]);
+
+  const filteredRepos = userRepos?.filter((repo) => {
+    const query = repoSearch.toLowerCase();
+    const description = (repo.description ?? "").toLowerCase();
+    return (
+      repo.name.toLowerCase().includes(query) ||
+      repo.fullName.toLowerCase().includes(query) ||
+      description.includes(query)
+    );
+  });
+
+  const filteredGitLabRepos = gitlabRepos?.filter((repo) => {
+    const query = repoSearch.toLowerCase();
+    const description = (repo.description ?? "").toLowerCase();
+    return (
+      repo.name.toLowerCase().includes(query) ||
+      repo.fullName.toLowerCase().includes(query) ||
+      description.includes(query)
+    );
+  });
 
   const handleAddRepository = async () => {
     if (!user || !gitUrl.trim()) return;
@@ -208,6 +271,33 @@ function RepositoriesPage() {
     } catch (error) {
       console.error("Failed to add repository:", error);
       const message = error instanceof Error ? error.message : "Failed to add repository";
+      setAddError(message);
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
+  const handleAddFromGitLabList = async (repo: {
+    url: string;
+    name: string;
+    defaultBranch: string;
+  }) => {
+    if (!user) return;
+
+    setIsAdding(true);
+    setAddError(null);
+    try {
+      await addRepository({
+        userId: user._id,
+        gitUrl: repo.url,
+        name: repo.name,
+        defaultBranch: repo.defaultBranch,
+      });
+      setIsAddModalOpen(false);
+      setRepoSearch("");
+    } catch (error) {
+      console.error("Failed to add GitLab repository:", error);
+      const message = error instanceof Error ? error.message : "Failed to add GitLab repository";
       setAddError(message);
     } finally {
       setIsAdding(false);
@@ -500,33 +590,75 @@ function RepositoriesPage() {
     );
   }
 
+  const handleSyncAll = async () => {
+    if (!repositories || repositories.length === 0) return;
+
+    // Run quick sync on all repos in parallel
+    const syncPromises = repositories
+      .filter((repo) => repo.syncStatus !== "syncing")
+      .map((repo) =>
+        syncRepository({ repositoryId: repo._id }).catch((err) => {
+          console.error(`Quick sync failed for ${repo.name}:`, err);
+        })
+      );
+
+    await Promise.all(syncPromises);
+  };
+
+  const isSyncingAny = repositories?.some((repo) => repo.syncStatus === "syncing") ?? false;
+
   return (
     <div>
       <div className="mb-8 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Repositories</h1>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSyncAll}
+            disabled={isSyncingAny || !repositories || repositories.length === 0}
+            className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+          >
+            {isSyncingAny ? (
+              <>
+                <svg className="mr-2 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Checking...
+              </>
+            ) : (
+              <>
+                <svg className="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Check All
+              </>
+            )}
+          </button>
         <button
           onClick={() => {
             setIsAddModalOpen(true);
             setAddError(null);
             setGitUrl("");
+            setActiveAddTab(hasGitHubToken ? "github" : (hasGitLabToken ? "gitlab" : "manual"));
           }}
-          className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-        >
-          <svg
-            className="mr-2 h-4 w-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
+            className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
-          Add Repository
-        </button>
+            <svg
+              className="mr-2 h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+            Add Repository
+          </button>
+        </div>
       </div>
 
       {/* Repository List */}
@@ -562,6 +694,7 @@ function RepositoriesPage() {
               setIsAddModalOpen(true);
               setAddError(null);
               setGitUrl("");
+              setActiveAddTab(hasGitHubToken ? "github" : (hasGitLabToken ? "gitlab" : "manual"));
             }}
             className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
@@ -638,26 +771,40 @@ function RepositoriesPage() {
                       </button>
                     )}
                     <p className="text-sm text-gray-500 truncate">{repo.gitUrl}</p>
-                    <div className="mt-2 flex items-center space-x-4 text-xs text-gray-400">
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400">
                       <span className="capitalize">{repo.provider}</span>
                       <span>Branch: {repo.defaultBranch}</span>
+                      {repo.paperCount > 0 && (
+                        <span>{repo.paperCount} paper{repo.paperCount !== 1 ? "s" : ""}</span>
+                      )}
                       {repo.lastSyncedAt && (
                         <span>
-                          Last synced:{" "}
+                          Checked:{" "}
                           {new Date(repo.lastSyncedAt).toLocaleString()}
                         </span>
                       )}
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                          repo.syncStatus === "idle"
-                            ? "bg-green-100 text-green-800"
-                            : repo.syncStatus === "syncing"
-                              ? "bg-yellow-100 text-yellow-800"
-                              : "bg-red-100 text-red-800"
-                        }`}
-                      >
-                        {repo.syncStatus}
-                      </span>
+                      {repo.syncStatus === "syncing" ? (
+                        <span className="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800">
+                          Syncing...
+                        </span>
+                      ) : repo.paperSyncStatus === "in_sync" ? (
+                        <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
+                          In sync
+                        </span>
+                      ) : repo.paperSyncStatus === "needs_sync" ? (
+                        <span className="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800">
+                          Needs sync
+                        </span>
+                      ) : repo.paperSyncStatus === "never_synced" ? (
+                        <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-800">
+                          Never synced
+                        </span>
+                      ) : null}
+                      {repo.papersWithErrors > 0 && (
+                        <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
+                          {repo.papersWithErrors} error{repo.papersWithErrors !== 1 ? "s" : ""}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -775,286 +922,474 @@ function RepositoriesPage() {
               </button>
             </div>
 
-            <div className="border-b p-4">
-              <input
-                type="text"
-                value={repoSearch}
-                onChange={(e) => setRepoSearch(e.target.value)}
-                placeholder="Search your repositories..."
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-2">
-              {isLoadingRepos ? (
-                <div className="flex items-center justify-center py-8">
-                  <svg
-                    className="h-6 w-6 animate-spin text-gray-400"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    />
-                  </svg>
-                  <span className="ml-2 text-sm text-gray-500">Loading repositories...</span>
-                </div>
-              ) : filteredRepos && filteredRepos.length > 0 ? (
-                <div className="space-y-1">
-                  {filteredRepos.map((repo) => (
-                    <button
-                      key={repo.fullName}
-                      onClick={() => handleAddFromList(repo)}
-                      disabled={isAdding}
-                      className="flex w-full items-center gap-3 rounded-md p-2 text-left hover:bg-gray-100 disabled:opacity-50"
-                    >
-                      <img
-                        src={repo.ownerAvatar}
-                        alt=""
-                        className="h-8 w-8 rounded-full"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate font-medium text-gray-900">
-                            {repo.fullName}
-                          </span>
-                          {repo.isPrivate && (
-                            <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                              Private
-                            </span>
-                          )}
-                        </div>
-                        {repo.description && (
-                          <p className="truncate text-xs text-gray-500">
-                            {repo.description}
-                          </p>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : userRepos && filteredRepos?.length === 0 ? (
-                <div className="py-8 text-center text-sm text-gray-500">
-                  No repositories found matching "{repoSearch}"
-                </div>
-              ) : (
-                <div className="py-8 text-center text-sm text-gray-500">
-                  No repositories available
-                </div>
-              )}
-            </div>
-
-            {/* Overleaf Section */}
-            <div className="border-t p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <svg className="h-5 w-5 text-green-600" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-                  </svg>
-                  <span className="text-sm font-medium text-gray-700">Overleaf</span>
-                </div>
-                {hasOverleafCreds ? (
+            <div className="border-b">
+              <div className="flex">
+                {[
+                  { id: "github", label: "GitHub", icon: (
+                    <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
+                    </svg>
+                  )},
+                  { id: "gitlab", label: "GitLab", icon: (
+                    <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M4.845.904c-.435 0-.82.28-.955.692C2.639 5.449 1.246 9.728.07 13.335a1.437 1.437 0 00.522 1.607l11.071 8.045c.2.145.472.144.67-.004l11.073-8.04a1.436 1.436 0 00.522-1.61c-1.285-3.942-2.683-8.256-3.817-11.746a1.004 1.004 0 00-.957-.684.987.987 0 00-.949.69l-2.405 7.408H8.203l-2.41-7.408a.987.987 0 00-.942-.69h-.006z" />
+                    </svg>
+                  )},
+                  { id: "overleaf", label: "Overleaf", icon: (
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M22.377 15.377c-.468 3.687-3.103 6.534-6.415 7.416a8.333 8.333 0 01-2.129.207c-4.636 0-8.393-3.895-8.393-8.7 0-4.617 3.472-8.39 7.873-8.674.226-.015.451-.022.676-.022 1.85 0 3.582.604 5.01 1.637l-3.7 3.845c-.432-.172-.898-.266-1.384-.266-1.945 0-3.52 1.633-3.52 3.647 0 2.013 1.575 3.646 3.52 3.646 1.483 0 2.752-.94 3.282-2.269h-3.282v-2.768h6.462c.052.42.078.848.078 1.283 0 .4-.026.794-.078 1.183zM12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2z"/>
+                    </svg>
+                  )},
+                  { id: "selfhosted", label: "Self-Hosted", icon: (
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                    </svg>
+                  )},
+                  { id: "manual", label: "Manual", icon: (
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  )},
+                ].map((tab) => (
                   <button
-                    onClick={handleClearOverleafCredentials}
-                    className="text-xs text-red-600 hover:text-red-700"
+                    key={tab.id}
+                    onClick={() => setActiveAddTab(tab.id as typeof activeAddTab)}
+                    className={`relative flex items-center gap-1.5 px-4 py-3 text-sm font-medium transition-colors ${
+                      activeAddTab === tab.id
+                        ? "text-gray-900"
+                        : "text-gray-500 hover:text-gray-700"
+                    }`}
                   >
-                    Disconnect
+                    {tab.icon}
+                    <span className="hidden sm:inline">{tab.label}</span>
+                    {activeAddTab === tab.id && (
+                      <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-900" />
+                    )}
                   </button>
-                ) : null}
+                ))}
               </div>
+            </div>
 
-              {hasOverleafCreds ? (
-                <div>
+            {activeAddTab === "github" && (
+              <>
+                <div className="border-b p-4">
+                  <input
+                    type="text"
+                    value={repoSearch}
+                    onChange={(e) => setRepoSearch(e.target.value)}
+                    placeholder="Search your GitHub repositories..."
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-2">
+                  {!hasGitHubToken ? (
+                    <div className="py-8 text-center text-sm text-gray-500">
+                      Connect GitHub to list repositories, or use the Manual tab.
+                    </div>
+                  ) : isLoadingRepos ? (
+                    <div className="flex items-center justify-center py-8">
+                      <svg
+                        className="h-6 w-6 animate-spin text-gray-400"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                        />
+                      </svg>
+                      <span className="ml-2 text-sm text-gray-500">Loading repositories...</span>
+                    </div>
+                  ) : filteredRepos && filteredRepos.length > 0 ? (
+                    <div className="space-y-1">
+                      {filteredRepos.map((repo) => (
+                        <button
+                          key={repo.fullName}
+                          onClick={() => handleAddFromList(repo)}
+                          disabled={isAdding}
+                          className="flex w-full items-center gap-3 rounded-md p-2 text-left hover:bg-gray-100 disabled:opacity-50"
+                        >
+                          <img
+                            src={repo.ownerAvatar}
+                            alt=""
+                            className="h-8 w-8 rounded-full"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate font-medium text-gray-900">
+                                {repo.fullName}
+                              </span>
+                              {repo.isPrivate && (
+                                <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                                  Private
+                                </span>
+                              )}
+                            </div>
+                            {repo.description && (
+                              <p className="truncate text-xs text-gray-500">
+                                {repo.description}
+                              </p>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : userRepos && filteredRepos?.length === 0 ? (
+                    <div className="py-8 text-center text-sm text-gray-500">
+                      No repositories found matching "{repoSearch}"
+                    </div>
+                  ) : (
+                    <div className="py-8 text-center text-sm text-gray-500">
+                      No repositories available
+                    </div>
+                  )}
+                  {addError && (
+                    <p className="px-2 pb-2 text-sm text-red-600">{addError}</p>
+                  )}
+                </div>
+              </>
+            )}
+
+            {activeAddTab === "gitlab" && (
+              <>
+                <div className="border-b p-4">
+                  <input
+                    type="text"
+                    value={repoSearch}
+                    onChange={(e) => setRepoSearch(e.target.value)}
+                    placeholder="Search your GitLab repositories..."
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex-1 overflow-y-auto p-2">
+                  {!hasGitLabToken ? (
+                    <div className="py-8 text-center text-sm text-gray-500">
+                      Connect GitLab to list repositories, or use the Manual tab.
+                    </div>
+                  ) : isLoadingGitLabRepos ? (
+                    <div className="flex items-center justify-center py-8">
+                      <svg
+                        className="h-6 w-6 animate-spin text-gray-400"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                        />
+                      </svg>
+                      <span className="ml-2 text-sm text-gray-500">Loading repositories...</span>
+                    </div>
+                  ) : filteredGitLabRepos && filteredGitLabRepos.length > 0 ? (
+                    <div className="space-y-1">
+                      {filteredGitLabRepos.map((repo) => (
+                        <button
+                          key={repo.fullName}
+                          onClick={() => handleAddFromGitLabList(repo)}
+                          disabled={isAdding}
+                          className="flex w-full items-center gap-3 rounded-md p-2 text-left hover:bg-gray-100 disabled:opacity-50"
+                        >
+                          {repo.ownerAvatar ? (
+                            <img
+                              src={repo.ownerAvatar}
+                              alt=""
+                              className="h-8 w-8 rounded-full"
+                            />
+                          ) : (
+                            <div className="h-8 w-8 rounded-full bg-gray-200" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate font-medium text-gray-900">
+                                {repo.fullName}
+                              </span>
+                              {repo.isPrivate && (
+                                <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                                  Private
+                                </span>
+                              )}
+                            </div>
+                            {repo.description && (
+                              <p className="truncate text-xs text-gray-500">
+                                {repo.description}
+                              </p>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : gitlabRepos && filteredGitLabRepos?.length === 0 ? (
+                    <div className="py-8 text-center text-sm text-gray-500">
+                      No repositories found matching "{repoSearch}"
+                    </div>
+                  ) : (
+                    <div className="py-8 text-center text-sm text-gray-500">
+                      No repositories available
+                    </div>
+                  )}
+                  {addError && (
+                    <p className="px-2 pb-2 text-sm text-red-600">{addError}</p>
+                  )}
+                </div>
+                <div className="border-t p-4">
                   <p className="mb-2 text-xs text-gray-500">
-                    Enter your Overleaf Git URL (find it in your project's Git menu):
+                    Or add a GitLab repository by URL:
                   </p>
                   <div className="flex gap-2">
                     <input
                       type="text"
-                      value={overleafGitUrl}
+                      value={gitUrl}
                       onChange={(e) => {
-                        setOverleafGitUrl(e.target.value);
+                        setGitUrl(e.target.value);
                         setAddError(null);
                       }}
-                      placeholder="https://git.overleaf.com/abc123def456..."
+                      placeholder="https://gitlab.com/group/repo"
                       className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       onKeyDown={(e) => {
-                        if (e.key === "Enter" && !isAddingOverleaf && overleafGitUrl.trim()) {
-                          handleAddOverleafRepository();
+                        if (e.key === "Enter" && !isAdding && gitUrl.trim()) {
+                          handleAddRepository();
                         }
                       }}
                     />
                     <button
-                      onClick={handleAddOverleafRepository}
-                      disabled={isAddingOverleaf || !overleafGitUrl.trim()}
-                      className="shrink-0 rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                      onClick={handleAddRepository}
+                      disabled={isAdding || !gitUrl.trim()}
+                      className="shrink-0 rounded-md bg-[#FC6D26] px-4 py-2 text-sm font-medium text-white hover:bg-[#E24329] disabled:opacity-50"
                     >
-                      {isAddingOverleaf ? "Adding..." : "Add"}
+                      {isAdding ? "Adding..." : "Add"}
                     </button>
                   </div>
                 </div>
-              ) : (
-                <button
-                  onClick={() => {
-                    setShowOverleafSetup(true);
-                    setOverleafError(null);
-                    setOverleafEmail("");
-                    setOverleafToken("");
-                  }}
-                  className="w-full rounded-md border border-green-300 bg-green-50 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-100"
-                >
-                  Connect Overleaf Account
-                </button>
-              )}
-            </div>
+              </>
+            )}
 
-            {/* Self-hosted GitLab Section */}
-            <div className="border-t p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <svg className="h-5 w-5 text-[#554488]" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M4.845.904c-.435 0-.82.28-.955.692C2.639 5.449 1.246 9.728.07 13.335a1.437 1.437 0 00.522 1.607l11.071 8.045c.2.145.472.144.67-.004l11.073-8.04a1.436 1.436 0 00.522-1.61c-1.285-3.942-2.683-8.256-3.817-11.746a1.004 1.004 0 00-.957-.684.987.987 0 00-.949.69l-2.405 7.408H8.203l-2.41-7.408a.987.987 0 00-.942-.69h-.006z" />
-                  </svg>
-                  <span className="text-sm font-medium text-gray-700">Self-Hosted GitLab</span>
-                </div>
-                <button
-                  onClick={() => {
-                    setShowSelfHostedGitLabSetup(true);
-                    setSelfHostedGitLabError(null);
-                    setSelfHostedGitLabName("");
-                    setSelfHostedGitLabUrlInput("");
-                    setSelfHostedGitLabToken("");
-                  }}
-                  className="text-xs text-[#554488] hover:text-[#443377]"
-                >
-                  + Add Instance
-                </button>
-              </div>
-
-              {selfHostedGitLabInstances && selfHostedGitLabInstances.length > 0 ? (
-                <div className="space-y-2">
-                  {/* Instance selector and repo URL input */}
-                  <div className="space-y-2">
-                    {selfHostedGitLabInstances.map((instance) => (
-                      <div
-                        key={instance._id}
-                        className={`flex items-center justify-between rounded-md border p-2 ${
-                          selectedSelfHostedInstance === instance._id
-                            ? "border-[#554488] bg-[#554488]/5"
-                            : "border-gray-200 hover:border-gray-300"
-                        }`}
-                      >
-                        <button
-                          onClick={() => setSelectedSelfHostedInstance(
-                            selectedSelfHostedInstance === instance._id ? null : instance._id
-                          )}
-                          className="flex flex-1 items-center gap-2 text-left"
-                        >
-                          <input
-                            type="radio"
-                            checked={selectedSelfHostedInstance === instance._id}
-                            onChange={() => {}}
-                            className="h-4 w-4 text-[#554488]"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium text-gray-900">{instance.name}</p>
-                            <p className="truncate text-xs text-gray-500">{instance.url}</p>
-                          </div>
-                        </button>
-                        <button
-                          onClick={() => handleDeleteSelfHostedGitLabInstance(instance._id, instance.name)}
-                          className="ml-2 shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
-                          title="Delete instance"
-                        >
-                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </div>
-                    ))}
+            {activeAddTab === "overleaf" && (
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <svg className="h-5 w-5 text-green-600" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                    </svg>
+                    <span className="text-sm font-medium text-gray-700">Overleaf</span>
                   </div>
-
-                  {/* Repo URL input (shown when an instance is selected) */}
-                  {selectedSelfHostedInstance && (
-                    <div className="mt-3">
-                      <p className="mb-2 text-xs text-gray-500">
-                        Enter repository URL from {selfHostedGitLabInstances.find(i => i._id === selectedSelfHostedInstance)?.name}:
-                      </p>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={selfHostedGitLabRepoUrl}
-                          onChange={(e) => {
-                            setSelfHostedGitLabRepoUrl(e.target.value);
-                            setAddError(null);
-                          }}
-                          placeholder={`${selfHostedGitLabInstances.find(i => i._id === selectedSelfHostedInstance)?.url}/owner/repo`}
-                          className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && !isAddingSelfHostedGitLab && selfHostedGitLabRepoUrl.trim()) {
-                              handleAddSelfHostedGitLabRepository();
-                            }
-                          }}
-                        />
-                        <button
-                          onClick={handleAddSelfHostedGitLabRepository}
-                          disabled={isAddingSelfHostedGitLab || !selfHostedGitLabRepoUrl.trim()}
-                          className="shrink-0 rounded-md bg-[#554488] px-4 py-2 text-sm font-medium text-white hover:bg-[#443377] disabled:opacity-50"
-                        >
-                          {isAddingSelfHostedGitLab ? "Adding..." : "Add"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  {hasOverleafCreds ? (
+                    <button
+                      onClick={handleClearOverleafCredentials}
+                      className="text-xs text-red-600 hover:text-red-700"
+                    >
+                      Disconnect
+                    </button>
+                  ) : null}
                 </div>
-              ) : (
-                <p className="text-center text-xs text-gray-500">
-                  No self-hosted GitLab instances configured.
-                </p>
-              )}
-            </div>
 
-            {/* Manual URL Input */}
-            <div className="border-t p-4">
-              <p className="mb-2 text-xs text-gray-500">Or enter a GitHub/GitLab URL manually:</p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={gitUrl}
-                  onChange={(e) => {
-                    setGitUrl(e.target.value);
-                    setAddError(null);
-                  }}
-                  placeholder="https://github.com/user/repo or https://gitlab.com/user/repo"
-                  className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !isAdding && gitUrl.trim()) {
-                      handleAddRepository();
-                    }
-                  }}
-                />
-                <button
-                  onClick={handleAddRepository}
-                  disabled={isAdding || !gitUrl.trim()}
-                  className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {isAdding ? "Adding..." : "Add"}
-                </button>
+                {hasOverleafCreds ? (
+                  <div>
+                    <p className="mb-2 text-xs text-gray-500">
+                      Enter your Overleaf Git URL (find it in your project's Git menu):
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={overleafGitUrl}
+                        onChange={(e) => {
+                          setOverleafGitUrl(e.target.value);
+                          setAddError(null);
+                        }}
+                        placeholder="https://git.overleaf.com/abc123def456..."
+                        className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !isAddingOverleaf && overleafGitUrl.trim()) {
+                            handleAddOverleafRepository();
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={handleAddOverleafRepository}
+                        disabled={isAddingOverleaf || !overleafGitUrl.trim()}
+                        className="shrink-0 rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                      >
+                        {isAddingOverleaf ? "Adding..." : "Add"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setShowOverleafSetup(true);
+                      setOverleafError(null);
+                      setOverleafEmail("");
+                      setOverleafToken("");
+                    }}
+                    className="w-full rounded-md border border-green-300 bg-green-50 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-100"
+                  >
+                    Connect Overleaf Account
+                  </button>
+                )}
+                {addError && (
+                  <p className="mt-2 text-sm text-red-600">{addError}</p>
+                )}
               </div>
-              {addError && (
-                <p className="mt-2 text-sm text-red-600">{addError}</p>
-              )}
-            </div>
+            )}
+
+            {activeAddTab === "selfhosted" && (
+              <div className="flex-1 overflow-y-auto p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <svg className="h-5 w-5 text-[#554488]" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M4.845.904c-.435 0-.82.28-.955.692C2.639 5.449 1.246 9.728.07 13.335a1.437 1.437 0 00.522 1.607l11.071 8.045c.2.145.472.144.67-.004l11.073-8.04a1.436 1.436 0 00.522-1.61c-1.285-3.942-2.683-8.256-3.817-11.746a1.004 1.004 0 00-.957-.684.987.987 0 00-.949.69l-2.405 7.408H8.203l-2.41-7.408a.987.987 0 00-.942-.69h-.006z" />
+                    </svg>
+                    <span className="text-sm font-medium text-gray-700">Self-Hosted GitLab</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowSelfHostedGitLabSetup(true);
+                      setSelfHostedGitLabError(null);
+                      setSelfHostedGitLabName("");
+                      setSelfHostedGitLabUrlInput("");
+                      setSelfHostedGitLabToken("");
+                    }}
+                    className="text-xs text-[#554488] hover:text-[#443377]"
+                  >
+                    + Add Instance
+                  </button>
+                </div>
+
+                {selfHostedGitLabInstances && selfHostedGitLabInstances.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="space-y-2">
+                      {selfHostedGitLabInstances.map((instance) => (
+                        <div
+                          key={instance._id}
+                          className={`flex items-center justify-between rounded-md border p-2 ${
+                            selectedSelfHostedInstance === instance._id
+                              ? "border-[#554488] bg-[#554488]/5"
+                              : "border-gray-200 hover:border-gray-300"
+                          }`}
+                        >
+                          <button
+                            onClick={() => setSelectedSelfHostedInstance(
+                              selectedSelfHostedInstance === instance._id ? null : instance._id
+                            )}
+                            className="flex flex-1 items-center gap-2 text-left"
+                          >
+                            <input
+                              type="radio"
+                              checked={selectedSelfHostedInstance === instance._id}
+                              onChange={() => {}}
+                              className="h-4 w-4 text-[#554488]"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium text-gray-900">{instance.name}</p>
+                              <p className="truncate text-xs text-gray-500">{instance.url}</p>
+                            </div>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteSelfHostedGitLabInstance(instance._id, instance.name)}
+                            className="ml-2 shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                            title="Delete instance"
+                          >
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {selectedSelfHostedInstance && (
+                      <div className="mt-3">
+                        <p className="mb-2 text-xs text-gray-500">
+                          Enter repository URL from {selfHostedGitLabInstances.find(i => i._id === selectedSelfHostedInstance)?.name}:
+                        </p>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={selfHostedGitLabRepoUrl}
+                            onChange={(e) => {
+                              setSelfHostedGitLabRepoUrl(e.target.value);
+                              setAddError(null);
+                            }}
+                            placeholder={`${selfHostedGitLabInstances.find(i => i._id === selectedSelfHostedInstance)?.url}/owner/repo`}
+                            className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !isAddingSelfHostedGitLab && selfHostedGitLabRepoUrl.trim()) {
+                                handleAddSelfHostedGitLabRepository();
+                              }
+                            }}
+                          />
+                          <button
+                            onClick={handleAddSelfHostedGitLabRepository}
+                            disabled={isAddingSelfHostedGitLab || !selfHostedGitLabRepoUrl.trim()}
+                            className="shrink-0 rounded-md bg-[#554488] px-4 py-2 text-sm font-medium text-white hover:bg-[#443377] disabled:opacity-50"
+                          >
+                            {isAddingSelfHostedGitLab ? "Adding..." : "Add"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-center text-xs text-gray-500">
+                    No self-hosted GitLab instances configured.
+                  </p>
+                )}
+                {addError && (
+                  <p className="mt-2 text-sm text-red-600">{addError}</p>
+                )}
+              </div>
+            )}
+
+            {activeAddTab === "manual" && (
+              <div className="flex-1 overflow-y-auto p-4">
+                <p className="mb-2 text-xs text-gray-500">Enter a repository URL manually:</p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={gitUrl}
+                    onChange={(e) => {
+                      setGitUrl(e.target.value);
+                      setAddError(null);
+                    }}
+                    placeholder="https://github.com/user/repo or https://gitlab.com/user/repo"
+                    className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !isAdding && gitUrl.trim()) {
+                        handleAddRepository();
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={handleAddRepository}
+                    disabled={isAdding || !gitUrl.trim()}
+                    className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {isAdding ? "Adding..." : "Add"}
+                  </button>
+                </div>
+                {addError && (
+                  <p className="mt-2 text-sm text-red-600">{addError}</p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
