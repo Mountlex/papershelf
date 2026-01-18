@@ -168,4 +168,60 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_refresh_token_hash", ["refreshTokenHash"])
     .index("by_user_and_device", ["userId", "deviceId"]),
+
+  // Link intents for secure OAuth account linking (prevents CSRF/tampering)
+  linkIntents: defineTable({
+    userId: v.id("users"),
+    provider: v.union(v.literal("github"), v.literal("gitlab")),
+    intentToken: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    used: v.boolean(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_token", ["intentToken"]),
+
+  // Email rate limits for auth operations
+  emailRateLimits: defineTable({
+    email: v.string(),
+    action: v.union(
+      v.literal("otp_send"),
+      v.literal("otp_verify"),
+      v.literal("password_reset"),
+      v.literal("signup")
+    ),
+    attempts: v.number(),
+    windowStart: v.number(),
+    lastAttempt: v.number(),
+    lockedUntil: v.optional(v.number()),
+  })
+    .index("by_email_action", ["email", "action"]),
+
+  // Password change codes for authenticated users
+  passwordChangeCodes: defineTable({
+    userId: v.id("users"),
+    codeHash: v.string(),
+    expiresAt: v.number(),
+    used: v.boolean(),
+  })
+    .index("by_user", ["userId"]),
+
+  // Audit logs for sensitive auth operations
+  auditLogs: defineTable({
+    userId: v.id("users"),
+    action: v.union(
+      v.literal("account_merge"),
+      v.literal("provider_link"),
+      v.literal("password_reset"),
+      v.literal("session_invalidate"),
+      v.literal("token_revoke")
+    ),
+    targetUserId: v.optional(v.id("users")),
+    metadata: v.optional(v.string()),
+    timestamp: v.number(),
+    success: v.boolean(),
+    errorMessage: v.optional(v.string()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_timestamp", ["timestamp"]),
 });

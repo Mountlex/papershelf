@@ -1,10 +1,9 @@
 import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/router-devtools";
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useUser, checkPendingLink, clearPendingLink, isLinkInProgress } from "../hooks/useUser";
-import type { Id } from "../../convex/_generated/dataModel";
 import { EmailPasswordForm } from "../components/auth/EmailPasswordForm";
 
 export const Route = createRootRoute({
@@ -29,11 +28,20 @@ function GitLabIcon({ className }: { className?: string }) {
   );
 }
 
-// Overleaf icon component (official logo)
-function OverleafIcon({ className }: { className?: string }) {
+// User profile icon component
+function UserIcon({ className }: { className?: string }) {
   return (
-    <svg className={className} fill="currentColor" viewBox="0 0 24 24">
-      <path d="M22.3515.7484C19.1109-.5101 7.365-.982 7.3452 6.0266c-3.4272 2.194-5.6967 5.768-5.6967 9.598a8.373 8.373 0 0 0 13.1225 6.898 8.373 8.373 0 0 0-1.7668-14.7194c-.6062-.2339-1.9234-.6481-2.9753-.559-1.5007.9544-3.3308 2.9155-4.1949 4.8693 2.5894-3.082 7.5046-2.425 9.1937 1.2287 1.6892 3.6538-.9944 7.8237-5.0198 7.7998a5.4995 5.4995 0 0 1-4.1949-1.9328c-1.485-1.7483-1.8678-3.6444-1.5615-5.4975 1.057-6.4947 8.759-10.1894 14.486-11.6094-1.8677.989-5.2373 2.6134-7.5948 4.3837C18.015 9.1382 19.1308 3.345 22.3515.7484z" />
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+    </svg>
+  );
+}
+
+// Sign out icon component
+function SignOutIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" />
     </svg>
   );
 }
@@ -45,31 +53,12 @@ function RootComponent() {
     isAuthenticated,
     signInWithGitHub,
     signInWithGitLab,
-    linkWithGitHub,
-    linkWithGitLab,
-    disconnectGitHub,
-    disconnectGitLab,
-    disconnectOverleaf,
     signOut,
-    connectedProviders,
-    selfHostedGitLabInstances,
   } = useUser();
   const linkProviderToAccount = useMutation(api.users.linkProviderToAccount);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
   const [isLinking, setIsLinking] = useState(() => isLinkInProgress());
   const [linkError, setLinkError] = useState<string | null>(null);
-
-  // Close menu when clicking outside
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setIsMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  const [showRecovery, setShowRecovery] = useState(false);
 
   // Detect link completion after OAuth redirect
   useEffect(() => {
@@ -85,28 +74,33 @@ function RootComponent() {
         return;
       }
 
-      // If current user differs from original, we need to link
-      if (user._id !== pendingLink.originalUserId) {
-        setIsLinking(true);
-        try {
-          await linkProviderToAccount({
-            originalUserId: pendingLink.originalUserId as Id<"users">,
-          });
-          clearPendingLink();
+      // We have a pending link intent - try to complete it
+      setIsLinking(true);
+      try {
+        // Use the secure intent token (server validates ownership)
+        const result = await linkProviderToAccount({
+          intentToken: pendingLink.intentToken,
+        });
+        clearPendingLink();
+
+        if (result.linked) {
           // Small delay to ensure session is committed, then reload
           await new Promise((resolve) => setTimeout(resolve, 500));
           window.location.reload();
-        } catch (error) {
-          console.error("Failed to link accounts:", error);
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          setLinkError(errorMessage);
-          clearPendingLink();
+        } else {
+          // Same user or other non-error case
           setIsLinking(false);
         }
-      } else {
-        // Same user - OAuth added provider to existing account (same email)
+      } catch (error) {
+        console.error("Failed to link accounts:", error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setLinkError(errorMessage);
         clearPendingLink();
         setIsLinking(false);
+        // Show recovery UI for critical errors
+        if (errorMessage.includes("expired") || errorMessage.includes("Invalid")) {
+          setShowRecovery(true);
+        }
       }
     }
 
@@ -142,175 +136,21 @@ function RootComponent() {
             {isLoading ? (
               <div className="h-8 w-8 animate-pulse rounded-full bg-gray-200" />
             ) : isAuthenticated ? (
-              <div className="relative" ref={menuRef}>
-                <button
-                  onClick={() => setIsMenuOpen(!isMenuOpen)}
-                  className="flex items-center gap-2 rounded-md px-2 py-1 hover:bg-gray-100"
+              <div className="flex items-center gap-2">
+                <Link
+                  to="/profile"
+                  className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-gray-100 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-900"
+                  title="Profile"
                 >
-                  <div className="flex items-center gap-1">
-                    {connectedProviders.github && (
-                      <GitHubIcon className="h-4 w-4 text-gray-700" />
-                    )}
-                    {connectedProviders.gitlab && (
-                      <GitLabIcon className="h-4 w-4 text-[#FC6D26]" />
-                    )}
-                    {connectedProviders.overleaf && (
-                      <OverleafIcon className="h-4 w-4 text-[#47A141]" />
-                    )}
-                    {connectedProviders.selfHostedGitLab && (
-                      <GitLabIcon className="h-4 w-4 text-[#554488]" />
-                    )}
-                  </div>
-                  <svg
-                    className={`h-4 w-4 text-gray-500 transition-transform ${isMenuOpen ? "rotate-180" : ""}`}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
+                  <UserIcon className="h-5 w-5" />
+                </Link>
+                <button
+                  onClick={() => signOut()}
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+                  title="Sign out"
+                >
+                  <SignOutIcon className="h-5 w-5" />
                 </button>
-
-                {/* Dropdown menu */}
-                {isMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-64 rounded-lg border bg-white py-2 shadow-lg">
-                    <div className="border-b px-4 py-2">
-                      <p className="text-sm font-medium text-gray-900">{user?.name || "User"}</p>
-                      <p className="text-xs text-gray-500">{user?.email}</p>
-                    </div>
-
-                    <div className="px-4 py-2">
-                      <p className="mb-2 text-xs font-medium uppercase text-gray-500">Connected Accounts</p>
-
-                      {/* GitHub status */}
-                      <div className="flex items-center justify-between py-1">
-                        <div className="flex items-center gap-2">
-                          <GitHubIcon className="h-4 w-4" />
-                          <span className="text-sm">GitHub</span>
-                        </div>
-                        {connectedProviders.github ? (
-                          <button
-                            onClick={() => {
-                              disconnectGitHub();
-                              setIsMenuOpen(false);
-                            }}
-                            className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
-                          >
-                            Disconnect
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              linkWithGitHub();
-                              setIsMenuOpen(false);
-                            }}
-                            className="rounded bg-gray-900 px-2 py-1 text-xs text-white hover:bg-gray-800"
-                          >
-                            Connect
-                          </button>
-                        )}
-                      </div>
-
-                      {/* GitLab status */}
-                      <div className="flex items-center justify-between py-1">
-                        <div className="flex items-center gap-2">
-                          <GitLabIcon className="h-4 w-4 text-[#FC6D26]" />
-                          <span className="text-sm">GitLab</span>
-                        </div>
-                        {connectedProviders.gitlab ? (
-                          <button
-                            onClick={() => {
-                              disconnectGitLab();
-                              setIsMenuOpen(false);
-                            }}
-                            className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
-                          >
-                            Disconnect
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              linkWithGitLab();
-                              setIsMenuOpen(false);
-                            }}
-                            className="rounded bg-[#FC6D26] px-2 py-1 text-xs text-white hover:bg-[#E24329]"
-                          >
-                            Connect
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Overleaf status */}
-                      <div className="flex items-center justify-between py-1">
-                        <div className="flex items-center gap-2">
-                          <OverleafIcon className="h-4 w-4 text-[#47A141]" />
-                          <span className="text-sm">Overleaf</span>
-                        </div>
-                        {connectedProviders.overleaf ? (
-                          <button
-                            onClick={() => {
-                              disconnectOverleaf();
-                              setIsMenuOpen(false);
-                            }}
-                            className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
-                          >
-                            Disconnect
-                          </button>
-                        ) : (
-                          <Link
-                            to="/repositories"
-                            onClick={() => setIsMenuOpen(false)}
-                            className="rounded bg-[#47A141] px-2 py-1 text-xs text-white hover:bg-[#3d8a37]"
-                          >
-                            Configure
-                          </Link>
-                        )}
-                      </div>
-
-                      {/* Self-hosted GitLab instances */}
-                      {selfHostedGitLabInstances.length > 0 ? (
-                        selfHostedGitLabInstances.map((instance) => (
-                          <div key={instance._id} className="flex items-center justify-between py-1">
-                            <div className="flex items-center gap-2">
-                              <GitLabIcon className="h-4 w-4 text-[#554488]" />
-                              <span className="text-sm truncate max-w-[120px]" title={instance.name}>
-                                {instance.name}
-                              </span>
-                            </div>
-                            <span className="flex items-center gap-1 text-xs text-green-600">
-                              <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
-                              Configured
-                            </span>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="flex items-center justify-between py-1">
-                          <div className="flex items-center gap-2">
-                            <GitLabIcon className="h-4 w-4 text-[#554488]" />
-                            <span className="text-sm">Self-Hosted GitLab</span>
-                          </div>
-                          <span className="text-xs text-gray-400">
-                            Not configured
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="border-t px-4 py-2">
-                      <button
-                        onClick={() => {
-                          signOut();
-                          setIsMenuOpen(false);
-                        }}
-                        className="w-full rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
-                      >
-                        Sign out
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
             ) : (
               <div className="flex items-center gap-2">
@@ -346,6 +186,42 @@ function RootComponent() {
             >
               Dismiss
             </button>
+          </div>
+        )}
+        {/* Recovery modal for failed account linking */}
+        {showRecovery && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="mx-4 max-w-md rounded-lg bg-white p-6 shadow-xl">
+              <h3 className="text-lg font-semibold text-gray-900">Account Linking Failed</h3>
+              <p className="mt-2 text-sm text-gray-600">
+                The account linking session has expired or was invalid. This can happen if you took
+                more than 10 minutes to complete the OAuth flow, or if you navigated away.
+              </p>
+              <p className="mt-2 text-sm text-gray-600">
+                Please sign in to your original account and try linking again.
+              </p>
+              <div className="mt-4 flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowRecovery(false);
+                    setLinkError(null);
+                    signOut();
+                  }}
+                  className="flex-1 rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+                >
+                  Sign Out & Try Again
+                </button>
+                <button
+                  onClick={() => {
+                    setShowRecovery(false);
+                    setLinkError(null);
+                  }}
+                  className="flex-1 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Continue Anyway
+                </button>
+              </div>
+            </div>
           </div>
         )}
         {isLinking ? (

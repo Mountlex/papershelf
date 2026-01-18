@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useAuthActions } from "@convex-dev/auth/react";
+import { useMutation } from "convex/react";
+import { api } from "../../../convex/_generated/api";
 import { VerificationCodeInput } from "./VerificationCodeInput";
 
 type AuthMode = "signIn" | "signUp" | "verify" | "forgotPassword" | "resetPassword";
@@ -27,6 +29,7 @@ function validatePassword(password: string): string | undefined {
 
 export function EmailPasswordForm() {
   const { signIn } = useAuthActions();
+  const invalidateAllSessions = useMutation(api.users.invalidateAllSessions);
   const [mode, setMode] = useState<AuthMode>("signIn");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -92,11 +95,15 @@ export function EmailPasswordForm() {
       await signIn("password", formData);
       setMode("verify");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Sign up failed";
+      // Security: Use generic message to prevent email enumeration
+      // Don't reveal whether an account exists or not
+      const message = error instanceof Error ? error.message : "";
       if (message.includes("already exists") || message.includes("existing")) {
-        setErrors({ email: "An account with this email already exists" });
+        setErrors({
+          general: "Unable to create account. If you already have an account, try signing in instead.",
+        });
       } else {
-        setErrors({ general: message });
+        setErrors({ general: "Unable to create account. Please try again." });
       }
     } finally {
       setIsLoading(false);
@@ -139,12 +146,15 @@ export function EmailPasswordForm() {
       formData.set("flow", "reset");
 
       await signIn("password", formData);
-      setMode("resetPassword");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Request failed";
-      setErrors({ general: message });
+      // Security: Don't reveal whether account exists
+      // Silently proceed to reset screen regardless of error
+      console.error("Password reset request error (suppressed for security):", error);
     } finally {
       setIsLoading(false);
+      // Security: Always show success message to prevent email enumeration
+      // The reset screen will say "If an account exists, we sent a code"
+      setMode("resetPassword");
     }
   };
 
@@ -168,6 +178,15 @@ export function EmailPasswordForm() {
       formData.set("flow", "reset-verification");
 
       await signIn("password", formData);
+
+      // Security: Invalidate all other sessions after password reset
+      // This ensures attackers who may have compromised previous sessions are logged out
+      try {
+        await invalidateAllSessions({});
+      } catch (sessionError) {
+        // Non-critical - log but don't fail the password reset
+        console.error("Failed to invalidate sessions:", sessionError);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Reset failed";
       if (message.includes("expired")) {
@@ -319,7 +338,7 @@ export function EmailPasswordForm() {
           Enter reset code
         </h2>
         <p className="text-sm text-gray-600 text-center mb-6">
-          We sent a code to <strong>{email}</strong>
+          If an account exists for <strong>{email}</strong>, we sent a reset code.
         </p>
 
         <form onSubmit={handleResetPassword} className="space-y-4">
