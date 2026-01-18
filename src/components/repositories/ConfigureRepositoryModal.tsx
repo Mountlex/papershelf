@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { RepoFile, SelectedFile } from "./types";
 import type { Id } from "../../../convex/_generated/dataModel";
 
@@ -26,7 +26,7 @@ export function ConfigureRepositoryModal({
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
   const [isAddingFiles, setIsAddingFiles] = useState(false);
 
-  const loadFiles = async (path: string) => {
+  const loadFiles = useCallback(async (path: string) => {
     setIsLoadingFiles(true);
     try {
       const files = await listRepositoryFiles({
@@ -41,11 +41,11 @@ export function ConfigureRepositoryModal({
     } finally {
       setIsLoadingFiles(false);
     }
-  };
+  }, [listRepositoryFiles, repo.gitUrl, repo.defaultBranch]);
 
   useEffect(() => {
     loadFiles("");
-  }, [repo.gitUrl, repo.defaultBranch]);
+  }, [loadFiles]);
 
   const navigateToFolder = (path: string) => {
     loadFiles(path);

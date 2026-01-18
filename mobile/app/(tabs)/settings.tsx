@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet, Pressable, Alert, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useAuth } from "@/lib/auth";
+import { useAuth } from "@/lib/useAuth";
 import { useStorageInfo } from "@/hooks/useStorageInfo";
 import { clearAllOfflineData } from "@/lib/offlineStorage";
 import { formatBytes } from "@/lib/utils";

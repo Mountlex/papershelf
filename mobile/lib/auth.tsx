@@ -1,12 +1,11 @@
 import {
-  createContext,
-  useContext,
   useState,
   useEffect,
   useCallback,
   useRef,
   ReactNode,
 } from "react";
+import { AuthContext } from "./AuthContext";
 import * as SecureStore from "expo-secure-store";
 import * as WebBrowser from "expo-web-browser";
 import * as Device from "expo-device";
@@ -27,20 +26,6 @@ interface User {
   email: string;
   name?: string;
 }
-
-interface AuthContextType {
-  user: User | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  accessToken: string | null;
-  loginWithGitHub: () => Promise<void>;
-  loginWithGitLab: () => Promise<void>;
-  loginWithEmail: () => Promise<void>;
-  logout: () => Promise<void>;
-  refreshAccessToken: () => Promise<string | null>;
-}
-
-const AuthContext = createContext<AuthContextType | null>(null);
 
 // Warm up browser for faster OAuth
 WebBrowser.warmUpAsync();
@@ -302,47 +287,3 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
-}
-
-// Helper to get current access token (with auto-refresh)
-export async function getAccessToken(): Promise<string | null> {
-  const storedToken = await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
-  const storedExpiry = await SecureStore.getItemAsync(TOKEN_EXPIRY_KEY);
-
-  if (!storedToken || !storedExpiry) {
-    return null;
-  }
-
-  const expiry = parseInt(storedExpiry, 10);
-
-  // Refresh if expiring within 1 minute
-  if (Date.now() > expiry - 60000) {
-    const refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
-    if (!refreshToken) {
-      return null;
-    }
-
-    const response = await fetch(`${CONVEX_URL}/api/auth/mobile/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshToken }),
-    });
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const data = await response.json();
-    await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, data.accessToken);
-    await SecureStore.setItemAsync(TOKEN_EXPIRY_KEY, data.expiresAt.toString());
-    return data.accessToken;
-  }
-
-  return storedToken;
-}

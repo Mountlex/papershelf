@@ -13,16 +13,16 @@ interface DownloadStatus {
  */
 export function useDownloadStatus(paperId: string): DownloadStatus {
   const [isOffline, setIsOffline] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [isDownloading, setIsDownloading] = useState(
+    () => downloadManager.isDownloading(paperId)
+  );
+  const [progress, setProgress] = useState(
+    () => downloadManager.getProgress(paperId)
+  );
 
   useEffect(() => {
     // Check initial offline status
     checkIsOffline(paperId).then(setIsOffline);
-
-    // Check if already downloading
-    setIsDownloading(downloadManager.isDownloading(paperId));
-    setProgress(downloadManager.getProgress(paperId));
 
     // Listen for progress updates
     const handleProgress = (data: { paperId: string; progress: number }) => {

@@ -1,7 +1,10 @@
-import { View, Text, Pressable, StyleSheet, Image } from "react-native";
+import { View, Text, Pressable, StyleSheet, Image, ImageSourcePropType } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useAuth } from "@/lib/auth";
+import { useAuth } from "@/lib/useAuth";
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const iconSource: ImageSourcePropType = require("@/assets/icon.png");
 
 export default function LoginScreen() {
   const { loginWithGitHub, loginWithGitLab, loginWithEmail, isLoading } = useAuth();
@@ -10,7 +13,7 @@ export default function LoginScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Image
-          source={require("@/assets/icon.png")}
+          source={iconSource}
           style={styles.logo}
           resizeMode="contain"
         />

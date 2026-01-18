@@ -5,6 +5,6 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["**/*.test.ts", "**/*.test.tsx"],
-    exclude: ["node_modules", "dist", ".convex"],
+    exclude: ["**/node_modules/**", "dist", ".convex"],
   },
 });

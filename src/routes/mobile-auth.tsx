@@ -27,7 +27,7 @@ function MobileAuthPage() {
   const { signIn } = useAuthActions();
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [authStarted, setAuthStarted] = useState(false);
-  const [error, setError] = useState<string | null>(search.error ?? null);
+  const [error] = useState<string | null>(search.error ?? null);
 
   // Auto-start OAuth flow if provider is specified
   useEffect(() => {
@@ -35,7 +35,8 @@ function MobileAuthPage() {
 
     const provider = search.provider;
     if (provider === "github" || provider === "gitlab") {
-      setAuthStarted(true);
+      // Use setTimeout to avoid setting state synchronously in effect
+      setTimeout(() => setAuthStarted(true), 0);
       // Redirect back to this page after OAuth completes
       signIn(provider, {
         redirectTo: window.location.origin + "/mobile-auth",
@@ -46,10 +47,9 @@ function MobileAuthPage() {
   // Redirect to mobile app after successful authentication
   useEffect(() => {
     if (isAuthenticated && !isRedirecting) {
-      setIsRedirecting(true);
-
       // Small delay to ensure session is fully established
       const timer = setTimeout(() => {
+        setIsRedirecting(true);
         // Redirect to mobile app
         window.location.href = `${MOBILE_CALLBACK_URL}?success=true`;
       }, 500);
