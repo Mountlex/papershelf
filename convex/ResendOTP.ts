@@ -12,9 +12,9 @@ export const ResendOTP = Email({
   async sendVerificationRequest({ identifier: email, provider, token }) {
     const resend = new Resend(provider.apiKey);
     const { error } = await resend.emails.send({
-      from: "PaperShelf <onboarding@resend.dev>",
+      from: "Carrel <onboarding@resend.dev>",
       to: [email],
-      subject: `Your PaperShelf verification code: ${token}`,
+      subject: `Your Carrel verification code: ${token}`,
       html: `
         <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
           <h2 style="color: #111827;">Verify your email</h2>
@@ -44,9 +44,9 @@ export const ResendOTPPasswordReset = Email({
   async sendVerificationRequest({ identifier: email, provider, token }) {
     const resend = new Resend(provider.apiKey);
     const { error } = await resend.emails.send({
-      from: "PaperShelf <onboarding@resend.dev>",
+      from: "Carrel <onboarding@resend.dev>",
       to: [email],
-      subject: `Reset your PaperShelf password: ${token}`,
+      subject: `Reset your Carrel password: ${token}`,
       html: `
         <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
           <h2 style="color: #111827;">Reset your password</h2>

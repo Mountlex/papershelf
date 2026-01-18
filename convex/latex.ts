@@ -406,7 +406,7 @@ export const compileLatexInternal = internalAction({
 
       const repoCheckResponse = await fetch(repoCheckUrl, {
         headers: {
-          "User-Agent": "PaperShelf",
+          "User-Agent": "Carrel",
         },
       });
 

@@ -34,9 +34,14 @@ export class ErrorBoundary extends Component<Props, State> {
         return this.props.fallback;
       }
 
+      const errorMessage = this.state.error?.message || "";
+      const isAuthError = errorMessage.toLowerCase().includes("auth") ||
+                          errorMessage.toLowerCase().includes("session") ||
+                          errorMessage.toLowerCase().includes("token");
+
       return (
         <div className="flex min-h-[400px] flex-col items-center justify-center px-4">
-          <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-center">
+          <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-center max-w-md">
             <svg
               className="mx-auto h-12 w-12 text-red-400"
               fill="none"
@@ -54,7 +59,12 @@ export class ErrorBoundary extends Component<Props, State> {
               Something went wrong
             </h2>
             <p className="mt-2 text-sm text-red-600">
-              {this.state.error?.message || "An unexpected error occurred"}
+              {isAuthError
+                ? "There was a problem with your session. Please try again or reload the page."
+                : "An unexpected error occurred. Please try again or reload the page."}
+            </p>
+            <p className="mt-2 text-xs text-red-500">
+              {errorMessage && `Details: ${errorMessage}`}
             </p>
             <div className="mt-4 flex justify-center gap-3">
               <button

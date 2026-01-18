@@ -1,7 +1,7 @@
 {
-  "name": "papershelf-latex-service",
+  "name": "carrel-latex-service",
   "version": "1.0.0",
-  "description": "LaTeX compilation service for PaperShelf",
+  "description": "LaTeX compilation service for Carrel",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

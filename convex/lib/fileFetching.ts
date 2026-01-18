@@ -11,7 +11,7 @@ export async function fetchTextFile(
   gitlabBaseUrl?: string // For self-hosted GitLab
 ): Promise<string | null> {
   let rawUrl: string;
-  const headers: Record<string, string> = { "User-Agent": "PaperShelf" };
+  const headers: Record<string, string> = { "User-Agent": "Carrel" };
   const baseUrl = gitlabBaseUrl || "https://gitlab.com";
 
   if (provider === "github") {
@@ -53,7 +53,7 @@ export async function fileExistsInRepo(
 ): Promise<boolean> {
   let apiUrl: string;
   const headers: Record<string, string> = {
-    "User-Agent": "PaperShelf",
+    "User-Agent": "Carrel",
   };
 
   if (provider === "github") {
@@ -156,7 +156,7 @@ export async function fetchSingleFile(
   gitlabBaseUrl?: string // For self-hosted GitLab
 ): Promise<{ path: string; content: string; encoding?: string } | null> {
   let rawUrl: string;
-  const headers: Record<string, string> = { "User-Agent": "PaperShelf" };
+  const headers: Record<string, string> = { "User-Agent": "Carrel" };
   const baseUrl = gitlabBaseUrl || "https://gitlab.com";
 
   if (provider === "github") {
@@ -227,7 +227,7 @@ export async function fetchDirectoryFiles(
   const baseUrl = gitlabBaseUrl || "https://gitlab.com";
 
   const headers: Record<string, string> = {
-    "User-Agent": "PaperShelf",
+    "User-Agent": "Carrel",
   };
 
   let listUrl: string;
@@ -269,7 +269,7 @@ export async function fetchDirectoryFiles(
 
       // Fetch file content
       let rawUrl: string;
-      const fetchHeaders: Record<string, string> = { "User-Agent": "PaperShelf" };
+      const fetchHeaders: Record<string, string> = { "User-Agent": "Carrel" };
       if (provider === "github") {
         rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${itemPath}`;
         if (token) {
@@ -338,7 +338,7 @@ export async function fetchTexFilesOnly(
   const baseUrl = gitlabBaseUrl || "https://gitlab.com";
 
   const headers: Record<string, string> = {
-    "User-Agent": "PaperShelf",
+    "User-Agent": "Carrel",
   };
 
   let listUrl: string;
@@ -397,7 +397,7 @@ export async function fetchTexFilesOnly(
     if (itemType === "file" && itemName.endsWith(".tex")) {
       // Fetch .tex file content
       let rawUrl: string;
-      const fetchHeaders: Record<string, string> = { "User-Agent": "PaperShelf" };
+      const fetchHeaders: Record<string, string> = { "User-Agent": "Carrel" };
       if (provider === "github") {
         rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${itemPath}`;
         if (token) {

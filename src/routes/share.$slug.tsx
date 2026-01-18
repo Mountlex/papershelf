@@ -11,10 +11,10 @@ export const Route = createFileRoute("/share/$slug")({
   },
   head: () => ({
     meta: [
-      { title: "Shared Paper - PaperShelf" },
-      { property: "og:title", content: "Shared Paper - PaperShelf" },
+      { title: "Shared Paper - Carrel" },
+      { property: "og:title", content: "Shared Paper - Carrel" },
       { property: "og:type", content: "article" },
-      { property: "og:description", content: "View this academic paper on PaperShelf" },
+      { property: "og:description", content: "View this academic paper on Carrel" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
@@ -35,7 +35,7 @@ function SharePage() {
           This paper may have been made private or deleted.
         </p>
         <Link to="/" className="mt-4 text-blue-600 hover:text-blue-700">
-          Go to PaperShelf
+          Go to Carrel
         </Link>
       </div>
     );
@@ -114,9 +114,9 @@ function SharePage() {
       <div className="mt-12 border-t pt-6 text-center text-sm text-gray-500">
         Shared via{" "}
         <Link to="/" className="text-blue-600 hover:text-blue-700">
-          PaperShelf
+          Carrel
         </Link>{" "}
-        | Create your own shelf
+        | Create your own carrel
       </div>
     </div>
   );

@@ -149,7 +149,7 @@ export const fetchRepositoryInfo = action({
         {
           headers: {
             Accept: "application/vnd.github.v3+json",
-            "User-Agent": "PaperShelf",
+            "User-Agent": "Carrel",
           },
         }
       );
@@ -225,7 +225,7 @@ export const fetchLatestCommit = action({
         {
           headers: {
             Accept: "application/vnd.github.v3+json",
-            "User-Agent": "PaperShelf",
+            "User-Agent": "Carrel",
           },
         }
       );
@@ -294,7 +294,7 @@ export const fetchFileContent = action({
 
     let rawUrl: string;
     const headers: Record<string, string> = {
-      "User-Agent": "PaperShelf",
+      "User-Agent": "Carrel",
     };
 
     if (parsed.provider === "github") {
@@ -406,7 +406,7 @@ export const listRepositoryFiles = action({
 
       const headers: Record<string, string> = {
         Accept: "application/vnd.github.v3+json",
-        "User-Agent": "PaperShelf",
+        "User-Agent": "Carrel",
       };
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
@@ -443,7 +443,7 @@ export const listRepositoryFiles = action({
       const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
 
       const headers: Record<string, string> = {
-        "User-Agent": "PaperShelf",
+        "User-Agent": "Carrel",
       };
       if (token) {
         headers["PRIVATE-TOKEN"] = token;
@@ -540,7 +540,7 @@ export const fetchLatestCommitInternal = internalAction({
 
       const headers: Record<string, string> = {
         Accept: "application/vnd.github.v3+json",
-        "User-Agent": "PaperShelf",
+        "User-Agent": "Carrel",
       };
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
@@ -577,7 +577,7 @@ export const fetchLatestCommitInternal = internalAction({
       const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
 
       const headers: Record<string, string> = {
-        "User-Agent": "PaperShelf",
+        "User-Agent": "Carrel",
       };
       if (token) {
         headers["PRIVATE-TOKEN"] = token;
@@ -696,7 +696,7 @@ export const fetchFileContentInternal = internalAction({
 
     let rawUrl: string;
     const headers: Record<string, string> = {
-      "User-Agent": "PaperShelf",
+      "User-Agent": "Carrel",
     };
 
     if (parsed.provider === "github") {
@@ -790,7 +790,7 @@ export const fetchFileHashInternal = internalAction({
       const token = await getGitHubToken(ctx);
       const headers: Record<string, string> = {
         Accept: "application/vnd.github.v3+json",
-        "User-Agent": "PaperShelf",
+        "User-Agent": "Carrel",
       };
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
@@ -823,7 +823,7 @@ export const fetchFileHashInternal = internalAction({
       const encodedFilePath = encodeURIComponent(args.filePath);
 
       const headers: Record<string, string> = {
-        "User-Agent": "PaperShelf",
+        "User-Agent": "Carrel",
       };
       if (token) {
         headers["PRIVATE-TOKEN"] = token;
@@ -859,7 +859,7 @@ export const listUserRepos = action({
 
     const headers: Record<string, string> = {
       Accept: "application/vnd.github.v3+json",
-      "User-Agent": "PaperShelf",
+      "User-Agent": "Carrel",
       Authorization: `Bearer ${token}`,
     };
 
@@ -913,14 +913,14 @@ export const listUserGitLabRepos = action({
 
     const url = "https://gitlab.com/api/v4/projects?membership=true&order_by=last_activity_at&per_page=100&simple=true";
     const primaryHeaders: Record<string, string> = {
-      "User-Agent": "PaperShelf",
+      "User-Agent": "Carrel",
       Authorization: `Bearer ${token}`,
     };
 
     let response = await fetch(url, { headers: primaryHeaders });
     if (!response.ok && (response.status === 401 || response.status === 403)) {
       const fallbackHeaders: Record<string, string> = {
-        "User-Agent": "PaperShelf",
+        "User-Agent": "Carrel",
         "PRIVATE-TOKEN": token,
       };
       response = await fetch(url, { headers: fallbackHeaders });
@@ -1015,7 +1015,7 @@ export const fetchRepoInfo = action({
     }
 
     const headers: Record<string, string> = {
-      "User-Agent": "PaperShelf",
+      "User-Agent": "Carrel",
     };
 
     if (parsed.provider === "github") {

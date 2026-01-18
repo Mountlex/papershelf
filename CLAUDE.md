@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-PaperShelf is a web service for previewing PDFs from LaTeX projects. It supports multiple Git providers (GitHub, GitLab, Overleaf, self-hosted GitLab) and offers a Pinterest-style gallery for academic papers.
+Carrel is a web service for previewing PDFs from LaTeX projects. It supports multiple Git providers (GitHub, GitLab, Overleaf, self-hosted GitLab) and offers a Pinterest-style gallery for academic papers.
 
 ## Commands
 

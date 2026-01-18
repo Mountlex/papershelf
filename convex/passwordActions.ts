@@ -91,9 +91,9 @@ export const requestPasswordChangeCode = action({
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "PaperShelf <onboarding@resend.dev>",
+        from: "Carrel <onboarding@resend.dev>",
         to: [email],
-        subject: `Your PaperShelf password change code: ${code}`,
+        subject: `Your Carrel password change code: ${code}`,
         html: `
           <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
             <h2 style="color: #111827;">Change your password</h2>

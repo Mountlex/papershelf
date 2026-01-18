@@ -15,9 +15,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "PaperShelf" },
+      { title: "Carrel" },
     ],
-    links: [{ rel: "icon", type: "image/svg+xml", href: "/vite.svg" }],
+    links: [{ rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
   }),
   component: RootComponent,
 });
@@ -91,7 +91,7 @@ function RootComponent() {
         <header className="sticky top-0 z-50 w-full border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/60">
           <div className="container mx-auto flex h-14 items-center px-4">
             <Link to="/" className="flex items-center space-x-2">
-              <span className="text-xl font-bold">PaperShelf</span>
+              <span className="text-xl font-bold">Carrel</span>
             </Link>
             <nav className="ml-auto flex items-center space-x-6">
               {isAuthenticated && (
@@ -175,7 +175,8 @@ function RootComponent() {
                   more than 10 minutes to complete the OAuth flow, or if you navigated away.
                 </p>
                 <p className="mt-2 text-sm text-gray-600">
-                  Please sign in to your original account and try linking again.
+                  You can sign out and try again, or dismiss this message and continue using your
+                  current account without linking.
                 </p>
                 <div className="mt-4 flex gap-3">
                   <button
@@ -195,7 +196,7 @@ function RootComponent() {
                     }}
                     className="flex-1 rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
                   >
-                    Continue Anyway
+                    Dismiss & Continue
                   </button>
                 </div>
               </div>
@@ -205,6 +206,7 @@ function RootComponent() {
             <div className="flex flex-col items-center justify-center py-20">
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-gray-900" />
               <p className="mt-4 text-sm text-gray-600">Linking accounts...</p>
+              <p className="mt-2 text-xs text-gray-500">This should only take a few seconds. If a popup opened, please complete sign-in there.</p>
             </div>
           ) : isLoading ? (
             <div className="flex items-center justify-center py-20">
@@ -217,7 +219,7 @@ function RootComponent() {
           ) : (
             <div className="flex flex-col items-center justify-center py-20">
               <h1 className="mb-4 text-3xl font-bold text-gray-900">
-                Welcome to PaperShelf
+                Welcome to Carrel
               </h1>
               <p className="mb-8 max-w-md text-center text-gray-600">
                 Preview and share your LaTeX papers from GitHub or GitLab repositories.

@@ -15,7 +15,7 @@ interface FormErrors {
   general?: string;
 }
 
-const REMEMBERED_EMAIL_KEY = "papershelf_remembered_email";
+const REMEMBERED_EMAIL_KEY = "carrel_remembered_email";
 
 export function EmailPasswordForm() {
   const { signIn } = useAuthActions();
@@ -70,8 +70,11 @@ export function EmailPasswordForm() {
       if (message.includes("not verified") || message.includes("verify")) {
         setMode("verify");
         setErrors({ general: "Please verify your email first" });
-      } else if (message.includes("Invalid") || message.includes("credentials")) {
-        setErrors({ general: "Invalid email or password" });
+      } else if (message.includes("Invalid") || message.includes("credentials") || message.includes("Could not verify")) {
+        setErrors({
+          general:
+            "Incorrect email or password. Please check your credentials and try again, or create a new account if you haven't signed up yet.",
+        });
       } else {
         setErrors({ general: message });
       }
@@ -131,9 +134,9 @@ export function EmailPasswordForm() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Verification failed";
       if (message.includes("expired")) {
-        setErrors({ code: "Code has expired. Please request a new one." });
+        setErrors({ code: "Code has expired. Click 'Resend code' below to get a new one." });
       } else if (message.includes("invalid") || message.includes("Invalid")) {
-        setErrors({ code: "Invalid verification code" });
+        setErrors({ code: "Invalid verification code. Please check the code and try again." });
       } else {
         setErrors({ code: message });
       }
@@ -197,9 +200,9 @@ export function EmailPasswordForm() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Reset failed";
       if (message.includes("expired")) {
-        setErrors({ code: "Code has expired. Please request a new one." });
+        setErrors({ code: "Code has expired. Click 'Resend code' below to get a new one." });
       } else if (message.includes("invalid") || message.includes("Invalid")) {
-        setErrors({ code: "Invalid verification code" });
+        setErrors({ code: "Invalid verification code. Please check the code and try again." });
       } else {
         setErrors({ general: message });
       }
@@ -237,8 +240,11 @@ export function EmailPasswordForm() {
         <h2 className="text-xl font-semibold text-gray-900 text-center mb-2">
           Verify your email
         </h2>
-        <p className="text-sm text-gray-600 text-center mb-6">
-          We sent a verification code to <strong>{email}</strong>
+        <p className="text-sm text-gray-600 text-center mb-2">
+          We sent a 6-digit verification code to <strong>{email}</strong>
+        </p>
+        <p className="text-xs text-gray-500 text-center mb-6">
+          The code expires in 15 minutes. Check your spam folder if you don't see it.
         </p>
 
         <VerificationCodeInput
@@ -344,8 +350,11 @@ export function EmailPasswordForm() {
         <h2 className="text-xl font-semibold text-gray-900 text-center mb-2">
           Enter reset code
         </h2>
-        <p className="text-sm text-gray-600 text-center mb-6">
+        <p className="text-sm text-gray-600 text-center mb-2">
           If an account exists for <strong>{email}</strong>, we sent a reset code.
+        </p>
+        <p className="text-xs text-gray-500 text-center mb-6">
+          The code expires in 15 minutes. Check your spam folder if you don't see it.
         </p>
 
         <form onSubmit={handleResetPassword} className="space-y-4">
@@ -509,8 +518,11 @@ export function EmailPasswordForm() {
             onChange={(e) => setPassword(e.target.value)}
             required
             className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
-            placeholder={mode === "signUp" ? PASSWORD_REQUIREMENTS : "Your password"}
+            placeholder="Your password"
           />
+          {mode === "signUp" && (
+            <p className="mt-1 text-xs text-gray-500">{PASSWORD_REQUIREMENTS}</p>
+          )}
           {errors.password && (
             <p className="mt-1 text-sm text-red-600">{errors.password}</p>
           )}
@@ -525,7 +537,7 @@ export function EmailPasswordForm() {
               onChange={(e) => setRememberMe(e.target.checked)}
               className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
             />
-            <label htmlFor="remember-me" className="ml-2 text-sm text-gray-600">
+            <label htmlFor="remember-me" className="ml-2 text-sm text-gray-600" title="Your email will be saved in this browser only">
               Remember my email
             </label>
           </div>

@@ -1,6 +1,6 @@
-# PaperShelf LaTeX Service
+# Carrel LaTeX Service
 
-A self-hosted LaTeX compilation service for PaperShelf.
+A self-hosted LaTeX compilation service for Carrel.
 
 ## Deployment Options
 
@@ -67,7 +67,7 @@ For a VPS (DigitalOcean, Linode, Hetzner):
 ```bash
 # On your server
 git clone <your-repo>
-cd papershelf/latex-service
+cd carrel/latex-service
 docker compose up -d
 ```
 

@@ -66,7 +66,10 @@ function ProfilePage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send code";
       if (message.includes("No password account")) {
-        setPasswordError("Password change is only available for email/password accounts.");
+        setPasswordError(
+          "Password change is only available for accounts created with email and password. " +
+          "Your account was created using GitHub or GitLab sign-in."
+        );
       } else {
         setPasswordError(message);
       }
@@ -160,7 +163,7 @@ function ProfilePage() {
             </div>
           )}
           {nameError && <p className="mt-2 text-sm text-red-600">{nameError}</p>}
-          {nameSuccess && <p className="mt-2 text-sm text-green-600">Name updated successfully</p>}
+          {nameSuccess && <p className="mt-2 text-sm text-green-600">Name updated to "{user?.name}"</p>}
         </div>
 
         {/* Email Field (read-only) */}
@@ -241,7 +244,11 @@ function ProfilePage() {
             </form>
           )}
           {passwordError && <p className="mt-2 text-sm text-red-600">{passwordError}</p>}
-          {passwordSuccess && <p className="mt-2 text-sm text-green-600">Password updated successfully</p>}
+          {passwordSuccess && (
+            <p className="mt-2 text-sm text-green-600">
+              Password updated successfully. You've been signed out of other devices for security.
+            </p>
+          )}
         </div>
       </div>
 

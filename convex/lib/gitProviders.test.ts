@@ -96,13 +96,13 @@ describe("getProviderFromUrl", () => {
 describe("getGitLabHeaders", () => {
   it("returns headers with User-Agent", () => {
     const headers = getGitLabHeaders();
-    expect(headers["User-Agent"]).toBe("PaperShelf");
+    expect(headers["User-Agent"]).toBe("Carrel");
     expect(headers["PRIVATE-TOKEN"]).toBeUndefined();
   });
 
   it("includes PRIVATE-TOKEN when token is provided", () => {
     const headers = getGitLabHeaders("my-token");
-    expect(headers["User-Agent"]).toBe("PaperShelf");
+    expect(headers["User-Agent"]).toBe("Carrel");
     expect(headers["PRIVATE-TOKEN"]).toBe("my-token");
   });
 

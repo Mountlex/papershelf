@@ -24,7 +24,14 @@ export function OverleafSetupModal({ onClose, onSave }: OverleafSetupModalProps)
       onClose();
     } catch (err) {
       console.error("Failed to save Overleaf credentials:", err);
-      setError("Failed to save credentials");
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes("401") || message.includes("auth") || message.includes("unauthorized")) {
+        setError("Invalid email or token. Please verify your Overleaf credentials are correct.");
+      } else if (message.includes("network") || message.includes("fetch")) {
+        setError("Unable to connect. Please check your internet connection and try again.");
+      } else {
+        setError("Failed to save credentials. Please verify your email and token are correct.");
+      }
     } finally {
       setIsSaving(false);
     }
@@ -51,9 +58,12 @@ export function OverleafSetupModal({ onClose, onSave }: OverleafSetupModalProps)
             rel="noopener noreferrer"
             className="text-blue-600 hover:underline"
           >
-            Overleaf Account Settings
+            Overleaf Account Settings ↗
           </a>{" "}
           under "Git Integration".
+        </p>
+        <p className="mb-4 text-xs text-gray-500">
+          The Git token is a password-like credential that allows Carrel to clone your projects via Git.
         </p>
 
         <div className="space-y-4">

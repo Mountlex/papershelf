@@ -1,4 +1,4 @@
-# PaperShelf
+# Carrel
 
 A web service to preview PDFs from your LaTeX projects on GitHub. Features a clean, Pinterest-style gallery for academic papers with support for multiple PDF sources.
 
@@ -37,7 +37,7 @@ A web service to preview PDFs from your LaTeX projects on GitHub. Features a cle
 1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
 2. Click "New OAuth App"
 3. Fill in:
-   - **Application name**: PaperShelf (or whatever you like)
+   - **Application name**: Carrel (or whatever you like)
    - **Homepage URL**: `http://localhost:5173`
    - **Authorization callback URL**: `https://<your-convex-deployment>.convex.site/api/auth/callback/github`
 4. Click "Register application"
@@ -98,7 +98,7 @@ Go to [http://localhost:5173](http://localhost:5173) and sign in with GitHub!
 ## Project Structure
 
 ```
-papershelf/
+carrel/
 ├── convex/                 # Convex backend
 │   ├── schema.ts           # Database schema
 │   ├── auth.config.ts      # GitHub OAuth configuration

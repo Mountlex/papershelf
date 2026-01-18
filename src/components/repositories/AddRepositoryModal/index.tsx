@@ -82,14 +82,30 @@ export function AddRepositoryModal({
     });
   }, [gitlabRepos, repoSearch]);
 
+  const getRepositoryErrorMessage = (err: unknown): string => {
+    const message = err instanceof Error ? err.message : "";
+    if (message.includes("already") || message.includes("exists") || message.includes("duplicate")) {
+      return "This repository has already been added to your collection.";
+    }
+    if (message.includes("401") || message.includes("403") || message.includes("permission")) {
+      return "Unable to access this repository. Please check your permissions.";
+    }
+    if (message.includes("404") || message.includes("not found")) {
+      return "Repository not found. Please check the URL and try again.";
+    }
+    if (message.includes("network") || message.includes("fetch")) {
+      return "Network error. Please check your connection and try again.";
+    }
+    return message || "Failed to add repository. Please try again.";
+  };
+
   const handleAddFromList = async (repo: GitRepo) => {
     setIsAdding(true);
     setError(null);
     try {
       await onAddFromList(repo);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to add repository";
-      setError(message);
+      setError(getRepositoryErrorMessage(err));
     } finally {
       setIsAdding(false);
     }
@@ -101,8 +117,7 @@ export function AddRepositoryModal({
     try {
       await onAddFromUrl(url);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to add repository";
-      setError(message);
+      setError(getRepositoryErrorMessage(err));
     } finally {
       setIsAdding(false);
     }
@@ -114,8 +129,7 @@ export function AddRepositoryModal({
     try {
       await onAddOverleafRepo(url);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to add Overleaf repository";
-      setError(message);
+      setError(getRepositoryErrorMessage(err));
     } finally {
       setIsAdding(false);
     }
@@ -127,8 +141,7 @@ export function AddRepositoryModal({
     try {
       await onAddSelfHostedRepo(url);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to add repository";
-      setError(message);
+      setError(getRepositoryErrorMessage(err));
     } finally {
       setIsAdding(false);
     }

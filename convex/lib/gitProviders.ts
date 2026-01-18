@@ -132,7 +132,7 @@ export function parseRepoUrl(
  */
 export function getGitLabHeaders(token?: string | null): Record<string, string> {
   const headers: Record<string, string> = {
-    "User-Agent": "PaperShelf",
+    "User-Agent": "Carrel",
   };
   if (token) {
     headers["PRIVATE-TOKEN"] = token;

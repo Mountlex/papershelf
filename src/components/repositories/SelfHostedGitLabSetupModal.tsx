@@ -37,8 +37,22 @@ export function SelfHostedGitLabSetupModal({ onClose, onSave }: SelfHostedGitLab
       onClose();
     } catch (err) {
       console.error("Failed to add self-hosted GitLab instance:", err);
-      const message = err instanceof Error ? err.message : "Failed to add instance";
-      setError(message);
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes("401") || message.includes("403") || message.includes("auth")) {
+        setError(
+          "Authentication failed. Please verify your token has the required scopes: read_api and read_repository."
+        );
+      } else if (message.includes("network") || message.includes("fetch") || message.includes("ENOTFOUND")) {
+        setError(
+          "Unable to reach the GitLab instance. Please check the URL and your network connection."
+        );
+      } else if (message.includes("already") || message.includes("exists")) {
+        setError("This GitLab instance has already been added.");
+      } else {
+        setError(
+          "Failed to add instance. Please verify the URL and token are correct."
+        );
+      }
     } finally {
       setIsSaving(false);
     }
@@ -65,9 +79,12 @@ export function SelfHostedGitLabSetupModal({ onClose, onSave }: SelfHostedGitLab
             rel="noopener noreferrer"
             className="text-blue-600 hover:underline"
           >
-            User Settings → Access Tokens
+            User Settings → Access Tokens ↗
           </a>.
-          Required scopes: <code className="rounded bg-gray-100 px-1 text-xs">read_api</code>, <code className="rounded bg-gray-100 px-1 text-xs">read_repository</code>.
+        </p>
+        <p className="mb-4 text-xs text-gray-500">
+          Required scopes: <code className="rounded bg-gray-100 px-1">read_api</code> and <code className="rounded bg-gray-100 px-1">read_repository</code>.
+          The token allows Carrel to list and clone your repositories.
         </p>
 
         <div className="space-y-4">

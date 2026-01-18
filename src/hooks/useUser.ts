@@ -3,8 +3,8 @@ import { useConvexAuth } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useAuthActions } from "@convex-dev/auth/react";
 
-const LINK_ACCOUNT_KEY = "papershelf_link_account_intent";
-const LINK_IN_PROGRESS_KEY = "papershelf_link_in_progress";
+const LINK_ACCOUNT_KEY = "carrel_link_account_intent";
+const LINK_IN_PROGRESS_KEY = "carrel_link_in_progress";
 // Link intent expires after 10 minutes (must match server-side expiry)
 const LINK_INTENT_TTL_MS = 10 * 60 * 1000;
 

@@ -1,5 +1,5 @@
 {
-  "name": "papershelf",
+  "name": "carrel",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -11,7 +11,10 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "deploy": "npx convex deploy && bun run build && npx wrangler deploy",
+    "deploy:frontend": "bun run build && npx wrangler deploy",
+    "deploy:backend": "npx convex deploy"
   },
   "dependencies": {
     "@auth/core": "0.37.2",
