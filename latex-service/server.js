@@ -1060,7 +1060,7 @@ app.post("/thumbnail", rateLimit, async (req, res) => {
   const workDir = `/tmp/thumbnail-${jobId}`;
 
   try {
-    const { pdfBase64, width = 400, format = "png" } = req.body;
+    const { pdfBase64, width = 800, format = "png" } = req.body;
 
     if (!pdfBase64) {
       return res.status(400).json({ error: "Missing pdfBase64" });

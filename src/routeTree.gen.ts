@@ -8,73 +8,73 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-import { Route as rootRouteImport } from "./routes/__root"
-import { Route as RepositoriesRouteImport } from "./routes/repositories"
-import { Route as ProfileRouteImport } from "./routes/profile"
-import { Route as IndexRouteImport } from "./routes/index"
-import { Route as ShareSlugRouteImport } from "./routes/share.$slug"
-import { Route as PapersIdRouteImport } from "./routes/papers.$id"
+import { Route as rootRouteImport } from './routes/__root'
+import { Route as RepositoriesRouteImport } from './routes/repositories'
+import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as IndexRouteImport } from './routes/index'
+import { Route as ShareSlugRouteImport } from './routes/share.$slug'
+import { Route as PapersIdRouteImport } from './routes/papers.$id'
 
 const RepositoriesRoute = RepositoriesRouteImport.update({
-  id: "/repositories",
-  path: "/repositories",
+  id: '/repositories',
+  path: '/repositories',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProfileRoute = ProfileRouteImport.update({
-  id: "/profile",
-  path: "/profile",
+  id: '/profile',
+  path: '/profile',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
-  id: "/",
-  path: "/",
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShareSlugRoute = ShareSlugRouteImport.update({
-  id: "/share/$slug",
-  path: "/share/$slug",
+  id: '/share/$slug',
+  path: '/share/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PapersIdRoute = PapersIdRouteImport.update({
-  id: "/papers/$id",
-  path: "/papers/$id",
+  id: '/papers/$id',
+  path: '/papers/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
-  "/": typeof IndexRoute
-  "/profile": typeof ProfileRoute
-  "/repositories": typeof RepositoriesRoute
-  "/papers/$id": typeof PapersIdRoute
-  "/share/$slug": typeof ShareSlugRoute
+  '/': typeof IndexRoute
+  '/profile': typeof ProfileRoute
+  '/repositories': typeof RepositoriesRoute
+  '/papers/$id': typeof PapersIdRoute
+  '/share/$slug': typeof ShareSlugRoute
 }
 export interface FileRoutesByTo {
-  "/": typeof IndexRoute
-  "/profile": typeof ProfileRoute
-  "/repositories": typeof RepositoriesRoute
-  "/papers/$id": typeof PapersIdRoute
-  "/share/$slug": typeof ShareSlugRoute
+  '/': typeof IndexRoute
+  '/profile': typeof ProfileRoute
+  '/repositories': typeof RepositoriesRoute
+  '/papers/$id': typeof PapersIdRoute
+  '/share/$slug': typeof ShareSlugRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  "/": typeof IndexRoute
-  "/profile": typeof ProfileRoute
-  "/repositories": typeof RepositoriesRoute
-  "/papers/$id": typeof PapersIdRoute
-  "/share/$slug": typeof ShareSlugRoute
+  '/': typeof IndexRoute
+  '/profile': typeof ProfileRoute
+  '/repositories': typeof RepositoriesRoute
+  '/papers/$id': typeof PapersIdRoute
+  '/share/$slug': typeof ShareSlugRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: "/" | "/profile" | "/repositories" | "/papers/$id" | "/share/$slug"
+  fullPaths: '/' | '/profile' | '/repositories' | '/papers/$id' | '/share/$slug'
   fileRoutesByTo: FileRoutesByTo
-  to: "/" | "/profile" | "/repositories" | "/papers/$id" | "/share/$slug"
+  to: '/' | '/profile' | '/repositories' | '/papers/$id' | '/share/$slug'
   id:
-    | "__root__"
-    | "/"
-    | "/profile"
-    | "/repositories"
-    | "/papers/$id"
-    | "/share/$slug"
+    | '__root__'
+    | '/'
+    | '/profile'
+    | '/repositories'
+    | '/papers/$id'
+    | '/share/$slug'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -85,40 +85,40 @@ export interface RootRouteChildren {
   ShareSlugRoute: typeof ShareSlugRoute
 }
 
-declare module "@tanstack/react-router" {
+declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    "/repositories": {
-      id: "/repositories"
-      path: "/repositories"
-      fullPath: "/repositories"
+    '/repositories': {
+      id: '/repositories'
+      path: '/repositories'
+      fullPath: '/repositories'
       preLoaderRoute: typeof RepositoriesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    "/profile": {
-      id: "/profile"
-      path: "/profile"
-      fullPath: "/profile"
+    '/profile': {
+      id: '/profile'
+      path: '/profile'
+      fullPath: '/profile'
       preLoaderRoute: typeof ProfileRouteImport
       parentRoute: typeof rootRouteImport
     }
-    "/": {
-      id: "/"
-      path: "/"
-      fullPath: "/"
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    "/share/$slug": {
-      id: "/share/$slug"
-      path: "/share/$slug"
-      fullPath: "/share/$slug"
+    '/share/$slug': {
+      id: '/share/$slug'
+      path: '/share/$slug'
+      fullPath: '/share/$slug'
       preLoaderRoute: typeof ShareSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
-    "/papers/$id": {
-      id: "/papers/$id"
-      path: "/papers/$id"
-      fullPath: "/papers/$id"
+    '/papers/$id': {
+      id: '/papers/$id'
+      path: '/papers/$id'
+      fullPath: '/papers/$id'
       preLoaderRoute: typeof PapersIdRouteImport
       parentRoute: typeof rootRouteImport
     }
@@ -135,3 +135,12 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { createStart } from '@tanstack/react-start'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+  }
+}

@@ -1,22 +1,31 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "convex/react";
+import { convexQuery } from "@convex-dev/react-query";
+import { useSuspenseQuery } from "@tanstack/react-query";
 import { api } from "../../convex/_generated/api";
 
 export const Route = createFileRoute("/share/$slug")({
+  loader: async ({ params, context }) => {
+    await context.queryClient.ensureQueryData(
+      convexQuery(api.papers.getByShareSlug, { slug: params.slug })
+    );
+  },
+  head: () => ({
+    meta: [
+      { title: "Shared Paper - PaperShelf" },
+      { property: "og:title", content: "Shared Paper - PaperShelf" },
+      { property: "og:type", content: "article" },
+      { property: "og:description", content: "View this academic paper on PaperShelf" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
   component: SharePage,
 });
 
 function SharePage() {
   const { slug } = Route.useParams();
-  const paper = useQuery(api.papers.getByShareSlug, { slug });
-
-  if (paper === undefined) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-gray-500">Loading...</div>
-      </div>
-    );
-  }
+  const { data: paper } = useSuspenseQuery(
+    convexQuery(api.papers.getByShareSlug, { slug })
+  );
 
   if (paper === null) {
     return (
