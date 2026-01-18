@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -10,11 +10,14 @@ export const Route = createFileRoute("/papers/$id")({
 
 function PaperDetailPage() {
   const { id } = Route.useParams();
+  const navigate = useNavigate();
   const paper = useQuery(api.papers.get, { id: id as Id<"papers"> });
   const togglePublic = useMutation(api.papers.togglePublic);
+  const deletePaper = useMutation(api.papers.deletePaper);
   const syncPaper = useAction(api.sync.syncPaper);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const handleSync = async () => {
     if (!paper) return;
@@ -39,10 +42,20 @@ function PaperDetailPage() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!paper) return;
+    try {
+      await deletePaper({ id: paper._id });
+      navigate({ to: "/" });
+    } catch (error) {
+      console.error("Failed to delete paper:", error);
+    }
+  };
+
   if (paper === undefined) {
     return (
       <div className="flex items-center justify-center py-12">
-        <div className="text-gray-500">Loading paper...</div>
+        <div className="text-gray-500 dark:text-gray-400">Loading paper...</div>
       </div>
     );
   }
@@ -50,8 +63,8 @@ function PaperDetailPage() {
   if (paper === null) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <h2 className="text-lg font-medium text-gray-900">Paper not found</h2>
-        <Link to="/" className="mt-4 text-blue-600 hover:text-blue-700">
+        <h2 className="text-lg font-medium text-gray-900 dark:text-gray-100">Paper not found</h2>
+        <Link to="/" className="mt-4 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">
           Back to Gallery
         </Link>
       </div>
@@ -63,7 +76,7 @@ function PaperDetailPage() {
       <div className="mb-6">
         <Link
           to="/"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
         >
           <svg
             className="mr-1 h-4 w-4"
@@ -85,7 +98,7 @@ function PaperDetailPage() {
       <div className="grid gap-8 lg:grid-cols-3">
         {/* PDF Preview */}
         <div className="lg:col-span-2">
-          <div className="aspect-[8.5/11] w-full overflow-hidden rounded-lg border bg-gray-100 shadow-sm">
+          <div className="aspect-[8.5/11] w-full overflow-hidden rounded-lg border bg-gray-100 shadow-sm dark:border-gray-800 dark:bg-gray-800">
             {paper.pdfUrl ? (
               <iframe
                 src={paper.pdfUrl}
@@ -144,28 +157,28 @@ function PaperDetailPage() {
         {/* Paper Details */}
         <div className="space-y-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">{paper.title}</h1>
+            <h1 className="font-serif text-2xl font-semibold text-gray-900 dark:text-gray-100">{paper.title}</h1>
             {paper.authors && paper.authors.length > 0 && (
-              <p className="mt-2 text-sm text-gray-600">
+              <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
                 Authors: {paper.authors.join(", ")}
               </p>
             )}
             {paper.abstract && (
-              <p className="mt-3 text-sm text-gray-600">{paper.abstract}</p>
+              <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">{paper.abstract}</p>
             )}
           </div>
 
-          <div className="rounded-lg border bg-white p-4">
-            <h3 className="mb-3 text-sm font-semibold text-gray-900">Details</h3>
+          <div className="rounded-lg border bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-gray-100">Details</h3>
             <dl className="space-y-2 text-sm">
               {paper.repository && (
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">Repository</dt>
-                  <dd className="text-gray-900">{paper.repository.name}</dd>
+                  <dt className="text-gray-500 dark:text-gray-400">Repository</dt>
+                  <dd className="text-gray-900 dark:text-gray-100">{paper.repository.name}</dd>
                 </div>
               )}
               <div className="flex justify-between">
-                <dt className="text-gray-500">Status</dt>
+                <dt className="text-gray-500 dark:text-gray-400">Status</dt>
                 <dd>
                   {(syncError || paper.lastSyncError) ? (
                     <span
@@ -202,29 +215,29 @@ function PaperDetailPage() {
                 </dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-gray-500">Last updated</dt>
-                <dd className="text-gray-900">
+                <dt className="text-gray-500 dark:text-gray-400">Last updated</dt>
+                <dd className="text-gray-900 dark:text-gray-100">
                   {new Date(paper.updatedAt).toLocaleDateString()}
                 </dd>
               </div>
               {paper.pageCount && (
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">Pages</dt>
-                  <dd className="text-gray-900">{paper.pageCount}</dd>
+                  <dt className="text-gray-500 dark:text-gray-400">Pages</dt>
+                  <dd className="text-gray-900 dark:text-gray-100">{paper.pageCount}</dd>
                 </div>
               )}
               {paper.fileSize && (
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">Size</dt>
-                  <dd className="text-gray-900">
+                  <dt className="text-gray-500 dark:text-gray-400">Size</dt>
+                  <dd className="text-gray-900 dark:text-gray-100">
                     {(paper.fileSize / 1024 / 1024).toFixed(2)} MB
                   </dd>
                 </div>
               )}
               {paper.cachedCommitHash && (
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">Commit</dt>
-                  <dd className="font-mono text-xs text-gray-900">
+                  <dt className="text-gray-500 dark:text-gray-400">Commit</dt>
+                  <dd className="font-mono text-xs text-gray-900 dark:text-gray-100">
                     {paper.cachedCommitHash.slice(0, 7)}
                   </dd>
                 </div>
@@ -252,7 +265,7 @@ function PaperDetailPage() {
             </button>
             {/* Compilation Progress */}
             {isSyncing && paper.compilationProgress && (
-              <div className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">
+              <div className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
                 {paper.compilationProgress}
               </div>
             )}
@@ -263,7 +276,7 @@ function PaperDetailPage() {
               <a
                 href={paper.pdfUrl}
                 download
-                className="w-full rounded-md border border-gray-300 px-4 py-2 text-center text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                className="w-full rounded-md border border-gray-300 px-4 py-2 text-center text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 Download PDF
               </a>
@@ -273,7 +286,7 @@ function PaperDetailPage() {
                 href={paper.pdfUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-full rounded-md border border-gray-300 px-4 py-2 text-center text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                className="w-full rounded-md border border-gray-300 px-4 py-2 text-center text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 View Full Screen
               </a>
@@ -282,18 +295,24 @@ function PaperDetailPage() {
               onClick={handleTogglePublic}
               className={`w-full rounded-md border px-4 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 ${
                 paper.isPublic
-                  ? "border-green-300 text-green-700 hover:bg-green-50 focus:ring-green-500"
-                  : "border-gray-300 text-gray-700 hover:bg-gray-50 focus:ring-blue-500"
+                  ? "border-green-300 text-green-700 hover:bg-green-50 focus:ring-green-500 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-900/30"
+                  : "border-gray-300 text-gray-700 hover:bg-gray-50 focus:ring-blue-500 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               }`}
             >
               {paper.isPublic ? "Make Private" : "Make Public"}
+            </button>
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="w-full rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/30"
+            >
+              Delete Paper
             </button>
           </div>
 
           {/* Share Link */}
           {paper.isPublic && paper.shareSlug && (
-            <div className="rounded-lg border border-green-200 bg-green-50 p-4">
-              <h3 className="mb-2 text-sm font-semibold text-green-900">
+            <div className="rounded-lg border border-green-200 bg-green-50 p-4 dark:border-green-800 dark:bg-green-950">
+              <h3 className="mb-2 text-sm font-semibold text-green-900 dark:text-green-100">
                 Share Link
               </h3>
               <div className="flex items-center gap-2">
@@ -301,7 +320,7 @@ function PaperDetailPage() {
                   type="text"
                   readOnly
                   value={`${window.location.origin}/share/${paper.shareSlug}`}
-                  className="flex-1 rounded border border-green-300 bg-white px-2 py-1 text-xs"
+                  className="flex-1 rounded border border-green-300 bg-white px-2 py-1 text-xs dark:border-green-700 dark:bg-green-900/50 dark:text-green-100"
                 />
                 <button
                   onClick={() => {
@@ -319,20 +338,20 @@ function PaperDetailPage() {
 
           {/* Tracked File Info */}
           {paper.trackedFile && (
-            <div className="rounded-lg border bg-white p-4">
-              <h3 className="mb-3 text-sm font-semibold text-gray-900">
+            <div className="rounded-lg border bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+              <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-gray-100">
                 Source
               </h3>
               <dl className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">File</dt>
-                  <dd className="font-mono text-xs text-gray-900">
+                  <dt className="text-gray-500 dark:text-gray-400">File</dt>
+                  <dd className="font-mono text-xs text-gray-900 dark:text-gray-100">
                     {paper.trackedFile.filePath}
                   </dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-gray-500">Type</dt>
-                  <dd className="text-gray-900 capitalize">
+                  <dt className="text-gray-500 dark:text-gray-400">Type</dt>
+                  <dd className="text-gray-900 capitalize dark:text-gray-100">
                     {paper.trackedFile.pdfSourceType}
                   </dd>
                 </div>
@@ -341,6 +360,32 @@ function PaperDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="mx-4 w-full max-w-sm rounded-lg bg-white p-6 shadow-xl dark:bg-gray-900">
+            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">Delete Paper</h3>
+            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+              Are you sure you want to delete this paper? This action cannot be undone.
+            </p>
+            <div className="mt-4 flex justify-end gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

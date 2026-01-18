@@ -15,14 +15,14 @@ export function ManualTab({
 }: ManualTabProps) {
   return (
     <div className="flex-1 overflow-y-auto p-4">
-      <p className="mb-2 text-xs text-gray-500">Enter a repository URL manually:</p>
+      <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">Enter a repository URL manually:</p>
       <div className="flex gap-2">
         <input
           type="text"
           value={urlValue}
           onChange={(e) => onUrlChange(e.target.value)}
           placeholder="https://github.com/user/repo or https://gitlab.com/user/repo"
-          className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           onKeyDown={(e) => {
             if (e.key === "Enter" && !isAdding && urlValue.trim()) {
               onAddFromUrl(urlValue.trim());
@@ -38,7 +38,7 @@ export function ManualTab({
         </button>
       </div>
       {error && (
-        <p className="mt-2 text-sm text-red-600">{error}</p>
+        <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>
       )}
     </div>
   );

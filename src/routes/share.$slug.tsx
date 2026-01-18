@@ -30,11 +30,11 @@ function SharePage() {
   if (paper === null) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <h2 className="text-lg font-medium text-gray-900">Paper not found</h2>
-        <p className="mt-2 text-sm text-gray-500">
+        <h2 className="text-lg font-medium text-gray-900 dark:text-gray-100">Paper not found</h2>
+        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
           This paper may have been made private or deleted.
         </p>
-        <Link to="/" className="mt-4 text-blue-600 hover:text-blue-700">
+        <Link to="/" className="mt-4 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">
           Go to Carrel
         </Link>
       </div>
@@ -44,7 +44,7 @@ function SharePage() {
   return (
     <div className="mx-auto max-w-4xl">
       {/* PDF Viewer */}
-      <div className="mb-6 aspect-[8.5/11] w-full overflow-hidden rounded-lg border bg-gray-100 shadow-lg">
+      <div className="mb-6 aspect-[8.5/11] w-full overflow-hidden rounded-lg border bg-gray-100 shadow-lg dark:border-gray-800 dark:bg-gray-800">
         {paper.pdfUrl ? (
           <iframe
             src={paper.pdfUrl}
@@ -75,12 +75,12 @@ function SharePage() {
 
       {/* Paper Info */}
       <div className="text-center">
-        <h1 className="text-2xl font-bold text-gray-900">{paper.title}</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{paper.title}</h1>
         {paper.authors && paper.authors.length > 0 && (
-          <p className="mt-1 text-gray-600">by {paper.authors.join(", ")}</p>
+          <p className="mt-1 text-gray-600 dark:text-gray-400">by {paper.authors.join(", ")}</p>
         )}
         {paper.abstract && (
-          <p className="mx-auto mt-4 max-w-2xl text-sm text-gray-600">
+          <p className="mx-auto mt-4 max-w-2xl text-sm text-gray-600 dark:text-gray-400">
             {paper.abstract}
           </p>
         )}
@@ -111,9 +111,9 @@ function SharePage() {
       </div>
 
       {/* Footer */}
-      <div className="mt-12 border-t pt-6 text-center text-sm text-gray-500">
+      <div className="mt-12 border-t pt-6 text-center text-sm text-gray-500 dark:border-gray-800 dark:text-gray-400">
         Shared via{" "}
-        <Link to="/" className="text-blue-600 hover:text-blue-700">
+        <Link to="/" className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">
           Carrel
         </Link>{" "}
         | Create your own carrel

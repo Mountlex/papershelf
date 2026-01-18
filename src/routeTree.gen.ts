@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as RepositoriesRouteImport } from './routes/repositories'
 import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as MobileAuthRouteImport } from './routes/mobile-auth'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ShareSlugRouteImport } from './routes/share.$slug'
 import { Route as PapersIdRouteImport } from './routes/papers.$id'
@@ -23,6 +24,11 @@ const RepositoriesRoute = RepositoriesRouteImport.update({
 const ProfileRoute = ProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MobileAuthRoute = MobileAuthRouteImport.update({
+  id: '/mobile-auth',
+  path: '/mobile-auth',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -43,6 +49,7 @@ const PapersIdRoute = PapersIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/mobile-auth': typeof MobileAuthRoute
   '/profile': typeof ProfileRoute
   '/repositories': typeof RepositoriesRoute
   '/papers/$id': typeof PapersIdRoute
@@ -50,6 +57,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/mobile-auth': typeof MobileAuthRoute
   '/profile': typeof ProfileRoute
   '/repositories': typeof RepositoriesRoute
   '/papers/$id': typeof PapersIdRoute
@@ -58,6 +66,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/mobile-auth': typeof MobileAuthRoute
   '/profile': typeof ProfileRoute
   '/repositories': typeof RepositoriesRoute
   '/papers/$id': typeof PapersIdRoute
@@ -65,12 +74,25 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/profile' | '/repositories' | '/papers/$id' | '/share/$slug'
+  fullPaths:
+    | '/'
+    | '/mobile-auth'
+    | '/profile'
+    | '/repositories'
+    | '/papers/$id'
+    | '/share/$slug'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/profile' | '/repositories' | '/papers/$id' | '/share/$slug'
+  to:
+    | '/'
+    | '/mobile-auth'
+    | '/profile'
+    | '/repositories'
+    | '/papers/$id'
+    | '/share/$slug'
   id:
     | '__root__'
     | '/'
+    | '/mobile-auth'
     | '/profile'
     | '/repositories'
     | '/papers/$id'
@@ -79,6 +101,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  MobileAuthRoute: typeof MobileAuthRoute
   ProfileRoute: typeof ProfileRoute
   RepositoriesRoute: typeof RepositoriesRoute
   PapersIdRoute: typeof PapersIdRoute
@@ -99,6 +122,13 @@ declare module '@tanstack/react-router' {
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mobile-auth': {
+      id: '/mobile-auth'
+      path: '/mobile-auth'
+      fullPath: '/mobile-auth'
+      preLoaderRoute: typeof MobileAuthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -127,6 +157,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  MobileAuthRoute: MobileAuthRoute,
   ProfileRoute: ProfileRoute,
   RepositoriesRoute: RepositoriesRoute,
   PapersIdRoute: PapersIdRoute,

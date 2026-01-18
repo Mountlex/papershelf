@@ -303,7 +303,7 @@ function RepositoriesPage() {
   if (isUserLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <div className="text-gray-500">Loading...</div>
+        <div className="text-gray-500 dark:text-gray-400">Loading...</div>
       </div>
     );
   }
@@ -313,12 +313,12 @@ function RepositoriesPage() {
   return (
     <div>
       <div className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Repositories</h1>
+        <h1 className="font-serif text-2xl font-semibold text-gray-900 dark:text-gray-100">Repositories</h1>
         <div className="flex items-center gap-3">
           <button
             onClick={handleSyncAll}
             disabled={isSyncingAny || !repositories || repositories.length === 0}
-            className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+            className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             {isSyncingAny ? (
               <>
@@ -354,17 +354,17 @@ function RepositoriesPage() {
       {/* Repository List */}
       {repositories === undefined ? (
         <div className="flex items-center justify-center py-12">
-          <div className="text-gray-500">Loading repositories...</div>
+          <div className="text-gray-500 dark:text-gray-400">Loading repositories...</div>
         </div>
       ) : repositories.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 p-12 text-center">
-          <div className="mb-4 rounded-full bg-gray-100 p-4">
+        <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 p-12 text-center dark:border-gray-700">
+          <div className="mb-4 rounded-full bg-gray-100 p-4 dark:bg-gray-800">
             <svg className="h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
             </svg>
           </div>
-          <h3 className="mb-1 text-lg font-medium text-gray-900">No repositories connected</h3>
-          <p className="mb-4 text-sm text-gray-500">
+          <h3 className="mb-1 text-lg font-medium text-gray-900 dark:text-gray-100">No repositories connected</h3>
+          <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
             Add a GitHub, GitLab, or Overleaf repository to start tracking your LaTeX papers.
           </p>
           <button

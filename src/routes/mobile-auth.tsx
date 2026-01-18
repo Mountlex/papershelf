@@ -1,0 +1,234 @@
+import { createFileRoute, useSearch } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { useConvexAuth } from "convex/react";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { EmailPasswordForm } from "../components/auth/EmailPasswordForm";
+import { GitHubIcon, GitLabIcon } from "../components/icons";
+
+// Mobile app callback URL scheme
+const MOBILE_CALLBACK_URL = "carrel://auth/callback";
+
+interface MobileAuthSearch {
+  provider?: "github" | "gitlab" | "email";
+  error?: string;
+}
+
+export const Route = createFileRoute("/mobile-auth")({
+  validateSearch: (search: Record<string, unknown>): MobileAuthSearch => ({
+    provider: search.provider as MobileAuthSearch["provider"],
+    error: search.error as string | undefined,
+  }),
+  component: MobileAuthPage,
+});
+
+function MobileAuthPage() {
+  const search = useSearch({ from: "/mobile-auth" });
+  const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const { signIn } = useAuthActions();
+  const [isRedirecting, setIsRedirecting] = useState(false);
+  const [authStarted, setAuthStarted] = useState(false);
+  const [error, setError] = useState<string | null>(search.error ?? null);
+
+  // Auto-start OAuth flow if provider is specified
+  useEffect(() => {
+    if (authStarted || isAuthLoading) return;
+
+    const provider = search.provider;
+    if (provider === "github" || provider === "gitlab") {
+      setAuthStarted(true);
+      // Redirect back to this page after OAuth completes
+      signIn(provider, {
+        redirectTo: window.location.origin + "/mobile-auth",
+      });
+    }
+  }, [search.provider, authStarted, isAuthLoading, signIn]);
+
+  // Redirect to mobile app after successful authentication
+  useEffect(() => {
+    if (isAuthenticated && !isRedirecting) {
+      setIsRedirecting(true);
+
+      // Small delay to ensure session is fully established
+      const timer = setTimeout(() => {
+        // Redirect to mobile app
+        window.location.href = `${MOBILE_CALLBACK_URL}?success=true`;
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [isAuthenticated, isRedirecting]);
+
+  // Handle successful email auth
+  const handleEmailAuthSuccess = () => {
+    setIsRedirecting(true);
+    setTimeout(() => {
+      window.location.href = `${MOBILE_CALLBACK_URL}?success=true`;
+    }, 500);
+  };
+
+  // Show redirecting state
+  if (isRedirecting || (isAuthenticated && !error)) {
+    return (
+      <MobileAuthLayout>
+        <div className="flex flex-col items-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-gray-900" />
+          <p className="mt-4 text-gray-600">Redirecting to app...</p>
+          <p className="mt-2 text-sm text-gray-500">
+            If you're not redirected automatically,{" "}
+            <a
+              href={`${MOBILE_CALLBACK_URL}?success=true`}
+              className="text-blue-600 underline"
+            >
+              tap here
+            </a>
+          </p>
+        </div>
+      </MobileAuthLayout>
+    );
+  }
+
+  // Show loading state during OAuth
+  if (isAuthLoading || (authStarted && !error)) {
+    return (
+      <MobileAuthLayout>
+        <div className="flex flex-col items-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-gray-900" />
+          <p className="mt-4 text-gray-600">Signing in...</p>
+        </div>
+      </MobileAuthLayout>
+    );
+  }
+
+  // Show auth options
+  return (
+    <MobileAuthLayout>
+      <div className="w-full max-w-sm">
+        <h1 className="mb-2 text-center text-2xl font-bold text-gray-900">
+          Sign in to Carrel
+        </h1>
+        <p className="mb-8 text-center text-gray-600">
+          Connect your account to access papers on mobile
+        </p>
+
+        {error && (
+          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm text-red-800">{error}</p>
+          </div>
+        )}
+
+        {/* Email/Password Form */}
+        {search.provider === "email" && (
+          <div className="mb-6">
+            <EmailPasswordForm onSuccess={handleEmailAuthSuccess} />
+          </div>
+        )}
+
+        {/* Show all options if no specific provider requested */}
+        {!search.provider && (
+          <>
+            <div className="mb-6">
+              <EmailPasswordForm onSuccess={handleEmailAuthSuccess} />
+            </div>
+
+            <div className="relative mb-6">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-300" />
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="bg-white px-2 text-gray-500">
+                  or continue with
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => {
+                  setAuthStarted(true);
+                  signIn("github", {
+                    redirectTo: window.location.origin + "/mobile-auth",
+                  });
+                }}
+                className="inline-flex w-full items-center justify-center rounded-md bg-gray-900 px-4 py-3 text-base font-medium text-white hover:bg-gray-800"
+              >
+                <GitHubIcon className="mr-2 h-5 w-5" />
+                Continue with GitHub
+              </button>
+
+              <button
+                onClick={() => {
+                  setAuthStarted(true);
+                  signIn("gitlab", {
+                    redirectTo: window.location.origin + "/mobile-auth",
+                  });
+                }}
+                className="inline-flex w-full items-center justify-center rounded-md bg-[#FC6D26] px-4 py-3 text-base font-medium text-white hover:bg-[#E24329]"
+              >
+                <GitLabIcon className="mr-2 h-5 w-5" />
+                Continue with GitLab
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Show specific OAuth button if requested */}
+        {search.provider === "github" && !authStarted && (
+          <button
+            onClick={() => {
+              setAuthStarted(true);
+              signIn("github", {
+                redirectTo: window.location.origin + "/mobile-auth",
+              });
+            }}
+            className="inline-flex w-full items-center justify-center rounded-md bg-gray-900 px-4 py-3 text-base font-medium text-white hover:bg-gray-800"
+          >
+            <GitHubIcon className="mr-2 h-5 w-5" />
+            Continue with GitHub
+          </button>
+        )}
+
+        {search.provider === "gitlab" && !authStarted && (
+          <button
+            onClick={() => {
+              setAuthStarted(true);
+              signIn("gitlab", {
+                redirectTo: window.location.origin + "/mobile-auth",
+              });
+            }}
+            className="inline-flex w-full items-center justify-center rounded-md bg-[#FC6D26] px-4 py-3 text-base font-medium text-white hover:bg-[#E24329]"
+          >
+            <GitLabIcon className="mr-2 h-5 w-5" />
+            Continue with GitLab
+          </button>
+        )}
+
+        <p className="mt-8 text-center text-xs text-gray-500">
+          After signing in, you'll be redirected back to the Carrel app.
+        </p>
+
+        {/* Cancel link */}
+        <div className="mt-4 text-center">
+          <a
+            href={`${MOBILE_CALLBACK_URL}?cancelled=true`}
+            className="text-sm text-gray-600 underline"
+          >
+            Cancel and return to app
+          </a>
+        </div>
+      </div>
+    </MobileAuthLayout>
+  );
+}
+
+function MobileAuthLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-white p-6">
+      <div className="mb-8">
+        <span className="font-serif text-3xl font-semibold tracking-tight text-gray-900">
+          Carrel
+        </span>
+      </div>
+      {children}
+    </div>
+  );
+}

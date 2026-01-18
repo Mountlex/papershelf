@@ -17,7 +17,12 @@ interface FormErrors {
 
 const REMEMBERED_EMAIL_KEY = "carrel_remembered_email";
 
-export function EmailPasswordForm() {
+interface EmailPasswordFormProps {
+  /** Callback fired after successful authentication */
+  onSuccess?: () => void;
+}
+
+export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
   const { signIn } = useAuthActions();
   const invalidateAllSessions = useMutation(api.users.invalidateAllSessions);
   const [mode, setMode] = useState<AuthMode>("signIn");
@@ -65,6 +70,7 @@ export function EmailPasswordForm() {
       formData.set("flow", "signIn");
 
       await signIn("password", formData);
+      onSuccess?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Sign in failed";
       if (message.includes("not verified") || message.includes("verify")) {
@@ -131,6 +137,7 @@ export function EmailPasswordForm() {
       formData.set("flow", "email-verification");
 
       await signIn("password", formData);
+      onSuccess?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Verification failed";
       if (message.includes("expired")) {
@@ -197,6 +204,7 @@ export function EmailPasswordForm() {
         // Non-critical - log but don't fail the password reset
         console.error("Failed to invalidate sessions:", sessionError);
       }
+      onSuccess?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Reset failed";
       if (message.includes("expired")) {

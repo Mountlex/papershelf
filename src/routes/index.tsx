@@ -52,7 +52,6 @@ function GalleryPage() {
   // Search, sort, and filter state
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "a-z" | "repository">("newest");
-  const [statusFilter, setStatusFilter] = useState<"all" | "synced" | "needs-sync" | "uploaded">("all");
 
   // Toast state
   const [toast, setToast] = useState<{ message: string; type: "error" | "success" | "info" } | null>(null);
@@ -123,22 +122,6 @@ function GalleryPage() {
       });
     }
 
-    // Apply status filter
-    if (statusFilter !== "all") {
-      result = result.filter((paper) => {
-        switch (statusFilter) {
-          case "synced":
-            return paper.isUpToDate === true;
-          case "needs-sync":
-            return paper.isUpToDate === false;
-          case "uploaded":
-            return paper.isUpToDate === null || paper.isUpToDate === undefined;
-          default:
-            return true;
-        }
-      });
-    }
-
     // Apply sorting
     result.sort((a, b) => {
       switch (sortBy) {
@@ -166,11 +149,10 @@ function GalleryPage() {
     });
 
     return result;
-  }, [papers, searchQuery, statusFilter, sortBy]);
+  }, [papers, searchQuery, sortBy]);
 
   const clearFilters = () => {
     setSearchQuery("");
-    setStatusFilter("all");
   };
 
   const handleStartEdit = (e: React.MouseEvent, paperId: Id<"papers">, currentTitle: string) => {
@@ -302,7 +284,7 @@ function GalleryPage() {
   if (isUserLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <div className="text-gray-500">Loading...</div>
+        <div className="text-gray-500 dark:text-gray-400">Loading...</div>
       </div>
     );
   }
@@ -319,7 +301,7 @@ function GalleryPage() {
       />
 
       <div className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Your Papers</h1>
+        <h1 className="font-serif text-2xl font-semibold text-gray-900 dark:text-gray-100">Your Papers</h1>
         <div className="flex items-center gap-3">
           <div className="relative">
             <input
@@ -328,12 +310,12 @@ function GalleryPage() {
               placeholder="Search papers... (Ctrl+K)"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-48 rounded-md border border-gray-300 px-4 py-2 pr-8 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="w-56 rounded-lg border border-gray-200 bg-gray-50/50 px-4 py-2 pr-8 text-sm placeholder:text-gray-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100 dark:placeholder:text-gray-500 dark:focus:bg-gray-800"
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -344,7 +326,7 @@ function GalleryPage() {
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
           >
             <option value="newest">Newest first</option>
             <option value="oldest">Oldest first</option>
@@ -354,7 +336,7 @@ function GalleryPage() {
           <button
             onClick={handleSyncAll}
             disabled={isSyncing || !repositories || repositories.length === 0}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             title="Check all repositories for new commits"
           >
             {isSyncing ? (
@@ -377,7 +359,7 @@ function GalleryPage() {
           <button
             onClick={handleUploadClick}
             disabled={isUploading}
-            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
           >
             {isUploading ? (
               <>
@@ -399,65 +381,14 @@ function GalleryPage() {
         </div>
       </div>
 
-      {/* Filter chips and results count */}
-      {papers && papers.length > 0 && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-gray-500">Filter:</span>
-            <button
-              onClick={() => setStatusFilter("all")}
-              className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
-                statusFilter === "all"
-                  ? "bg-gray-900 text-white"
-                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-              }`}
-            >
-              All
-            </button>
-            <button
-              onClick={() => setStatusFilter("synced")}
-              className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
-                statusFilter === "synced"
-                  ? "bg-green-600 text-white"
-                  : "bg-green-50 text-green-700 hover:bg-green-100"
-              }`}
-            >
-              Up to date
-            </button>
-            <button
-              onClick={() => setStatusFilter("needs-sync")}
-              className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
-                statusFilter === "needs-sync"
-                  ? "bg-yellow-500 text-white"
-                  : "bg-yellow-50 text-yellow-700 hover:bg-yellow-100"
-              }`}
-            >
-              Needs sync
-            </button>
-            <button
-              onClick={() => setStatusFilter("uploaded")}
-              className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
-                statusFilter === "uploaded"
-                  ? "bg-purple-600 text-white"
-                  : "bg-purple-50 text-purple-700 hover:bg-purple-100"
-              }`}
-            >
-              Uploaded
-            </button>
-          </div>
-          <div className="text-sm text-gray-500">
-            Showing {filteredPapers.length} of {papers.length} papers
-          </div>
-        </div>
-      )}
 
       {papers === undefined ? (
         <div className="flex items-center justify-center py-12">
-          <div className="text-gray-500">Loading papers...</div>
+          <div className="text-gray-500 dark:text-gray-400">Loading papers...</div>
         </div>
       ) : papers.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 p-12 text-center">
-          <div className="mb-4 rounded-full bg-gray-100 p-4">
+        <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 p-12 text-center dark:border-gray-700">
+          <div className="mb-4 rounded-full bg-gray-100 p-4 dark:bg-gray-800">
             <svg
               className="h-8 w-8 text-gray-400"
               fill="none"
@@ -472,10 +403,10 @@ function GalleryPage() {
               />
             </svg>
           </div>
-          <h3 className="mb-1 text-lg font-medium text-gray-900">
+          <h3 className="mb-1 text-lg font-medium text-gray-900 dark:text-gray-100">
             No papers yet
           </h3>
-          <p className="mb-4 text-sm text-gray-500">
+          <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
             Upload a PDF or connect a repository to start tracking your papers.
           </p>
           <div className="flex gap-3">
@@ -491,7 +422,7 @@ function GalleryPage() {
             </button>
             <Link
               to="/repositories"
-              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               Add Repository
             </Link>
@@ -499,8 +430,8 @@ function GalleryPage() {
         </div>
       ) : filteredPapers.length === 0 ? (
         /* Empty search/filter state */
-        <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 p-12 text-center">
-          <div className="mb-4 rounded-full bg-gray-100 p-4">
+        <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 p-12 text-center dark:border-gray-700">
+          <div className="mb-4 rounded-full bg-gray-100 p-4 dark:bg-gray-800">
             <svg
               className="h-8 w-8 text-gray-400"
               fill="none"
@@ -515,17 +446,15 @@ function GalleryPage() {
               />
             </svg>
           </div>
-          <h3 className="mb-1 text-lg font-medium text-gray-900">
+          <h3 className="mb-1 text-lg font-medium text-gray-900 dark:text-gray-100">
             No matching papers
           </h3>
-          <p className="mb-4 text-sm text-gray-500">
-            {searchQuery
-              ? `No papers found matching "${searchQuery}"`
-              : "No papers match the selected filter"}
+          <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
+            No papers found matching "{searchQuery}"
           </p>
           <button
             onClick={clearFilters}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -534,16 +463,16 @@ function GalleryPage() {
           </button>
         </div>
       ) : (
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filteredPapers.map((paper) => (
             <Link
               key={paper._id}
               to="/papers/$id"
               params={{ id: paper._id }}
-              className="group overflow-hidden rounded-lg border bg-white shadow-sm transition-shadow hover:shadow-md"
+              className="group overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm transition-all duration-200 hover:border-gray-200 hover:shadow-lg dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700"
             >
               {/* Thumbnail */}
-              <div className="aspect-[8.5/11] w-full bg-gray-100">
+              <div className="relative aspect-[8.5/11] w-full bg-gray-100 dark:bg-gray-800">
                 {paper.thumbnailUrl ? (
                   <img
                     src={paper.thumbnailUrl}
@@ -567,10 +496,25 @@ function GalleryPage() {
                     </svg>
                   </div>
                 )}
+                {/* Fullscreen button overlay */}
+                {paper.pdfUrl && (
+                  <a
+                    href={paper.pdfUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute bottom-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity hover:bg-black/80 group-hover:opacity-100"
+                    title="View PDF fullscreen"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                    </svg>
+                  </a>
+                )}
               </div>
 
               {/* Info */}
-              <div className="p-3">
+              <div className="p-4">
                 <div className="flex items-start gap-1">
                   {editingPaperId === paper._id ? (
                     <input
@@ -581,16 +525,16 @@ function GalleryPage() {
                       onBlur={handleSaveTitle}
                       onKeyDown={handleKeyDown}
                       onClick={(e) => e.preventDefault()}
-                      className="flex-1 truncate rounded border border-blue-400 px-1 py-0.5 text-sm font-medium text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      className="flex-1 truncate rounded border border-blue-400 px-1 py-0.5 text-sm font-medium text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-800 dark:text-gray-100"
                     />
                   ) : (
                     <>
-                      <h3 className="flex-1 truncate font-medium text-gray-900 group-hover:text-blue-600">
+                      <h3 className="font-serif flex-1 truncate font-medium text-gray-900 group-hover:text-blue-600 dark:text-gray-100 dark:group-hover:text-blue-400">
                         {paper.title}
                       </h3>
                       <button
                         onClick={(e) => handleStartEdit(e, paper._id, paper.title)}
-                        className="shrink-0 rounded p-0.5 text-gray-400 opacity-0 transition-opacity hover:bg-gray-100 hover:text-gray-600 group-hover:opacity-100"
+                        className="shrink-0 rounded p-0.5 text-gray-400 opacity-0 transition-opacity hover:bg-gray-100 hover:text-gray-600 group-hover:opacity-100 dark:hover:bg-gray-800 dark:hover:text-gray-300"
                         title="Rename"
                       >
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -599,7 +543,7 @@ function GalleryPage() {
                       </button>
                       <button
                         onClick={(e) => handleDeleteClick(e, paper._id)}
-                        className="shrink-0 rounded p-0.5 text-gray-400 opacity-0 transition-opacity hover:bg-red-100 hover:text-red-600 group-hover:opacity-100"
+                        className="shrink-0 rounded p-0.5 text-gray-400 opacity-0 transition-opacity hover:bg-red-100 hover:text-red-600 group-hover:opacity-100 dark:hover:bg-red-900/30"
                         title="Delete"
                       >
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -610,7 +554,7 @@ function GalleryPage() {
                   )}
                 </div>
                 {paper.authors && paper.authors.length > 0 && (
-                  <p className="mt-1 truncate text-xs text-gray-500">
+                  <p className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
                     {paper.authors.join(", ")}
                   </p>
                 )}
@@ -738,15 +682,15 @@ function GalleryPage() {
       {/* Delete Confirmation Dialog */}
       {deletingPaperId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="mx-4 w-full max-w-sm rounded-lg bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-medium text-gray-900">Delete Paper</h3>
-            <p className="mt-2 text-sm text-gray-500">
+          <div className="mx-4 w-full max-w-sm rounded-lg bg-white p-6 shadow-xl dark:bg-gray-900">
+            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">Delete Paper</h3>
+            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
               Are you sure you want to delete this paper? This action cannot be undone.
             </p>
             <div className="mt-4 flex justify-end gap-3">
               <button
                 onClick={() => setDeletingPaperId(null)}
-                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
               >
                 Cancel
               </button>

@@ -34,11 +34,11 @@ export function SelfHostedTab({
           <svg className="h-5 w-5 text-[#554488]" fill="currentColor" viewBox="0 0 24 24">
             <path d="M4.845.904c-.435 0-.82.28-.955.692C2.639 5.449 1.246 9.728.07 13.335a1.437 1.437 0 00.522 1.607l11.071 8.045c.2.145.472.144.67-.004l11.073-8.04a1.436 1.436 0 00.522-1.61c-1.285-3.942-2.683-8.256-3.817-11.746a1.004 1.004 0 00-.957-.684.987.987 0 00-.949.69l-2.405 7.408H8.203l-2.41-7.408a.987.987 0 00-.942-.69h-.006z" />
           </svg>
-          <span className="text-sm font-medium text-gray-700">Self-Hosted GitLab</span>
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Self-Hosted GitLab</span>
         </div>
         <button
           onClick={onShowSetup}
-          className="text-xs text-[#554488] hover:text-[#443377]"
+          className="text-xs text-[#554488] hover:text-[#443377] dark:text-[#8877bb] dark:hover:text-[#9988cc]"
         >
           + Add Instance
         </button>
@@ -52,8 +52,8 @@ export function SelfHostedTab({
                 key={instance._id}
                 className={`flex items-center justify-between rounded-md border p-2 ${
                   selectedInstanceId === instance._id
-                    ? "border-[#554488] bg-[#554488]/5"
-                    : "border-gray-200 hover:border-gray-300"
+                    ? "border-[#554488] bg-[#554488]/5 dark:bg-[#554488]/20"
+                    : "border-gray-200 hover:border-gray-300 dark:border-gray-700 dark:hover:border-gray-600"
                 }`}
               >
                 <button
@@ -69,13 +69,13 @@ export function SelfHostedTab({
                     className="h-4 w-4 text-[#554488]"
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-gray-900">{instance.name}</p>
-                    <p className="truncate text-xs text-gray-500">{instance.url}</p>
+                    <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{instance.name}</p>
+                    <p className="truncate text-xs text-gray-500 dark:text-gray-400">{instance.url}</p>
                   </div>
                 </button>
                 <button
                   onClick={() => onDeleteInstance(instance._id, instance.name)}
-                  className="ml-2 shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                  className="ml-2 shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400"
                   title="Delete instance"
                 >
                   <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -88,7 +88,7 @@ export function SelfHostedTab({
 
           {selectedInstanceId && selectedInstance && (
             <div className="mt-3">
-              <p className="mb-2 text-xs text-gray-500">
+              <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
                 Enter repository URL from {selectedInstance.name}:
               </p>
               <div className="flex gap-2">
@@ -97,7 +97,7 @@ export function SelfHostedTab({
                   value={urlValue}
                   onChange={(e) => onUrlChange(e.target.value)}
                   placeholder={`${selectedInstance.url}/owner/repo`}
-                  className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !isAdding && urlValue.trim()) {
                       onAddRepo(urlValue.trim());
@@ -116,12 +116,12 @@ export function SelfHostedTab({
           )}
         </div>
       ) : (
-        <p className="text-center text-xs text-gray-500">
+        <p className="text-center text-xs text-gray-500 dark:text-gray-400">
           No self-hosted GitLab instances configured.
         </p>
       )}
       {error && (
-        <p className="mt-2 text-sm text-red-600">{error}</p>
+        <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>
       )}
     </div>
   );
