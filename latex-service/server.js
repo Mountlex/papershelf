@@ -729,6 +729,127 @@ app.post("/git/archive", rateLimit, async (req, res) => {
   }, req.log);
 });
 
+// Git selective archive endpoint - fetches only files matching extensions or specific paths
+app.post("/git/selective-archive", rateLimit, async (req, res) => {
+  const jobId = uuidv4();
+  const workDir = `/tmp/git-selective-${jobId}`;
+
+  await withCleanup(workDir, async () => {
+    const { gitUrl, branch, auth, extensions, paths } = req.body;
+
+    const gitUrlValidation = validateGitUrl(gitUrl);
+    if (!gitUrlValidation.valid) {
+      return res.status(400).json({ error: gitUrlValidation.error });
+    }
+
+    // Must provide either extensions or paths
+    if ((!extensions || extensions.length === 0) && (!paths || paths.length === 0)) {
+      return res.status(400).json({ error: "Must provide either 'extensions' or 'paths' array" });
+    }
+
+    const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
+
+    await fs.mkdir(workDir, { recursive: true });
+
+    const cloneArgs = ["clone", "--depth", "1"];
+    if (branch) {
+      cloneArgs.push("--branch", branch);
+    }
+    cloneArgs.push(authenticatedUrl, workDir);
+
+    const cloneResult = await spawnAsync("git", cloneArgs, {
+      timeout: 120000,
+      logger: req.log,
+    });
+
+    if (!cloneResult.success) {
+      return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
+    }
+
+    const files = [];
+    const binaryExtensions = new Set([
+      ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif",
+      ".eps", ".ps", ".svg", ".ico", ".webp", ".zip", ".tar", ".gz",
+    ]);
+    const MAX_DEPTH = 20;
+
+    // Normalize extensions to lowercase with leading dot
+    const normalizedExtensions = extensions
+      ? new Set(extensions.map(ext => ext.startsWith(".") ? ext.toLowerCase() : `.${ext.toLowerCase()}`))
+      : null;
+
+    // Normalize paths for lookup
+    const normalizedPaths = paths
+      ? new Set(paths.map(p => p.replace(/^\//, ""))) // Remove leading slash if present
+      : null;
+
+    async function readDir(dirPath, relativePath = "", depth = 0) {
+      if (depth > MAX_DEPTH) {
+        req.log.warn(`Max directory depth (${MAX_DEPTH}) exceeded at ${relativePath}`);
+        return;
+      }
+
+      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (entry.name === ".git") continue;
+
+        const fullPath = path.join(dirPath, entry.name);
+        const relPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+
+        if (entry.isDirectory()) {
+          await readDir(fullPath, relPath, depth + 1);
+        } else {
+          const ext = path.extname(entry.name).toLowerCase();
+
+          // Check if file matches our filter criteria
+          const matchesExtension = normalizedExtensions && normalizedExtensions.has(ext);
+          const matchesPath = normalizedPaths && normalizedPaths.has(relPath);
+
+          if (!matchesExtension && !matchesPath) {
+            continue; // Skip files that don't match
+          }
+
+          try {
+            const content = await fs.readFile(fullPath);
+
+            // Skip very large files
+            if (content.length > LIMITS.MAX_RESOURCE_SIZE) {
+              req.log.info(`Skipping large file: ${relPath} (${content.length} bytes)`);
+              continue;
+            }
+
+            if (binaryExtensions.has(ext)) {
+              files.push({
+                path: relPath,
+                content: content.toString("base64"),
+                encoding: "base64",
+              });
+            } else {
+              files.push({
+                path: relPath,
+                content: content.toString("utf-8"),
+              });
+            }
+          } catch (e) {
+            req.log.error({ err: e }, `Error reading file ${relPath}`);
+          }
+        }
+      }
+    }
+
+    await readDir(workDir);
+
+    // Report which requested paths were not found (useful for debugging)
+    const foundPaths = new Set(files.map(f => f.path));
+    const missingPaths = normalizedPaths
+      ? Array.from(normalizedPaths).filter(p => !foundPaths.has(p))
+      : [];
+
+    res.json({ files, missingPaths });
+  }, req.log);
+});
+
 // Git file-hash endpoint
 app.post("/git/file-hash", rateLimit, async (req, res) => {
   const jobId = uuidv4();

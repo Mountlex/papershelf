@@ -15,8 +15,10 @@ const extendedAuthTables = {
     phoneVerificationTime: v.optional(v.float64()),
     // Custom field for GitHub access token
     githubAccessToken: v.optional(v.string()),
-    // Custom field for GitLab access token
+    // Custom fields for GitLab access token with refresh support
     gitlabAccessToken: v.optional(v.string()),
+    gitlabRefreshToken: v.optional(v.string()),
+    gitlabTokenExpiresAt: v.optional(v.number()), // Unix timestamp when access token expires
     // Custom fields for Overleaf credentials (Basic Auth: email + Git token)
     overleafEmail: v.optional(v.string()),
     overleafToken: v.optional(v.string()),

@@ -47,13 +47,19 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       // Override the default authorization URL to include read_api scope
       authorization: "https://gitlab.com/oauth/authorize?scope=read_user+read_api",
       profile(profile: GitLabProfile, tokens: TokenSet) {
+        // Calculate token expiry time (expires_in is in seconds, default 7200 = 2 hours)
+        const expiresIn = tokens.expires_in ?? 7200;
+        const expiresAt = Date.now() + expiresIn * 1000;
+
         return {
           id: profile.sub ?? String(profile.id),
           name: profile.name ?? profile.username,
           email: profile.email,
           image: profile.avatar_url,
-          // Store the access token for API calls
+          // Store the access token and refresh token for API calls
           gitlabAccessToken: tokens.access_token,
+          gitlabRefreshToken: tokens.refresh_token,
+          gitlabTokenExpiresAt: expiresAt,
         };
       },
     }),
@@ -83,6 +89,12 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
           if (profile.gitlabAccessToken) {
             updates.gitlabAccessToken = profile.gitlabAccessToken;
           }
+          if (profile.gitlabRefreshToken) {
+            updates.gitlabRefreshToken = profile.gitlabRefreshToken;
+          }
+          if (profile.gitlabTokenExpiresAt) {
+            updates.gitlabTokenExpiresAt = profile.gitlabTokenExpiresAt;
+          }
 
           // Only update name if user doesn't have one
           if (!existingUser.name && profile.name) {
@@ -106,6 +118,8 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
         emailVerificationTime: profile.emailVerificationTime,
         githubAccessToken: profile.githubAccessToken,
         gitlabAccessToken: profile.gitlabAccessToken,
+        gitlabRefreshToken: profile.gitlabRefreshToken,
+        gitlabTokenExpiresAt: profile.gitlabTokenExpiresAt,
       });
     },
   },

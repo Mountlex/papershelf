@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { action, internalAction, internalQuery } from "./_generated/server";
+import { action, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { auth } from "./auth";
@@ -18,6 +18,9 @@ import {
   BATCH_OPERATION_TIMEOUT,
 } from "./lib/http";
 
+// Token refresh buffer: refresh 5 minutes before expiry to avoid race conditions
+const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+
 // Helper to get GitHub token for authenticated user
 export async function getGitHubToken(ctx: ActionCtx): Promise<string | null> {
   const userId = await auth.getUserId(ctx);
@@ -28,13 +31,34 @@ export async function getGitHubToken(ctx: ActionCtx): Promise<string | null> {
   return user?.githubAccessToken || null;
 }
 
-// Helper to get GitLab token for authenticated user
+// Helper to get GitLab token for authenticated user (with automatic refresh)
 export async function getGitLabToken(ctx: ActionCtx): Promise<string | null> {
   const userId = await auth.getUserId(ctx);
   if (!userId) return null;
 
   const user = await ctx.runQuery(internal.git.getUser, { userId });
-  return user?.gitlabAccessToken || null;
+  if (!user?.gitlabAccessToken) return null;
+
+  // Check if token needs refresh (expired or expiring within buffer period)
+  const now = Date.now();
+  const expiresAt = user.gitlabTokenExpiresAt;
+
+  // If we have expiry info and token is expired or expiring soon, try to refresh
+  if (expiresAt && now >= expiresAt - TOKEN_REFRESH_BUFFER_MS) {
+    if (user.gitlabRefreshToken) {
+      console.log("GitLab token expired or expiring soon, refreshing...");
+      const refreshed = await refreshGitLabToken(ctx, userId, user.gitlabRefreshToken);
+      if (refreshed) {
+        return refreshed.accessToken;
+      }
+      // If refresh failed, return the old token (might still work briefly)
+      console.warn("GitLab token refresh failed, using potentially expired token");
+    } else {
+      console.warn("GitLab token expired but no refresh token available");
+    }
+  }
+
+  return user.gitlabAccessToken;
 }
 
 // Helper to get Overleaf credentials for authenticated user
@@ -97,6 +121,85 @@ export const getSelfHostedGitLabInstanceById = internalQuery({
     return await ctx.db.get(args.id);
   },
 });
+
+// Internal mutation to update GitLab tokens after refresh
+export const updateGitLabTokens = internalMutation({
+  args: {
+    userId: v.id("users"),
+    accessToken: v.string(),
+    refreshToken: v.string(),
+    expiresAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.userId, {
+      gitlabAccessToken: args.accessToken,
+      gitlabRefreshToken: args.refreshToken,
+      gitlabTokenExpiresAt: args.expiresAt,
+    });
+  },
+});
+
+// Refresh GitLab OAuth token using the refresh token
+async function refreshGitLabToken(
+  ctx: ActionCtx,
+  userId: Id<"users">,
+  refreshToken: string
+): Promise<{ accessToken: string; refreshToken: string; expiresAt: number } | null> {
+  // Get OAuth client credentials from environment
+  const clientId = process.env.AUTH_GITLAB_ID;
+  const clientSecret = process.env.AUTH_GITLAB_SECRET;
+  // Use CONVEX_SITE_URL for OAuth callback - this is the Convex HTTP actions URL
+  // (e.g., https://xyz.convex.site), not the frontend URL
+  const convexSiteUrl = process.env.CONVEX_SITE_URL;
+
+  if (!clientId || !clientSecret || !convexSiteUrl) {
+    console.error("GitLab OAuth credentials or CONVEX_SITE_URL not configured");
+    return null;
+  }
+
+  try {
+    const response = await fetchWithTimeout("https://gitlab.com/oauth/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: "refresh_token",
+        redirect_uri: `${convexSiteUrl}/api/auth/callback/gitlab`,
+      }).toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("GitLab token refresh failed:", response.status, errorText);
+      return null;
+    }
+
+    const data = await response.json();
+    const expiresIn = data.expires_in ?? 7200;
+    const expiresAt = Date.now() + expiresIn * 1000;
+
+    // Update the tokens in the database
+    await ctx.runMutation(internal.git.updateGitLabTokens, {
+      userId,
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt,
+    });
+
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt,
+    };
+  } catch (error) {
+    console.error("GitLab token refresh error:", error);
+    return null;
+  }
+}
 
 // Get paper by ID
 export const getPaper = internalQuery({
