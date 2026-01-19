@@ -17,6 +17,7 @@ import type * as lib_audit from "../lib/audit.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_fileFetching from "../lib/fileFetching.js";
 import type * as lib_gitProviders from "../lib/gitProviders.js";
+import type * as lib_http from "../lib/http.js";
 import type * as lib_latexUtils from "../lib/latexUtils.js";
 import type * as lib_rateLimit from "../lib/rateLimit.js";
 import type * as lib_validation from "../lib/validation.js";
@@ -44,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/fileFetching": typeof lib_fileFetching;
   "lib/gitProviders": typeof lib_gitProviders;
+  "lib/http": typeof lib_http;
   "lib/latexUtils": typeof lib_latexUtils;
   "lib/rateLimit": typeof lib_rateLimit;
   "lib/validation": typeof lib_validation;

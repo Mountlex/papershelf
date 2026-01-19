@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { auth } from "./auth";
 import { validateFilePath, validatePattern } from "./lib/validation";
+import { parseRepoUrl } from "./lib/gitProviders";
 
 // List all repositories for a user (with sync status)
 export const list = query({
@@ -112,47 +113,6 @@ export const getWithTrackedFiles = query({
   },
 });
 
-// Parse Git URL to extract owner and repo name
-// Only accepts known providers (GitHub, GitLab, Overleaf) to prevent arbitrary URL injection
-function parseGitUrl(url: string): { owner: string; repo: string; provider: "github" | "gitlab" | "overleaf" | "selfhosted-gitlab" } {
-  // Validate URL format first
-  try {
-    const parsed = new URL(url);
-    if (!["https:", "http:"].includes(parsed.protocol)) {
-      throw new Error("Invalid git URL: Only HTTP(S) URLs are supported");
-    }
-  } catch {
-    throw new Error("Invalid git URL format");
-  }
-
-  // GitHub: https://github.com/owner/repo or git@github.com:owner/repo.git
-  const githubMatch = url.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(\.git)?$/);
-  if (githubMatch) {
-    return { owner: githubMatch[1], repo: githubMatch[2], provider: "github" };
-  }
-
-  // GitLab.com: https://gitlab.com/owner/repo
-  const gitlabMatch = url.match(/gitlab\.com[/:]([\w-]+)\/([\w.-]+?)(\.git)?$/);
-  if (gitlabMatch) {
-    return { owner: gitlabMatch[1], repo: gitlabMatch[2], provider: "gitlab" };
-  }
-
-  // Overleaf: https://git.overleaf.com/project-id
-  const overleafMatch = url.match(/overleaf\.com\/([\w]+)/);
-  if (overleafMatch) {
-    return { owner: "overleaf", repo: overleafMatch[1], provider: "overleaf" };
-  }
-
-  // Self-hosted GitLab: Check if it looks like a GitLab-style URL (has /owner/repo pattern)
-  // This will be validated against configured instances in the git.ts module
-  const selfHostedMatch = url.match(/https:\/\/[^/]+\/([\w-]+)\/([\w.-]+?)(\.git)?$/);
-  if (selfHostedMatch) {
-    return { owner: selfHostedMatch[1], repo: selfHostedMatch[2], provider: "selfhosted-gitlab" };
-  }
-
-  throw new Error("Invalid git URL. Supported providers: GitHub, GitLab, Overleaf, or configured self-hosted GitLab instances.");
-}
-
 // Add a new repository
 export const add = mutation({
   args: {
@@ -168,7 +128,20 @@ export const add = mutation({
       throw new Error("Unauthorized");
     }
 
-    const parsed = parseGitUrl(args.gitUrl);
+    // Validate URL format
+    try {
+      const urlObj = new URL(args.gitUrl);
+      if (!["https:", "http:"].includes(urlObj.protocol)) {
+        throw new Error("Invalid git URL: Only HTTP(S) URLs are supported");
+      }
+    } catch {
+      throw new Error("Invalid git URL format");
+    }
+
+    const parsed = parseRepoUrl(args.gitUrl);
+    if (!parsed) {
+      throw new Error("Invalid git URL. Supported providers: GitHub, GitLab, Overleaf, or configured self-hosted GitLab instances.");
+    }
 
     const repositoryId = await ctx.db.insert("repositories", {
       userId: args.userId,
@@ -243,6 +216,39 @@ export const remove = mutation({
         .collect();
 
       for (const paper of papers) {
+        // Delete version history and their storage files
+        const versions = await ctx.db
+          .query("paperVersions")
+          .withIndex("by_paper", (q) => q.eq("paperId", paper._id))
+          .collect();
+
+        for (const version of versions) {
+          if (version.pdfFileId) {
+            await ctx.storage.delete(version.pdfFileId);
+          }
+          if (version.thumbnailFileId) {
+            await ctx.storage.delete(version.thumbnailFileId);
+          }
+          await ctx.db.delete(version._id);
+        }
+
+        // Delete compilation jobs
+        const jobs = await ctx.db
+          .query("compilationJobs")
+          .withIndex("by_paper", (q) => q.eq("paperId", paper._id))
+          .collect();
+        for (const job of jobs) {
+          await ctx.db.delete(job._id);
+        }
+
+        // Delete paper's storage files
+        if (paper.pdfFileId) {
+          await ctx.storage.delete(paper.pdfFileId);
+        }
+        if (paper.thumbnailFileId) {
+          await ctx.storage.delete(paper.thumbnailFileId);
+        }
+
         await ctx.db.delete(paper._id);
       }
 
@@ -355,6 +361,39 @@ export const removeTrackedFile = mutation({
       .collect();
 
     for (const paper of papers) {
+      // Delete version history and their storage files
+      const versions = await ctx.db
+        .query("paperVersions")
+        .withIndex("by_paper", (q) => q.eq("paperId", paper._id))
+        .collect();
+
+      for (const version of versions) {
+        if (version.pdfFileId) {
+          await ctx.storage.delete(version.pdfFileId);
+        }
+        if (version.thumbnailFileId) {
+          await ctx.storage.delete(version.thumbnailFileId);
+        }
+        await ctx.db.delete(version._id);
+      }
+
+      // Delete compilation jobs
+      const jobs = await ctx.db
+        .query("compilationJobs")
+        .withIndex("by_paper", (q) => q.eq("paperId", paper._id))
+        .collect();
+      for (const job of jobs) {
+        await ctx.db.delete(job._id);
+      }
+
+      // Delete paper's storage files
+      if (paper.pdfFileId) {
+        await ctx.storage.delete(paper.pdfFileId);
+      }
+      if (paper.thumbnailFileId) {
+        await ctx.storage.delete(paper.thumbnailFileId);
+      }
+
       await ctx.db.delete(paper._id);
     }
 

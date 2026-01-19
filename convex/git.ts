@@ -11,47 +11,12 @@ import {
   getGitLabHeaders,
   type SelfHostedGitLabInstance,
 } from "./lib/gitProviders";
-
-// Default timeout for API requests (30 seconds)
-const DEFAULT_API_TIMEOUT = 30000;
-
-// Fetch with timeout using AbortSignal
-async function fetchWithTimeout(
-  url: string,
-  options: RequestInit & { timeout?: number } = {}
-): Promise<Response> {
-  const { timeout = DEFAULT_API_TIMEOUT, ...fetchOptions } = options;
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-  try {
-    const response = await fetch(url, {
-      ...fetchOptions,
-      signal: controller.signal,
-    });
-    return response;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`Request to ${url} timed out after ${timeout}ms`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-// Helper to get headers for LaTeX service requests (includes API key if configured)
-function getLatexServiceHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  const apiKey = process.env.LATEX_SERVICE_API_KEY;
-  if (apiKey) {
-    headers["X-API-Key"] = apiKey;
-  }
-  return headers;
-}
+import {
+  fetchWithTimeout,
+  withTimeout,
+  getLatexServiceHeaders,
+  BATCH_OPERATION_TIMEOUT,
+} from "./lib/http";
 
 // Helper to get GitHub token for authenticated user
 export async function getGitHubToken(ctx: ActionCtx): Promise<string | null> {
@@ -202,6 +167,14 @@ export const fetchRepositoryInfo = action({
       const matchingInstance = isSelfHosted
         ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
         : null;
+
+      if (isSelfHosted && !matchingInstance) {
+        throw new Error(
+          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
+          `The instance may have been deleted. Please re-add the repository.`
+        );
+      }
+
       const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
       const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
 
@@ -276,6 +249,14 @@ export const fetchLatestCommit = action({
       const matchingInstance = isSelfHosted
         ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
         : null;
+
+      if (isSelfHosted && !matchingInstance) {
+        throw new Error(
+          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
+          `The instance may have been deleted. Please re-add the repository.`
+        );
+      }
+
       const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
       const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
 
@@ -338,6 +319,14 @@ export const fetchFileContent = action({
       const matchingInstance = isSelfHosted
         ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
         : null;
+
+      if (isSelfHosted && !matchingInstance) {
+        throw new Error(
+          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
+          `The instance may have been deleted. Please re-add the repository.`
+        );
+      }
+
       const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
       const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
 
@@ -468,6 +457,14 @@ export const listRepositoryFiles = action({
       const matchingInstance = isSelfHosted
         ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
         : null;
+
+      if (isSelfHosted && !matchingInstance) {
+        throw new Error(
+          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
+          `The instance may have been deleted. Please re-add the repository.`
+        );
+      }
+
       const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
       const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
       const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
@@ -603,6 +600,14 @@ export const fetchLatestCommitInternal = internalAction({
       const matchingInstance = isSelfHosted
         ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
         : null;
+
+      if (isSelfHosted && !matchingInstance) {
+        throw new Error(
+          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
+          `The instance may have been deleted. Please re-add the repository.`
+        );
+      }
+
       const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
       const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
       const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
@@ -719,11 +724,18 @@ export const fetchFileContentInternal = internalAction({
       ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
       : null;
 
-    const baseUrl = isSelfHosted ? matchingInstance?.url || "" : "https://gitlab.com";
+    if (isSelfHosted && !matchingInstance) {
+      throw new Error(
+        `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
+        `The instance may have been deleted. Please re-add the repository.`
+      );
+    }
+
+    const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
     const token = parsed.provider === "github"
       ? await getGitHubToken(ctx)
       : isSelfHosted
-        ? matchingInstance?.token
+        ? matchingInstance!.token
         : await getGitLabToken(ctx);
 
     let rawUrl: string;
@@ -835,7 +847,7 @@ export const fetchFileHashBatchInternal = internalAction({
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      // Fetch all file hashes in parallel
+      // Fetch all file hashes in parallel with overall timeout
       const fetchPromises = args.filePaths.map(async (filePath) => {
         try {
           const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
@@ -853,7 +865,11 @@ export const fetchFileHashBatchInternal = internalAction({
         }
       });
 
-      const fetchResults = await Promise.all(fetchPromises);
+      const fetchResults = await withTimeout(
+        Promise.all(fetchPromises),
+        BATCH_OPERATION_TIMEOUT,
+        `Batch hash fetch timed out after ${BATCH_OPERATION_TIMEOUT}ms for ${args.filePaths.length} files`
+      );
       for (const result of fetchResults) {
         results[result.path] = result.hash;
       }
@@ -863,6 +879,14 @@ export const fetchFileHashBatchInternal = internalAction({
       const matchingInstance = isSelfHosted
         ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
         : null;
+
+      if (isSelfHosted && !matchingInstance) {
+        throw new Error(
+          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
+          `The instance may have been deleted. Please re-add the repository.`
+        );
+      }
+
       const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
       const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
       const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
@@ -874,7 +898,7 @@ export const fetchFileHashBatchInternal = internalAction({
         headers["PRIVATE-TOKEN"] = token;
       }
 
-      // Fetch all file hashes in parallel
+      // Fetch all file hashes in parallel with overall timeout
       const fetchPromises = args.filePaths.map(async (filePath) => {
         try {
           const encodedFilePath = encodeURIComponent(filePath);
@@ -892,7 +916,11 @@ export const fetchFileHashBatchInternal = internalAction({
         }
       });
 
-      const fetchResults = await Promise.all(fetchPromises);
+      const fetchResults = await withTimeout(
+        Promise.all(fetchPromises),
+        BATCH_OPERATION_TIMEOUT,
+        `Batch hash fetch timed out after ${BATCH_OPERATION_TIMEOUT}ms for ${args.filePaths.length} files`
+      );
       for (const result of fetchResults) {
         results[result.path] = result.hash;
       }
@@ -1116,6 +1144,14 @@ export const fetchRepoInfo = action({
       const matchingInstance = isSelfHosted
         ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
         : null;
+
+      if (isSelfHosted && !matchingInstance) {
+        throw new Error(
+          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
+          `The instance may have been deleted. Please re-add the repository.`
+        );
+      }
+
       const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
       const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
       const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);

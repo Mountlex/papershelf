@@ -15,79 +15,12 @@ import {
   getOverleafCredentials,
   getAllSelfHostedGitLabInstances,
 } from "./git";
-
-// Type for dependency with hash
-type DependencyHash = { path: string; hash: string };
-
-// Default timeout for latex service requests (3 minutes)
-const DEFAULT_LATEX_SERVICE_TIMEOUT = 180000;
-
-// Fetch with timeout using AbortSignal
-async function fetchWithTimeout(
-  url: string,
-  options: RequestInit & { timeout?: number } = {}
-): Promise<Response> {
-  const { timeout = DEFAULT_LATEX_SERVICE_TIMEOUT, ...fetchOptions } = options;
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-  try {
-    const response = await fetch(url, {
-      ...fetchOptions,
-      signal: controller.signal,
-    });
-    return response;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`Request to ${url} timed out after ${timeout}ms`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-// Sleep helper for retry backoff
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// Fetch with retry and exponential backoff
-async function fetchWithRetry(
-  url: string,
-  options: RequestInit & { timeout?: number } = {},
-  maxRetries = 3
-): Promise<Response> {
-  let lastError: Error | null = null;
-
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      const response = await fetchWithTimeout(url, options);
-      // Don't retry on client errors (4xx), only on server errors (5xx) or network issues
-      if (response.ok || response.status < 500) {
-        return response;
-      }
-      // Server error - will retry
-      lastError = new Error(`Server error: ${response.status} ${response.statusText}`);
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      // Don't retry on timeout for long operations
-      if (lastError.message.includes("timed out")) {
-        throw lastError;
-      }
-    }
-
-    // Exponential backoff: 1s, 2s, 4s
-    if (attempt < maxRetries - 1) {
-      const backoffMs = Math.pow(2, attempt) * 1000;
-      console.log(`Retry attempt ${attempt + 1}/${maxRetries} after ${backoffMs}ms`);
-      await sleep(backoffMs);
-    }
-  }
-
-  throw lastError || new Error("Request failed after retries");
-}
+import {
+  fetchWithRetry,
+  getLatexServiceHeaders,
+  DEFAULT_LATEX_SERVICE_TIMEOUT,
+  type DependencyHash,
+} from "./lib/http";
 
 // Normalize a path and ensure it stays within the repository root
 // Returns null if the path would escape the root
@@ -149,18 +82,6 @@ async function fetchDependencyHashes(
     console.log(`Could not fetch dependency hashes: ${error}`);
     return [];
   }
-}
-
-// Helper to get headers for LaTeX service requests (includes API key if configured)
-function getLatexServiceHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  const apiKey = process.env.LATEX_SERVICE_API_KEY;
-  if (apiKey) {
-    headers["X-API-Key"] = apiKey;
-  }
-  return headers;
 }
 
 // Compile LaTeX file using LaTeX.Online API
@@ -275,8 +196,8 @@ export const compileLatexInternal = internalAction({
 
       await updateProgress(`Compiling LaTeX (${allResources.size} files)...`);
 
-      // Compile with all files (no retry for compile - it's idempotent but expensive)
-      pdfResponse = await fetchWithTimeout(`${latexServiceUrl}/compile`, {
+      // Compile with all files (retry for server errors 5xx)
+      pdfResponse = await fetchWithRetry(`${latexServiceUrl}/compile`, {
         method: "POST",
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
@@ -285,7 +206,7 @@ export const compileLatexInternal = internalAction({
           compiler: "pdflatex",
         }),
         timeout: DEFAULT_LATEX_SERVICE_TIMEOUT,
-      });
+      }, 2); // Max 2 retries for compile
     } else {
       // GitHub/GitLab handling (both gitlab.com and self-hosted)
       const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
@@ -304,7 +225,11 @@ export const compileLatexInternal = internalAction({
         : null;
 
       if (isSelfHosted && !matchingInstance) {
-        console.error(`[compileLatexInternal] Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. Available instances: ${selfHostedInstances.map(i => i.url).join(", ")}`);
+        throw new Error(
+          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
+          `Available instances: ${selfHostedInstances.map(i => i.url).join(", ") || "none"}. ` +
+          `The instance may have been deleted. Please re-add the repository.`
+        );
       }
 
       const token = parsed.provider === "github"
@@ -467,8 +392,9 @@ export const compileLatexInternal = internalAction({
       console.log(`\nCompiling with ${allResources.size} total files`);
       await updateProgress(`Compiling LaTeX (${allResources.size} files)...`);
 
-      // Final compile with all resolved dependencies (no retry - expensive operation)
-      pdfResponse = await fetchWithTimeout(`${latexServiceUrl}/compile`, {
+      // Final compile with all resolved dependencies
+      // Use retry for server errors (5xx) but not for client errors (4xx)
+      pdfResponse = await fetchWithRetry(`${latexServiceUrl}/compile`, {
         method: "POST",
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
@@ -477,7 +403,7 @@ export const compileLatexInternal = internalAction({
           compiler: "pdflatex",
         }),
         timeout: DEFAULT_LATEX_SERVICE_TIMEOUT,
-      });
+      }, 2); // Max 2 retries for compile
     } else {
       // Fallback to LaTeX.Online for public repos
       let repoCheckUrl: string;
@@ -523,13 +449,29 @@ export const compileLatexInternal = internalAction({
       await updateProgress(null); // Clear progress on error
       let errorMessage = "LaTeX compilation failed";
       try {
-        const errorData = await pdfResponse.json();
-        errorMessage = errorData.error || errorMessage;
-        if (errorData.log) {
-          errorMessage += "\n\nLog:\n" + errorData.log;
+        const responseText = await pdfResponse.text();
+
+        // Check if response is an HTML error page (proxy error, login page, etc.)
+        if (responseText.trim().startsWith("<!DOCTYPE") || responseText.trim().startsWith("<html")) {
+          errorMessage = `LaTeX service returned an HTML error page (HTTP ${pdfResponse.status}). ` +
+            "This usually indicates a proxy error, service outage, or misconfiguration.";
+        } else {
+          // Try to parse as JSON
+          try {
+            const errorData = JSON.parse(responseText);
+            errorMessage = errorData.error || errorMessage;
+            if (errorData.log) {
+              errorMessage += "\n\nLog:\n" + errorData.log;
+            }
+          } catch {
+            // Not JSON, use raw text (truncated if too long)
+            errorMessage = responseText.length > 500
+              ? responseText.substring(0, 500) + "..."
+              : responseText;
+          }
         }
       } catch {
-        errorMessage = await pdfResponse.text();
+        errorMessage = `LaTeX compilation failed with HTTP ${pdfResponse.status}`;
       }
       throw new Error(errorMessage);
     }

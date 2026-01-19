@@ -115,6 +115,8 @@ export default defineSchema({
     pdfFileId: v.optional(v.id("_storage")),
     thumbnailFileId: v.optional(v.id("_storage")),
     cachedCommitHash: v.optional(v.string()),
+    // For committed PDFs: cache the PDF file's git blob hash to detect actual changes
+    cachedPdfBlobHash: v.optional(v.string()),
 
     // Metadata
     pageCount: v.optional(v.number()),
@@ -134,6 +136,8 @@ export default defineSchema({
 
     // Whether this paper needs recompilation (computed during quick sync)
     needsSync: v.optional(v.boolean()),
+    // Timestamp when needsSync was set to true (for detecting stale flags)
+    needsSyncSetAt: v.optional(v.number()),
 
     // Sharing
     isPublic: v.boolean(),

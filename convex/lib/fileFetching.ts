@@ -1,4 +1,5 @@
-import { isBinaryFile, isHtmlErrorPage, parseTexDependencies } from "./latexUtils";
+import { isBinaryFile, isHtmlErrorPage } from "./latexUtils";
+import { fetchWithTimeout, DEFAULT_API_TIMEOUT } from "./http";
 
 // Fetch a single text file from GitHub or GitLab
 export async function fetchTextFile(
@@ -29,7 +30,7 @@ export async function fetchTextFile(
     }
   }
 
-  const response = await fetch(rawUrl, { headers });
+  const response = await fetchWithTimeout(rawUrl, { headers }, DEFAULT_API_TIMEOUT);
   if (!response.ok) {
     return null;
   }
@@ -40,109 +41,6 @@ export async function fetchTextFile(
     return null;
   }
   return content;
-}
-
-// Check if a file exists in the repo
-export async function fileExistsInRepo(
-  owner: string,
-  repo: string,
-  branch: string,
-  filePath: string,
-  token: string,
-  provider: "github" | "gitlab" = "github"
-): Promise<boolean> {
-  let apiUrl: string;
-  const headers: Record<string, string> = {
-    "User-Agent": "Carrel",
-  };
-
-  if (provider === "github") {
-    apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}?ref=${branch}`;
-    headers["Accept"] = "application/vnd.github.v3+json";
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-  } else {
-    const projectId = encodeURIComponent(`${owner}/${repo}`);
-    apiUrl = `https://gitlab.com/api/v4/projects/${projectId}/repository/files/${encodeURIComponent(filePath)}?ref=${branch}`;
-    if (token) {
-      headers["PRIVATE-TOKEN"] = token;
-    }
-  }
-
-  const response = await fetch(apiUrl, { headers, method: "HEAD" });
-  return response.ok;
-}
-
-// Collect all dependencies for a LaTeX project
-export async function collectAllDependencies(
-  owner: string,
-  repo: string,
-  branch: string,
-  mainTexPath: string,
-  token: string,
-  provider: "github" | "gitlab" = "github"
-): Promise<Set<string>> {
-  const allDeps = new Set<string>();
-  const processed = new Set<string>();
-  const queue: string[] = [mainTexPath];
-
-  // Get the base directory of the main tex file
-  const mainDir = mainTexPath.includes("/")
-    ? mainTexPath.substring(0, mainTexPath.lastIndexOf("/"))
-    : "";
-
-  while (queue.length > 0) {
-    const texPath = queue.shift()!;
-    if (processed.has(texPath)) continue;
-    processed.add(texPath);
-
-    // Fetch the .tex file
-    const content = await fetchTextFile(owner, repo, branch, texPath, token, provider);
-    if (!content) {
-      console.log(`Could not fetch: ${texPath}`);
-      continue;
-    }
-    allDeps.add(texPath);
-
-    // Get base path for relative resolution
-    const basePath = texPath.includes("/")
-      ? texPath.substring(0, texPath.lastIndexOf("/"))
-      : mainDir;
-
-    // Parse dependencies
-    const deps = parseTexDependencies(content, basePath);
-    console.log(`Parsed ${deps.length} potential deps from ${texPath}:`, deps.map(d => d.path).slice(0, 20));
-
-    for (const dep of deps) {
-      // For non-.tex files, check if they exist before adding
-      if (!dep.isTexFile) {
-        // Skip standard LaTeX packages (only include local files)
-        const ext = dep.path.substring(dep.path.lastIndexOf("."));
-        if (ext === ".sty" || ext === ".cls") {
-          // Only add if it's a local file (check if it exists)
-          const exists = await fileExistsInRepo(owner, repo, branch, dep.path, token, provider);
-          if (exists) {
-            console.log(`  Found local ${ext}: ${dep.path}`);
-            allDeps.add(dep.path);
-          }
-        } else {
-          // For images and other files, check existence
-          const exists = await fileExistsInRepo(owner, repo, branch, dep.path, token, provider);
-          if (exists) {
-            allDeps.add(dep.path);
-          }
-        }
-      } else {
-        // It's a .tex file - add to queue for recursive processing
-        if (!processed.has(dep.path)) {
-          queue.push(dep.path);
-        }
-      }
-    }
-  }
-
-  return allDeps;
 }
 
 // Fetch a single file with proper encoding
@@ -174,7 +72,7 @@ export async function fetchSingleFile(
     }
   }
 
-  const response = await fetch(rawUrl, { headers });
+  const response = await fetchWithTimeout(rawUrl, { headers }, DEFAULT_API_TIMEOUT);
   if (!response.ok) {
     return null;
   }
@@ -249,7 +147,7 @@ export async function fetchDirectoryFiles(
     listUrl = `${baseUrl}/api/v4/projects/${projectId}/repository/tree?${params}`;
   }
 
-  const listResponse = await fetch(listUrl, { headers });
+  const listResponse = await fetchWithTimeout(listUrl, { headers }, DEFAULT_API_TIMEOUT);
 
   if (!listResponse.ok) {
     throw new Error(`Failed to list directory: ${listResponse.statusText}`);
@@ -285,7 +183,7 @@ export async function fetchDirectoryFiles(
         }
       }
 
-      const fileResponse = await fetch(rawUrl, { headers: fetchHeaders });
+      const fileResponse = await fetchWithTimeout(rawUrl, { headers: fetchHeaders }, DEFAULT_API_TIMEOUT);
 
       if (fileResponse.ok) {
         // Store path relative to the directory
@@ -361,7 +259,7 @@ export async function fetchTexFilesOnly(
   }
 
   console.log(`[fetchTexFilesOnly] Listing directory: ${listUrl} (provider: ${provider}, hasToken: ${!!token})`);
-  const listResponse = await fetch(listUrl, { headers });
+  const listResponse = await fetchWithTimeout(listUrl, { headers }, DEFAULT_API_TIMEOUT);
 
   if (!listResponse.ok) {
     const errorBody = await listResponse.text().catch(() => "");
@@ -414,7 +312,7 @@ export async function fetchTexFilesOnly(
         }
       }
 
-      const fileResponse = await fetch(rawUrl, { headers: fetchHeaders });
+      const fileResponse = await fetchWithTimeout(rawUrl, { headers: fetchHeaders }, DEFAULT_API_TIMEOUT);
       if (fileResponse.ok) {
         const content = await fileResponse.text();
         // Check if the response is an HTML error page (login, captcha, soft 404, etc.)

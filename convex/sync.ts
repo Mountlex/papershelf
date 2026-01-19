@@ -4,48 +4,60 @@ import type { ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { auth } from "./auth";
-
-// Type for cached dependency
-type CachedDependency = { path: string; hash: string };
+import { sleep, type DependencyHash } from "./lib/http";
 
 // Helper function to check if any dependency files have changed
 // Uses batch fetch to optimize Overleaf (single clone instead of one per file)
+// Includes retry logic to avoid unnecessary recompilation due to transient errors
 async function checkDependenciesChanged(
   ctx: ActionCtx,
   gitUrl: string,
   branch: string,
-  cachedDeps: CachedDependency[]
+  cachedDeps: DependencyHash[]
 ): Promise<boolean> {
   if (cachedDeps.length === 0) {
     return false;
   }
 
-  try {
-    // Fetch all file hashes in one batch call
-    const filePaths = cachedDeps.map((d) => d.path);
-    const currentHashes = await ctx.runAction(internal.git.fetchFileHashBatchInternal, {
-      gitUrl,
-      filePaths,
-      branch,
-    });
+  const MAX_RETRIES = 2;
+  let lastError: Error | null = null;
 
-    // Compare each dependency hash
-    for (const dep of cachedDeps) {
-      const currentHash = currentHashes[dep.path];
-      if (currentHash === null || currentHash === undefined) {
-        console.log(`Dependency missing or error: ${dep.path}`);
-        return true; // File missing - assume changed
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      // Fetch all file hashes in one batch call
+      const filePaths = cachedDeps.map((d) => d.path);
+      const currentHashes = await ctx.runAction(internal.git.fetchFileHashBatchInternal, {
+        gitUrl,
+        filePaths,
+        branch,
+      });
+
+      // Compare each dependency hash
+      for (const dep of cachedDeps) {
+        const currentHash = currentHashes[dep.path];
+        if (currentHash === null || currentHash === undefined) {
+          console.log(`Dependency missing or error: ${dep.path}`);
+          return true; // File missing - assume changed
+        }
+        if (currentHash !== dep.hash) {
+          console.log(`Dependency changed: ${dep.path} (${dep.hash} -> ${currentHash})`);
+          return true; // File changed
+        }
       }
-      if (currentHash !== dep.hash) {
-        console.log(`Dependency changed: ${dep.path} (${dep.hash} -> ${currentHash})`);
-        return true; // File changed
+      return false; // All dependencies unchanged
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < MAX_RETRIES) {
+        const backoffMs = Math.pow(2, attempt) * 1000; // 1s, 2s
+        console.log(`Dependency check failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}), retrying in ${backoffMs}ms: ${lastError.message}`);
+        await sleep(backoffMs);
       }
     }
-    return false; // All dependencies unchanged
-  } catch (error) {
-    console.log(`Could not check dependencies: ${error}`);
-    return true; // Error fetching hashes - assume changed
   }
+
+  // All retries failed - assume dependencies changed to trigger recompilation
+  console.log(`Could not check dependencies after ${MAX_RETRIES + 1} attempts: ${lastError?.message}`);
+  return true;
 }
 
 // Check if repository is currently syncing (used for optimistic locking)
@@ -77,8 +89,8 @@ export const getTrackedFileById = internalQuery({
   },
 });
 
-// Sync lock timeout in milliseconds (5 minutes)
-const SYNC_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
+// Sync lock timeout in milliseconds (2 minutes - reduced from 5 to prevent long stuck syncs)
+const SYNC_LOCK_TIMEOUT_MS = 2 * 60 * 1000;
 
 // Generate a unique attempt ID
 function generateAttemptId(): string {
@@ -290,15 +302,47 @@ export const syncRepository = action({
           await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
             id: paper._id,
             needsSync: true,
+            repositoryId: args.repositoryId,
+            attemptId,
           });
           continue;
         }
 
-        // For non-compile source types, always need sync when commit changes
+        // For committed PDF source type, check if the PDF file's blob hash changed
+        if (trackedFile && trackedFile.pdfSourceType === "committed" && paper.cachedPdfBlobHash) {
+          try {
+            // Check if the PDF file itself has changed by comparing blob hashes
+            const currentHashes = await ctx.runAction(internal.git.fetchFileHashBatchInternal, {
+              gitUrl: repository.gitUrl,
+              filePaths: [trackedFile.filePath],
+              branch: repository.defaultBranch,
+            });
+            const currentPdfHash = currentHashes[trackedFile.filePath];
+
+            if (currentPdfHash && currentPdfHash === paper.cachedPdfBlobHash) {
+              // PDF file unchanged - just update commit hash, skip re-download
+              console.log(`Committed PDF unchanged for paper ${paper._id}, skipping re-download`);
+              await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
+                id: paper._id,
+                cachedCommitHash: latestCommit.sha,
+                repositoryId: args.repositoryId,
+                attemptId,
+              });
+              continue;
+            }
+          } catch (error) {
+            // If hash check fails, fall through to needsSync=true
+            console.log(`Could not check PDF hash for paper ${paper._id}: ${error}`);
+          }
+        }
+
+        // For non-compile source types (without cached hash), always need sync when commit changes
         if (!trackedFile || trackedFile.pdfSourceType !== "compile") {
           await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
             id: paper._id,
             needsSync: true,
+            repositoryId: args.repositoryId,
+            attemptId,
           });
           continue;
         }
@@ -317,6 +361,8 @@ export const syncRepository = action({
             await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
               id: paper._id,
               cachedCommitHash: latestCommit.sha,
+              repositoryId: args.repositoryId,
+              attemptId,
             });
             continue;
           }
@@ -326,6 +372,8 @@ export const syncRepository = action({
         await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
           id: paper._id,
           needsSync: true,
+          repositoryId: args.repositoryId,
+          attemptId,
         });
       }
 
@@ -368,6 +416,8 @@ export const updatePaperPdf = internalMutation({
       path: v.string(),
       hash: v.string(),
     }))),
+    // For committed PDFs: store the blob hash to detect changes
+    cachedPdfBlobHash: v.optional(v.string()),
     repositoryId: v.optional(v.id("repositories")),
     attemptId: v.optional(v.string()),
   },
@@ -401,7 +451,9 @@ export const updatePaperPdf = internalMutation({
       cachedCommitHash: args.cachedCommitHash,
       fileSize: args.fileSize,
       cachedDependencies: args.cachedDependencies,
+      cachedPdfBlobHash: args.cachedPdfBlobHash, // Store PDF blob hash for committed PDFs
       needsSync: false, // Just synced successfully
+      needsSyncSetAt: undefined, // Clear the timestamp when sync completes
       lastSyncError: undefined, // Clear any previous error on success
       updatedAt: Date.now(),
     });
@@ -414,8 +466,18 @@ export const updatePaperSyncError = internalMutation({
   args: {
     id: v.id("papers"),
     error: v.optional(v.string()),
+    repositoryId: v.optional(v.id("repositories")),
+    attemptId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // If attemptId and repositoryId are provided, validate first to prevent stale updates
+    if (args.attemptId && args.repositoryId) {
+      const repo = await ctx.db.get(args.repositoryId);
+      if (repo && repo.currentSyncAttemptId !== args.attemptId) {
+        console.log(`Skipping stale error update for paper ${args.id} (attempt ${args.attemptId} superseded)`);
+        return;
+      }
+    }
     await ctx.db.patch(args.id, {
       lastSyncError: args.error,
       updatedAt: Date.now(),
@@ -428,11 +490,22 @@ export const updatePaperCommitOnly = internalMutation({
   args: {
     id: v.id("papers"),
     cachedCommitHash: v.string(),
+    repositoryId: v.optional(v.id("repositories")),
+    attemptId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // If attemptId and repositoryId are provided, validate first to prevent stale updates
+    if (args.attemptId && args.repositoryId) {
+      const repo = await ctx.db.get(args.repositoryId);
+      if (repo && repo.currentSyncAttemptId !== args.attemptId) {
+        console.log(`Skipping stale commit update for paper ${args.id} (attempt ${args.attemptId} superseded)`);
+        return;
+      }
+    }
     await ctx.db.patch(args.id, {
       cachedCommitHash: args.cachedCommitHash,
       needsSync: false,
+      needsSyncSetAt: undefined, // Clear the timestamp when sync completes
       lastSyncError: undefined,
       updatedAt: Date.now(),
     });
@@ -444,10 +517,22 @@ export const updatePaperNeedsSync = internalMutation({
   args: {
     id: v.id("papers"),
     needsSync: v.boolean(),
+    repositoryId: v.optional(v.id("repositories")),
+    attemptId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // If attemptId and repositoryId are provided, validate first to prevent stale updates
+    if (args.attemptId && args.repositoryId) {
+      const repo = await ctx.db.get(args.repositoryId);
+      if (repo && repo.currentSyncAttemptId !== args.attemptId) {
+        console.log(`Skipping stale needsSync update for paper ${args.id} (attempt ${args.attemptId} superseded)`);
+        return;
+      }
+    }
     await ctx.db.patch(args.id, {
       needsSync: args.needsSync,
+      // Track when needsSync was set to true (for detecting stale flags)
+      needsSyncSetAt: args.needsSync ? Date.now() : undefined,
     });
   },
 });
@@ -496,6 +581,8 @@ export const syncPaper = action({
     await ctx.runMutation(internal.sync.updatePaperSyncError, {
       id: args.paperId,
       error: undefined,
+      repositoryId: repository._id,
+      attemptId,
     });
 
     try {
@@ -553,6 +640,8 @@ export const syncPaper = action({
           await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
             id: args.paperId,
             cachedCommitHash: latestCommit.sha,
+            repositoryId: repository._id,
+            attemptId,
           });
           return { updated: false, commitHash: latestCommit.sha, reason: "dependencies_unchanged" };
         }
@@ -571,6 +660,7 @@ export const syncPaper = action({
       let storageId: string;
       let fileSize: number;
       let dependencies: Array<{ path: string; hash: string }> | undefined;
+      let pdfBlobHash: string | undefined;
 
       if (trackedFile.pdfSourceType === "compile") {
         // Compile LaTeX - returns storage ID directly
@@ -594,6 +684,18 @@ export const syncPaper = action({
         const blob = new Blob([new Uint8Array(pdfData.content)], { type: "application/pdf" });
         storageId = await ctx.storage.store(blob);
         fileSize = pdfData.size;
+
+        // For committed PDFs, fetch and store the blob hash for future change detection
+        try {
+          const hashes = await ctx.runAction(internal.git.fetchFileHashBatchInternal, {
+            gitUrl: repository.gitUrl,
+            filePaths: [trackedFile.filePath],
+            branch: repository.defaultBranch,
+          });
+          pdfBlobHash = hashes[trackedFile.filePath] ?? undefined;
+        } catch (error) {
+          console.log(`Could not fetch PDF blob hash: ${error}`);
+        }
       }
 
       // Update paper with new PDF (also clears lastSyncError)
@@ -603,6 +705,7 @@ export const syncPaper = action({
         cachedCommitHash: latestCommit.sha,
         fileSize,
         cachedDependencies: dependencies,
+        cachedPdfBlobHash: pdfBlobHash,
         repositoryId: repository._id,
         attemptId,
       });
@@ -629,6 +732,8 @@ export const syncPaper = action({
       await ctx.runMutation(internal.sync.updatePaperSyncError, {
         id: args.paperId,
         error: errorMessage,
+        repositoryId: repository._id,
+        attemptId,
       });
 
       // Release lock on failure (paper errors are tracked per paper, not on repository)

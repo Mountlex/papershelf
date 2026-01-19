@@ -105,7 +105,7 @@ export function getProviderFromUrl(
 export function parseRepoUrl(
   url: string,
   selfHostedInstances: Array<{ url: string }> = []
-): { owner: string; repo: string; provider: "github" | "gitlab" | "selfhosted-gitlab"; matchedInstanceUrl?: string } | null {
+): { owner: string; repo: string; provider: "github" | "gitlab" | "selfhosted-gitlab" | "overleaf"; matchedInstanceUrl?: string } | null {
   const provider = getProviderFromUrl(url, selfHostedInstances);
   if (provider === "github") {
     const parsed = parseGitHubUrl(url);
@@ -121,6 +121,9 @@ export function parseRepoUrl(
         if (parsed) return { ...parsed, provider, matchedInstanceUrl: instance.url };
       }
     }
+  } else if (provider === "overleaf") {
+    const parsed = parseOverleafUrl(url);
+    if (parsed) return { owner: "overleaf", repo: parsed.projectId, provider };
   }
   return null;
 }

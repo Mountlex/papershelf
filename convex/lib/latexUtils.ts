@@ -9,8 +9,8 @@ export function isBinaryFile(filename: string): boolean {
   return BINARY_EXTENSIONS.has(ext);
 }
 
-// Image extensions that \includegraphics might use
-export const IMAGE_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg", ".eps", ".ps", ".svg", ".gif", ".bmp"];
+// Image extensions that \includegraphics might use (internal constant)
+const IMAGE_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg", ".eps", ".ps", ".svg", ".gif", ".bmp"];
 
 // Check if content looks like an HTML error page instead of expected content
 // This catches cases where servers return 200 OK with HTML error pages

@@ -2,6 +2,11 @@ import { v } from "convex/values";
 import { action, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { auth } from "./auth";
+import {
+  fetchWithTimeout,
+  getLatexServiceHeaders,
+  THUMBNAIL_TIMEOUT,
+} from "./lib/http";
 
 // Thumbnail error types for structured error handling
 export type ThumbnailError =
@@ -18,75 +23,11 @@ export interface ThumbnailResult {
   errorMessage?: string;
 }
 
-// Default timeout for thumbnail generation (30 seconds)
-const THUMBNAIL_TIMEOUT = 30000;
-
-// Helper to get headers for LaTeX service requests (includes API key if configured)
-function getLatexServiceHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  const apiKey = process.env.LATEX_SERVICE_API_KEY;
-  if (apiKey) {
-    headers["X-API-Key"] = apiKey;
-  }
-  return headers;
-}
-
-// Fetch with timeout using AbortSignal
-async function fetchWithTimeout(
-  url: string,
-  options: RequestInit & { timeout?: number } = {}
-): Promise<Response> {
-  const { timeout = THUMBNAIL_TIMEOUT, ...fetchOptions } = options;
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-  try {
-    const response = await fetch(url, {
-      ...fetchOptions,
-      signal: controller.signal,
-    });
-    return response;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`TIMEOUT: Request timed out after ${timeout}ms`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-// Custom error class for HTTP response errors
-class HttpError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number
-  ) {
-    super(message);
-    this.name = "HttpError";
-  }
-}
-
 // Classify error into a structured type
 function classifyError(error: unknown): { type: ThumbnailError; message: string } {
   // Handle AbortError (timeout)
   if (error instanceof DOMException && error.name === "AbortError") {
     return { type: "TIMEOUT", message: error.message };
-  }
-
-  // Handle HttpError with status codes
-  if (error instanceof HttpError) {
-    const status = error.status;
-    if (status >= 500 && status < 600) {
-      return { type: "SERVICE_UNAVAILABLE", message: error.message };
-    }
-    if (status === 400 || status === 422) {
-      return { type: "INVALID_PDF", message: error.message };
-    }
-    return { type: "UNKNOWN", message: error.message };
   }
 
   // Handle TypeError (often network errors)

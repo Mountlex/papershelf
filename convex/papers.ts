@@ -555,13 +555,20 @@ export const deletePaper = mutation({
       .withIndex("by_paper", (q) => q.eq("paperId", args.id))
       .collect();
 
+    // Collect all storage delete promises for parallel execution
+    const storageDeletePromises: Promise<void>[] = [];
     for (const version of versions) {
       if (version.pdfFileId) {
-        await ctx.storage.delete(version.pdfFileId);
+        storageDeletePromises.push(ctx.storage.delete(version.pdfFileId));
       }
       if (version.thumbnailFileId) {
-        await ctx.storage.delete(version.thumbnailFileId);
+        storageDeletePromises.push(ctx.storage.delete(version.thumbnailFileId));
       }
+    }
+
+    // Execute all storage deletions in parallel, then delete DB records
+    await Promise.all(storageDeletePromises);
+    for (const version of versions) {
       await ctx.db.delete(version._id);
     }
 
@@ -722,13 +729,20 @@ export const deleteOldVersions = mutation({
     // Delete versions beyond the keep count
     const versionsToDelete = sortedVersions.slice(keepCount);
 
+    // Collect all storage delete promises for parallel execution
+    const storageDeletePromises: Promise<void>[] = [];
     for (const version of versionsToDelete) {
       if (version.pdfFileId) {
-        await ctx.storage.delete(version.pdfFileId);
+        storageDeletePromises.push(ctx.storage.delete(version.pdfFileId));
       }
       if (version.thumbnailFileId) {
-        await ctx.storage.delete(version.thumbnailFileId);
+        storageDeletePromises.push(ctx.storage.delete(version.thumbnailFileId));
       }
+    }
+
+    // Execute all storage deletions in parallel, then delete DB records
+    await Promise.all(storageDeletePromises);
+    for (const version of versionsToDelete) {
       await ctx.db.delete(version._id);
     }
 
