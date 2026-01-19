@@ -7,7 +7,7 @@ import { useDebounce } from "../hooks/useDebounce";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Toast, ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../hooks/useToast";
-import { StatusBadge, PaperCardSkeletonGrid, LiveRegion, ProgressBar } from "../components/ui";
+import { PaperCardSkeletonGrid, LiveRegion, ProgressBar } from "../components/ui";
 import { DropZone } from "../components/DropZone";
 
 export const Route = createFileRoute("/")({

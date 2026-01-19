@@ -11,17 +11,21 @@ export function LiveRegion({
   politeness = "polite",
   clearAfterMs,
 }: LiveRegionProps) {
-  const [currentMessage, setCurrentMessage] = useState(message);
+  const [displayMessage, setDisplayMessage] = useState(message);
 
+  // Sync display message with prop and handle auto-clear
+  // This setState is intentional - we need internal state to support auto-clearing
   useEffect(() => {
-    setCurrentMessage(message);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDisplayMessage(message);
 
-    if (clearAfterMs && message) {
-      const timer = setTimeout(() => {
-        setCurrentMessage("");
-      }, clearAfterMs);
-      return () => clearTimeout(timer);
-    }
+    if (!clearAfterMs || !message) return;
+
+    const timer = setTimeout(() => {
+      setDisplayMessage("");
+    }, clearAfterMs);
+
+    return () => clearTimeout(timer);
   }, [message, clearAfterMs]);
 
   return (
@@ -31,7 +35,7 @@ export function LiveRegion({
       aria-atomic="true"
       className="sr-only"
     >
-      {currentMessage}
+      {displayMessage}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
+import { query, mutation, internalQuery, internalMutation, type MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { auth } from "./auth";
 import { logAudit } from "./lib/audit";
 
@@ -21,8 +22,8 @@ async function requireDevAdmin(ctx: Parameters<typeof auth.getUserId>[0]) {
 
 // Helper to delete repositories and all associated data (papers, tracked files, etc.)
 async function deleteRepositoriesAndData(
-  ctx: { db: any; storage: any },
-  repositories: Array<{ _id: any }>
+  ctx: MutationCtx,
+  repositories: Array<{ _id: Id<"repositories"> }>
 ) {
   const deletedCounts: Record<string, number> = {};
 
@@ -30,7 +31,7 @@ async function deleteRepositoriesAndData(
   for (const repo of repositories) {
     const trackedFiles = await ctx.db
       .query("trackedFiles")
-      .withIndex("by_repository", (q: any) => q.eq("repositoryId", repo._id))
+      .withIndex("by_repository", (q) => q.eq("repositoryId", repo._id))
       .collect();
     for (const file of trackedFiles) {
       await ctx.db.delete(file._id);
@@ -43,18 +44,18 @@ async function deleteRepositoriesAndData(
   for (const repo of repositories) {
     const papers = await ctx.db
       .query("papers")
-      .withIndex("by_repository", (q: any) => q.eq("repositoryId", repo._id))
+      .withIndex("by_repository", (q) => q.eq("repositoryId", repo._id))
       .collect();
     allPapers.push(...papers);
   }
 
   // For each paper, delete paper versions, compilation jobs, and storage files
-  const storageIdsToDelete: string[] = [];
+  const storageIdsToDelete: Id<"_storage">[] = [];
   for (const paper of allPapers) {
     // Delete paper versions
     const versions = await ctx.db
       .query("paperVersions")
-      .withIndex("by_paper", (q: any) => q.eq("paperId", paper._id))
+      .withIndex("by_paper", (q) => q.eq("paperId", paper._id))
       .collect();
     for (const version of versions) {
       if (version.pdfFileId) storageIdsToDelete.push(version.pdfFileId);
@@ -66,7 +67,7 @@ async function deleteRepositoriesAndData(
     // Delete compilation jobs
     const jobs = await ctx.db
       .query("compilationJobs")
-      .withIndex("by_paper", (q: any) => q.eq("paperId", paper._id))
+      .withIndex("by_paper", (q) => q.eq("paperId", paper._id))
       .collect();
     for (const job of jobs) {
       await ctx.db.delete(job._id);

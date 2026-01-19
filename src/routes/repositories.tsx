@@ -112,7 +112,7 @@ function RepositoriesPage() {
         })
         .finally(() => setIsLoadingRepos(false));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [isAddModalOpen, hasGitHubToken, userRepos, isLoadingRepos, githubLoadError, listUserRepos]);
 
   // Load GitLab repos when modal is open
@@ -130,7 +130,7 @@ function RepositoriesPage() {
         })
         .finally(() => setIsLoadingGitLabRepos(false));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [isAddModalOpen, hasGitLabToken, gitlabRepos, isLoadingGitLabRepos, gitlabLoadError, listUserGitLabRepos]);
 
   // Handlers
