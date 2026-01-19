@@ -120,26 +120,29 @@ function RootComponent() {
                     onClick={cycleTheme}
                     className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
                     title={`Theme: ${theme} (click to change)`}
+                    aria-label={`Current theme: ${theme}. Click to change theme`}
                   >
                     {resolvedTheme === "dark" ? (
-                      <MoonIcon className="h-5 w-5" />
+                      <MoonIcon className="h-5 w-5" aria-hidden="true" />
                     ) : (
-                      <SunIcon className="h-5 w-5" />
+                      <SunIcon className="h-5 w-5" aria-hidden="true" />
                     )}
                   </button>
                   <Link
                     to="/profile"
                     className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-gray-100 text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
                     title="Profile"
+                    aria-label="Go to profile"
                   >
-                    <UserIcon className="h-5 w-5" />
+                    <UserIcon className="h-5 w-5" aria-hidden="true" />
                   </Link>
                   <button
                     onClick={() => signOut()}
                     className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
                     title="Sign out"
+                    aria-label="Sign out of your account"
                   >
-                    <SignOutIcon className="h-5 w-5" />
+                    <SignOutIcon className="h-5 w-5" aria-hidden="true" />
                   </button>
                 </div>
               ) : (
@@ -148,27 +151,30 @@ function RootComponent() {
                     onClick={cycleTheme}
                     className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
                     title={`Theme: ${theme} (click to change)`}
+                    aria-label={`Current theme: ${theme}. Click to change theme`}
                   >
                     {resolvedTheme === "dark" ? (
-                      <MoonIcon className="h-5 w-5" />
+                      <MoonIcon className="h-5 w-5" aria-hidden="true" />
                     ) : (
-                      <SunIcon className="h-5 w-5" />
+                      <SunIcon className="h-5 w-5" aria-hidden="true" />
                     )}
                   </button>
                   <button
                     onClick={() => signInWithGitHub()}
                     className="inline-flex items-center rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200"
                     title="Sign in with GitHub"
+                    aria-label="Sign in with GitHub"
                   >
-                    <GitHubIcon className="h-4 w-4" />
+                    <GitHubIcon className="h-4 w-4" aria-hidden="true" />
                     <span className="ml-2 hidden sm:inline">GitHub</span>
                   </button>
                   <button
                     onClick={() => signInWithGitLab()}
                     className="inline-flex items-center rounded-md bg-[#FC6D26] px-3 py-2 text-sm font-medium text-white hover:bg-[#E24329]"
                     title="Sign in with GitLab"
+                    aria-label="Sign in with GitLab"
                   >
-                    <GitLabIcon className="h-4 w-4" />
+                    <GitLabIcon className="h-4 w-4" aria-hidden="true" />
                     <span className="ml-2 hidden sm:inline">GitLab</span>
                   </button>
                 </div>

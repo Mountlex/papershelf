@@ -12,6 +12,35 @@ import {
   type SelfHostedGitLabInstance,
 } from "./lib/gitProviders";
 
+// Default timeout for API requests (30 seconds)
+const DEFAULT_API_TIMEOUT = 30000;
+
+// Fetch with timeout using AbortSignal
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit & { timeout?: number } = {}
+): Promise<Response> {
+  const { timeout = DEFAULT_API_TIMEOUT, ...fetchOptions } = options;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, {
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+    return response;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Request to ${url} timed out after ${timeout}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // Helper to get headers for LaTeX service requests (includes API key if configured)
 function getLatexServiceHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
@@ -144,7 +173,7 @@ export const fetchRepositoryInfo = action({
     }
 
     if (parsed.provider === "github") {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`,
         {
           headers: {
@@ -179,7 +208,7 @@ export const fetchRepositoryInfo = action({
       const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
       const headers = getGitLabHeaders(token);
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${baseUrl}/api/v4/projects/${projectId}`,
         { headers }
       );
@@ -220,7 +249,7 @@ export const fetchLatestCommit = action({
     }
 
     if (parsed.provider === "github") {
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/commits/${args.branch}`,
         {
           headers: {
@@ -253,7 +282,7 @@ export const fetchLatestCommit = action({
       const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
       const headers = getGitLabHeaders(token);
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${baseUrl}/api/v4/projects/${projectId}/repository/commits/${encodeURIComponent(args.branch)}`,
         { headers }
       );
@@ -321,7 +350,7 @@ export const fetchFileContent = action({
       }
     }
 
-    const response = await fetch(rawUrl, { headers });
+    const response = await fetchWithTimeout(rawUrl, { headers });
 
     if (!response.ok) {
       throw new Error(`Failed to fetch file: ${response.statusText}`);
@@ -370,7 +399,7 @@ export const listRepositoryFiles = action({
         throw new Error("LATEX_SERVICE_URL not configured. Required for Overleaf support.");
       }
 
-      const response = await fetch(`${latexServiceUrl}/git/tree`, {
+      const response = await fetchWithTimeout(`${latexServiceUrl}/git/tree`, {
         method: "POST",
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
@@ -379,6 +408,7 @@ export const listRepositoryFiles = action({
           branch,
           auth: credentials,
         }),
+        timeout: 60000, // 1 minute for git tree
       });
 
       if (!response.ok) {
@@ -412,7 +442,7 @@ export const listRepositoryFiles = action({
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${path}?ref=${branch}`,
         { headers }
       );
@@ -457,7 +487,7 @@ export const listRepositoryFiles = action({
         params.set("path", path);
       }
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${baseUrl}/api/v4/projects/${projectId}/repository/tree?${params}`,
         { headers }
       );
@@ -506,7 +536,7 @@ export const fetchLatestCommitInternal = internalAction({
         throw new Error("LATEX_SERVICE_URL not configured. Required for Overleaf support.");
       }
 
-      const response = await fetch(`${latexServiceUrl}/git/refs`, {
+      const response = await fetchWithTimeout(`${latexServiceUrl}/git/refs`, {
         method: "POST",
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
@@ -514,6 +544,7 @@ export const fetchLatestCommitInternal = internalAction({
           branch: args.branch,
           auth: credentials,
         }),
+        timeout: 30000, // 30 seconds for refs
       });
 
       if (!response.ok) {
@@ -546,7 +577,7 @@ export const fetchLatestCommitInternal = internalAction({
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/commits/${args.branch}`,
         { headers }
       );
@@ -583,7 +614,7 @@ export const fetchLatestCommitInternal = internalAction({
         headers["PRIVATE-TOKEN"] = token;
       }
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${baseUrl}/api/v4/projects/${projectId}/repository/commits/${encodeURIComponent(args.branch)}`,
         { headers }
       );
@@ -636,7 +667,7 @@ export const fetchFileContentInternal = internalAction({
         throw new Error("LATEX_SERVICE_URL not configured. Required for Overleaf support.");
       }
 
-      const response = await fetch(`${latexServiceUrl}/git/file`, {
+      const response = await fetchWithTimeout(`${latexServiceUrl}/git/file`, {
         method: "POST",
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
@@ -645,6 +676,7 @@ export const fetchFileContentInternal = internalAction({
           branch: args.branch,
           auth: credentials,
         }),
+        timeout: 60000, // 1 minute for git file
       });
 
       if (!response.ok) {
@@ -714,7 +746,7 @@ export const fetchFileContentInternal = internalAction({
       }
     }
 
-    const response = await fetch(rawUrl, { headers });
+    const response = await fetchWithTimeout(rawUrl, { headers });
 
     if (!response.ok) {
       throw new Error(`Failed to fetch file: ${response.statusText}`);
@@ -763,7 +795,7 @@ export const fetchFileHashBatchInternal = internalAction({
       }
 
       // Use latex-service /git/file-hash batch endpoint (single clone for all files)
-      const response = await fetch(`${latexServiceUrl}/git/file-hash`, {
+      const response = await fetchWithTimeout(`${latexServiceUrl}/git/file-hash`, {
         method: "POST",
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
@@ -772,6 +804,7 @@ export const fetchFileHashBatchInternal = internalAction({
           branch: args.branch,
           auth: credentials,
         }),
+        timeout: 60000, // 1 minute for hash batch
       });
 
       if (!response.ok) {
@@ -806,7 +839,7 @@ export const fetchFileHashBatchInternal = internalAction({
       const fetchPromises = args.filePaths.map(async (filePath) => {
         try {
           const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
-          const response = await fetch(
+          const response = await fetchWithTimeout(
             `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${encodedPath}?ref=${encodeURIComponent(args.branch)}`,
             { headers }
           );
@@ -845,7 +878,7 @@ export const fetchFileHashBatchInternal = internalAction({
       const fetchPromises = args.filePaths.map(async (filePath) => {
         try {
           const encodedFilePath = encodeURIComponent(filePath);
-          const response = await fetch(
+          const response = await fetchWithTimeout(
             `${baseUrl}/api/v4/projects/${projectId}/repository/files/${encodedFilePath}?ref=${encodeURIComponent(args.branch)}`,
             { headers }
           );
@@ -889,7 +922,7 @@ export const listUserRepos = action({
     };
 
     // Fetch user's repos (includes private repos they have access to)
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       "https://api.github.com/user/repos?sort=updated&per_page=100",
       { headers }
     );
@@ -942,13 +975,13 @@ export const listUserGitLabRepos = action({
       Authorization: `Bearer ${token}`,
     };
 
-    let response = await fetch(url, { headers: primaryHeaders });
+    let response = await fetchWithTimeout(url, { headers: primaryHeaders });
     if (!response.ok && (response.status === 401 || response.status === 403)) {
       const fallbackHeaders: Record<string, string> = {
         "User-Agent": "Carrel",
         "PRIVATE-TOKEN": token,
       };
-      response = await fetch(url, { headers: fallbackHeaders });
+      response = await fetchWithTimeout(url, { headers: fallbackHeaders });
     }
 
     if (!response.ok) {
@@ -1011,13 +1044,14 @@ export const fetchRepoInfo = action({
         throw new Error("LATEX_SERVICE_URL not configured. Required for Overleaf support.");
       }
 
-      const response = await fetch(`${latexServiceUrl}/git/refs`, {
+      const response = await fetchWithTimeout(`${latexServiceUrl}/git/refs`, {
         method: "POST",
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
           gitUrl: overleafParsed.gitUrl, // Use canonical git URL
           auth: credentials,
         }),
+        timeout: 30000, // 30 seconds for refs
       });
 
       if (!response.ok) {
@@ -1052,7 +1086,7 @@ export const fetchRepoInfo = action({
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`,
         { headers }
       );
@@ -1090,7 +1124,7 @@ export const fetchRepoInfo = action({
         headers["PRIVATE-TOKEN"] = token;
       }
 
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${baseUrl}/api/v4/projects/${projectId}`,
         { headers }
       );

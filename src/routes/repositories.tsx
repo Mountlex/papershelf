@@ -55,6 +55,8 @@ function RepositoriesPage() {
   const [gitlabRepos, setGitlabRepos] = useState<GitRepo[] | null>(null);
   const [isLoadingRepos, setIsLoadingRepos] = useState(false);
   const [isLoadingGitLabRepos, setIsLoadingGitLabRepos] = useState(false);
+  const [githubLoadError, setGithubLoadError] = useState<string | null>(null);
+  const [gitlabLoadError, setGitlabLoadError] = useState<string | null>(null);
 
   // Sync state
   const [syncingRepoId, setSyncingRepoId] = useState<string | null>(null);
@@ -97,34 +99,39 @@ function RepositoriesPage() {
 
   // Load user repos when GitHub tab is active
   useEffect(() => {
-    if (isAddModalOpen && hasGitHubToken && userRepos === null && !isLoadingRepos) {
+    if (isAddModalOpen && hasGitHubToken && userRepos === null && !isLoadingRepos && !githubLoadError) {
       setIsLoadingRepos(true);
+      setGithubLoadError(null);
       listUserRepos()
         .then(setUserRepos)
         .catch((err) => {
           console.error("Failed to load repos:", err);
-          showError(err, "Failed to load GitHub repositories");
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          setGithubLoadError(errorMessage);
+          setUserRepos([]);
         })
         .finally(() => setIsLoadingRepos(false));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAddModalOpen, hasGitHubToken, userRepos, isLoadingRepos, listUserRepos]);
+  }, [isAddModalOpen, hasGitHubToken, userRepos, isLoadingRepos, githubLoadError, listUserRepos]);
 
   // Load GitLab repos when modal is open
   useEffect(() => {
-    if (isAddModalOpen && hasGitLabToken && gitlabRepos === null && !isLoadingGitLabRepos) {
+    if (isAddModalOpen && hasGitLabToken && gitlabRepos === null && !isLoadingGitLabRepos && !gitlabLoadError) {
       setIsLoadingGitLabRepos(true);
+      setGitlabLoadError(null);
       listUserGitLabRepos()
         .then(setGitlabRepos)
         .catch((err) => {
           console.error("Failed to load GitLab repos:", err);
-          showError(err, "Failed to load GitLab repositories");
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          setGitlabLoadError(errorMessage);
           setGitlabRepos([]);
         })
         .finally(() => setIsLoadingGitLabRepos(false));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAddModalOpen, hasGitLabToken, gitlabRepos, isLoadingGitLabRepos, listUserGitLabRepos]);
+  }, [isAddModalOpen, hasGitLabToken, gitlabRepos, isLoadingGitLabRepos, gitlabLoadError, listUserGitLabRepos]);
 
   // Handlers
   const handleAddFromUrl = async (gitUrl: string) => {
@@ -429,6 +436,8 @@ function RepositoriesPage() {
           gitlabRepos={gitlabRepos}
           isLoadingRepos={isLoadingRepos}
           isLoadingGitLabRepos={isLoadingGitLabRepos}
+          githubLoadError={githubLoadError}
+          gitlabLoadError={gitlabLoadError}
           onClose={() => setIsAddModalOpen(false)}
           onAddFromUrl={handleAddFromUrl}
           onAddFromList={handleAddFromList}

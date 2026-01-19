@@ -1,11 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useUser } from "../hooks/useUser";
+import { useDebounce } from "../hooks/useDebounce";
 import type { Id } from "../../convex/_generated/dataModel";
-import { Toast } from "../components/ConfirmDialog";
+import { Toast, ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../hooks/useToast";
+import { StatusBadge, PaperCardSkeletonGrid, LiveRegion, ProgressBar } from "../components/ui";
+import { DropZone } from "../components/DropZone";
 
 export const Route = createFileRoute("/")({
   component: GalleryPage,
@@ -52,6 +55,7 @@ function GalleryPage() {
 
   // Search, sort, and filter state
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "a-z" | "repository">("newest");
 
   // Toast state using hook
@@ -81,6 +85,7 @@ function GalleryPage() {
   }, []);
 
   // Quick sync all repositories on page load (just check for new commits, no compilation)
+  // Uses requestIdleCallback to avoid blocking UI and sequential syncing to reduce load
   useEffect(() => {
     if (
       repositories &&
@@ -89,22 +94,47 @@ function GalleryPage() {
       !isSyncing
     ) {
       hasSyncedOnLoad.current = true;
-      // Quick sync all repositories in parallel (non-blocking)
-      setIsSyncing(true);
-      let hasErrors = false;
-      const syncPromises = repositories
-        .filter((repo) => repo.syncStatus !== "syncing")
-        .map((repo) =>
-          syncRepository({ repositoryId: repo._id }).catch((err) => {
+
+      const reposToSync = repositories.filter((repo) => repo.syncStatus !== "syncing");
+      if (reposToSync.length === 0) return;
+
+      // Use requestIdleCallback to defer sync until browser is idle
+      const scheduleSync = window.requestIdleCallback || ((cb: () => void) => setTimeout(cb, 100));
+
+      scheduleSync(() => {
+        setIsSyncing(true);
+        setSyncProgress({ current: 0, total: reposToSync.length });
+
+        let hasErrors = false;
+        let currentIndex = 0;
+
+        // Sync repos sequentially with idle callbacks between each
+        const syncNext = async () => {
+          if (currentIndex >= reposToSync.length) {
+            setIsSyncing(false);
+            setSyncProgress(null);
+            if (hasErrors) {
+              showToast("Some repositories failed to sync", "info");
+            }
+            return;
+          }
+
+          const repo = reposToSync[currentIndex];
+          try {
+            await syncRepository({ repositoryId: repo._id });
+          } catch (err) {
             console.error(`Quick sync failed for ${repo.name}:`, err);
             hasErrors = true;
-          })
-        );
-      Promise.all(syncPromises).finally(() => {
-        setIsSyncing(false);
-        if (hasErrors) {
-          showToast("Some repositories failed to sync", "info");
-        }
+          }
+
+          currentIndex++;
+          setSyncProgress({ current: currentIndex, total: reposToSync.length });
+
+          // Use idle callback for next sync to keep UI responsive
+          scheduleSync(syncNext);
+        };
+
+        syncNext();
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally run once on load
@@ -116,9 +146,9 @@ function GalleryPage() {
 
     let result = [...papers];
 
-    // Apply search filter
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
+    // Apply search filter with debounced query
+    if (debouncedSearchQuery.trim()) {
+      const query = debouncedSearchQuery.toLowerCase();
       result = result.filter((paper) => {
         const titleMatch = paper.title.toLowerCase().includes(query);
         const authorsMatch = paper.authors?.some((author: string) =>
@@ -155,7 +185,60 @@ function GalleryPage() {
     });
 
     return result;
-  }, [papers, searchQuery, sortBy]);
+  }, [papers, debouncedSearchQuery, sortBy]);
+
+  // Screen reader announcement for search results
+  const searchResultsMessage = useMemo(() => {
+    if (!debouncedSearchQuery.trim()) return "";
+    return `${filteredPapers.length} paper${filteredPapers.length === 1 ? "" : "s"} found`;
+  }, [debouncedSearchQuery, filteredPapers.length]);
+
+  // Handle file drop
+  const handleFileDrop = useCallback(
+    async (files: File[]) => {
+      const file = files[0];
+      if (!file || !user) return;
+
+      if (!file.name.endsWith(".pdf")) {
+        showToast("Please drop a PDF file", "error");
+        return;
+      }
+
+      setIsUploading(true);
+      try {
+        const uploadUrl = await generateUploadUrl();
+        const response = await fetch(uploadUrl, {
+          method: "POST",
+          headers: { "Content-Type": file.type },
+          body: file,
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to upload file");
+        }
+
+        const { storageId } = await response.json();
+        const title = file.name.replace(/\.pdf$/i, "");
+        const paperId = await uploadPdf({
+          userId: user._id,
+          title,
+          pdfStorageId: storageId,
+          fileSize: file.size,
+        });
+
+        generateThumbnail({ paperId }).catch((error) => {
+          console.error("Thumbnail generation failed:", error);
+          showToast("Thumbnail generation failed - PDF uploaded successfully", "info");
+        });
+      } catch (error) {
+        console.error("Upload failed:", error);
+        showError(error, "Failed to upload PDF");
+      } finally {
+        setIsUploading(false);
+      }
+    },
+    [user, generateUploadUrl, uploadPdf, generateThumbnail, showToast, showError]
+  );
 
   const clearFilters = () => {
     setSearchQuery("");
@@ -331,8 +414,9 @@ function GalleryPage() {
               <button
                 onClick={() => setSearchQuery("")}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                aria-label="Clear search"
               >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
@@ -348,37 +432,49 @@ function GalleryPage() {
             <option value="a-z">A-Z</option>
             <option value="repository">By repository</option>
           </select>
-          <button
-            onClick={handleSyncAll}
-            disabled={isSyncing || !repositories || repositories.length === 0}
-            className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-            title="Check all repositories for new commits"
-          >
-            {isSyncing ? (
-              <>
-                <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                {syncProgress ? `${syncProgress.current}/${syncProgress.total}` : "Checking..."}
-              </>
-            ) : (
-              <>
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Check All
-              </>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSyncAll}
+              disabled={isSyncing || !repositories || repositories.length === 0}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              title="Check all repositories for new commits"
+              aria-label={isSyncing ? "Syncing repositories" : "Check all repositories"}
+            >
+              {isSyncing ? (
+                <>
+                  <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Syncing
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Check All
+                </>
+              )}
+            </button>
+            {isSyncing && syncProgress && (
+              <ProgressBar
+                current={syncProgress.current}
+                total={syncProgress.total}
+                showCount={false}
+                className="w-24"
+              />
             )}
-          </button>
+          </div>
           <button
             onClick={handleUploadClick}
             disabled={isUploading}
             className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+            aria-label={isUploading ? "Uploading PDF" : "Upload PDF"}
           >
             {isUploading ? (
               <>
-                <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
@@ -386,7 +482,7 @@ function GalleryPage() {
               </>
             ) : (
               <>
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                 </svg>
                 Upload PDF
@@ -397,10 +493,11 @@ function GalleryPage() {
       </div>
 
 
+      <LiveRegion message={searchResultsMessage} />
+
+      <DropZone onDrop={handleFileDrop} className="min-h-[200px]">
       {papers === undefined ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="text-gray-500 dark:text-gray-400">Loading papers...</div>
-        </div>
+        <PaperCardSkeletonGrid count={8} />
       ) : papers.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 p-12 text-center dark:border-gray-700">
           <div className="mb-4 rounded-full bg-gray-100 p-4 dark:bg-gray-800">
@@ -520,8 +617,9 @@ function GalleryPage() {
                     onClick={(e) => e.stopPropagation()}
                     className="absolute bottom-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity hover:bg-black/80 group-hover:opacity-100"
                     title="View PDF fullscreen"
+                    aria-label={`View ${paper.title} PDF fullscreen`}
                   >
-                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
                     </svg>
                   </a>
@@ -551,8 +649,9 @@ function GalleryPage() {
                         onClick={(e) => handleStartEdit(e, paper._id, paper.title)}
                         className="shrink-0 rounded p-0.5 text-gray-400 opacity-0 transition-opacity hover:bg-gray-100 hover:text-gray-600 group-hover:opacity-100 dark:hover:bg-gray-800 dark:hover:text-gray-300"
                         title="Rename"
+                        aria-label={`Rename ${paper.title}`}
                       >
-                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                         </svg>
                       </button>
@@ -560,8 +659,9 @@ function GalleryPage() {
                         onClick={(e) => handleDeleteClick(e, paper._id)}
                         className="shrink-0 rounded p-0.5 text-gray-400 opacity-0 transition-opacity hover:bg-red-100 hover:text-red-600 group-hover:opacity-100 dark:hover:bg-red-900/30"
                         title="Delete"
+                        aria-label={`Delete ${paper.title}`}
                       >
-                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                         </svg>
                       </button>
@@ -693,32 +793,18 @@ function GalleryPage() {
           ))}
         </div>
       )}
+      </DropZone>
 
       {/* Delete Confirmation Dialog */}
-      {deletingPaperId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="mx-4 w-full max-w-sm rounded-lg bg-white p-6 shadow-xl dark:bg-gray-900">
-            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">Delete Paper</h3>
-            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-              Are you sure you want to delete this paper? This action cannot be undone.
-            </p>
-            <div className="mt-4 flex justify-end gap-3">
-              <button
-                onClick={() => setDeletingPaperId(null)}
-                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmDelete}
-                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        isOpen={!!deletingPaperId}
+        title="Delete Paper"
+        message="Are you sure you want to delete this paper? This action cannot be undone."
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeletingPaperId(null)}
+      />
 
       {/* Toast Notification */}
       {toast && (

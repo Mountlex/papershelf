@@ -1,13 +1,55 @@
 const express = require("express");
 const multer = require("multer");
 const compression = require("compression");
-const { spawn } = require("child_process");
 const fs = require("fs/promises");
 const path = require("path");
 const { v4: uuidv4 } = require("uuid");
 
+// Import utilities
+const { logger, createRequestLogger } = require("./lib/logger");
+const { spawnAsync, runLatexmk, runPdftoppm, runGit } = require("./lib/subprocess");
+const { withCleanup, cleanupAllPendingWorkDirs } = require("./lib/cleanup");
+const { rateLimit } = require("./lib/rateLimit");
+const {
+  LIMITS,
+  ALLOWED_COMPILERS,
+  safePath,
+  safePathAsync,
+  validateTarget,
+  validateCompiler,
+  validateThumbnailOptions,
+  validateResources,
+  validateAndParseResource,
+  validateGitUrl,
+  validateFilePath,
+} = require("./lib/validation");
+
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Request tracking for graceful shutdown
+let activeRequests = 0;
+let shuttingDown = false;
+
+// Middleware to track active requests and reject new requests during shutdown
+function requestTracker(req, res, next) {
+  if (shuttingDown && req.path !== "/health") {
+    return res.status(503).json({ error: "Server is shutting down" });
+  }
+  activeRequests++;
+  res.on("finish", () => {
+    activeRequests--;
+  });
+  res.on("close", () => {
+    // Handle aborted requests
+    if (!res.writableEnded) {
+      activeRequests--;
+    }
+  });
+  next();
+}
+
+app.use(requestTracker);
 
 // CORS configuration
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
@@ -16,7 +58,6 @@ const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  // Allow if origin matches allowed list or if wildcard is set
   if (ALLOWED_ORIGINS.includes("*") || ALLOWED_ORIGINS.includes(origin)) {
     res.header("Access-Control-Allow-Origin", origin || "*");
   }
@@ -28,10 +69,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// Request ID tracking
+// Request ID tracking and logging
 app.use((req, res, next) => {
   const requestId = req.headers["x-request-id"] || uuidv4();
   req.requestId = requestId;
+  req.log = createRequestLogger(requestId, req.path);
   res.setHeader("X-Request-Id", requestId);
   next();
 });
@@ -40,7 +82,6 @@ app.use((req, res, next) => {
 app.use(compression({
   filter: (req, res) => {
     const contentType = res.getHeader("Content-Type");
-    // Skip compression for binary content types
     if (contentType && (
       contentType.includes("application/pdf") ||
       contentType.includes("image/")
@@ -55,237 +96,123 @@ app.use(compression({
 const API_KEY = process.env.LATEX_SERVICE_API_KEY;
 
 function apiKeyAuth(req, res, next) {
-  // Skip auth for health check endpoint
   if (req.path === "/health") {
     return next();
   }
 
-  // If API key is configured, require it for all other endpoints
   if (API_KEY) {
-    // Support both header and query param (fallback for mobile frameworks that strip headers)
-    const providedKey = req.headers["x-api-key"] || req.query.api_key;
+    // Prefer header, but allow query param with deprecation warning
+    let providedKey = req.headers["x-api-key"];
+    if (!providedKey && req.query.api_key) {
+      req.log.warn("API key in query params is deprecated, use X-API-Key header instead");
+      providedKey = req.query.api_key;
+    }
     if (!providedKey || providedKey !== API_KEY) {
       return res.status(401).json({ error: "Unauthorized: Invalid or missing API key" });
     }
-    // Store the validated key for rate limiting
     req.apiKey = providedKey;
   }
 
   next();
 }
 
-// Apply API key auth middleware
 app.use(apiKeyAuth);
 
-// Configuration limits
-const MAX_RESOURCES = 100;
-const MAX_RESOURCE_SIZE = 10 * 1024 * 1024; // 10MB per resource
-const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50MB total
-const MAX_FILE_UPLOAD_SIZE = 10 * 1024 * 1024; // 10MB per file
-const MAX_FILES = 50;
-const MAX_OUTPUT_SIZE = 10 * 1024 * 1024; // 10MB - generous for verbose LaTeX logs
-const ALLOWED_COMPILERS = ["pdflatex", "xelatex", "lualatex"];
-
-// Simple in-memory rate limiting
-const rateLimitMap = new Map();
-const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
-const RATE_LIMIT_MAX_REQUESTS = 30; // 30 requests per minute per key/IP
-
-function rateLimit(req, res, next) {
-  // Use API key for rate limiting when available, otherwise fall back to IP
-  // This prevents NAT issues where multiple mobile users share an IP
-  const rateLimitKey = req.apiKey || req.ip || req.connection.remoteAddress;
-  const now = Date.now();
-
-  if (!rateLimitMap.has(rateLimitKey)) {
-    rateLimitMap.set(rateLimitKey, { count: 1, resetTime: now + RATE_LIMIT_WINDOW_MS });
-    res.setHeader("X-RateLimit-Limit", RATE_LIMIT_MAX_REQUESTS);
-    res.setHeader("X-RateLimit-Remaining", RATE_LIMIT_MAX_REQUESTS - 1);
-    return next();
-  }
-
-  const record = rateLimitMap.get(rateLimitKey);
-
-  if (now > record.resetTime) {
-    record.count = 1;
-    record.resetTime = now + RATE_LIMIT_WINDOW_MS;
-    res.setHeader("X-RateLimit-Limit", RATE_LIMIT_MAX_REQUESTS);
-    res.setHeader("X-RateLimit-Remaining", RATE_LIMIT_MAX_REQUESTS - 1);
-    return next();
-  }
-
-  if (record.count >= RATE_LIMIT_MAX_REQUESTS) {
-    const retryAfterSeconds = Math.ceil((record.resetTime - now) / 1000);
-    res.setHeader("Retry-After", retryAfterSeconds);
-    res.setHeader("X-RateLimit-Limit", RATE_LIMIT_MAX_REQUESTS);
-    res.setHeader("X-RateLimit-Remaining", 0);
-    res.setHeader("X-RateLimit-Reset", Math.ceil(record.resetTime / 1000));
-    return res.status(429).json({
-      error: "Too many requests. Please try again later.",
-      retryAfter: retryAfterSeconds,
-    });
-  }
-
-  record.count++;
-  res.setHeader("X-RateLimit-Limit", RATE_LIMIT_MAX_REQUESTS);
-  res.setHeader("X-RateLimit-Remaining", RATE_LIMIT_MAX_REQUESTS - record.count);
-  next();
-}
-
-// Clean up old rate limit entries periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, record] of rateLimitMap.entries()) {
-    if (now > record.resetTime) {
-      rateLimitMap.delete(key);
-    }
-  }
-}, RATE_LIMIT_WINDOW_MS);
-
-// Path traversal protection - ensures the resolved path is within the work directory
-function safePath(workDir, userPath) {
-  // Reject obviously malicious paths early
-  if (!userPath || typeof userPath !== "string") {
-    return null;
-  }
-
-  // Reject paths with null bytes (common injection technique)
-  if (userPath.includes("\0")) {
-    return null;
-  }
-
-  // Reject absolute paths
-  if (path.isAbsolute(userPath)) {
-    return null;
-  }
-
-  // Normalize and resolve the path
-  const resolved = path.resolve(workDir, userPath);
-
-  // Ensure the resolved path starts with the work directory
-  if (!resolved.startsWith(workDir + path.sep) && resolved !== workDir) {
-    return null;
-  }
-
-  return resolved;
-}
-
-// Async version that also checks for symlink attacks
-async function safePathAsync(workDir, userPath) {
-  const resolved = safePath(workDir, userPath);
-  if (!resolved) {
-    return null;
-  }
-
-  try {
-    // Check if the path exists and is a symlink pointing outside workDir
-    const stat = await fs.lstat(resolved).catch(() => null);
-    if (stat && stat.isSymbolicLink()) {
-      const realPath = await fs.realpath(resolved);
-      if (!realPath.startsWith(workDir + path.sep) && realPath !== workDir) {
-        return null;
-      }
-    }
-  } catch {
-    // Path doesn't exist yet, that's fine for write operations
-  }
-
-  return resolved;
-}
-
-// Validate target file
-function validateTarget(target) {
-  if (!target || typeof target !== "string") {
-    return { valid: false, error: "Missing target file" };
-  }
-  if (!target.endsWith(".tex")) {
-    return { valid: false, error: "Target must be a .tex file" };
-  }
-  if (target.includes("..") || path.isAbsolute(target)) {
-    return { valid: false, error: "Invalid target path" };
-  }
-  return { valid: true };
-}
-
-// Parse JSON bodies for the resources endpoint
+// Parse JSON bodies
 app.use(express.json({ limit: "50mb" }));
 
-// Multer for file uploads with size limits
+// Multer for file uploads
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: MAX_FILE_UPLOAD_SIZE,
-    files: MAX_FILES,
+    fileSize: LIMITS.MAX_FILE_UPLOAD_SIZE,
+    files: LIMITS.MAX_FILES,
   },
 });
 
-// Health check
-app.get("/health", (req, res) => {
-  res.json({ status: "ok" });
+// Helper to check if a command is available
+async function checkCommand(command, args = ["--version"]) {
+  try {
+    const result = await spawnAsync(command, args, { timeout: 5000 });
+    return { ok: result.success, version: result.stdout.trim().split("\n")[0] };
+  } catch {
+    return { ok: false, version: null };
+  }
+}
+
+// Health check with dependency verification
+app.get("/health", async (req, res) => {
+  const checks = {
+    latexmk: await checkCommand("latexmk", ["--version"]),
+    git: await checkCommand("git", ["--version"]),
+    pdftoppm: await checkCommand("pdftoppm", ["-v"]),
+  };
+
+  const healthy = Object.values(checks).every(c => c.ok);
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? "ok" : "degraded",
+    checks,
+  });
 });
 
-// Dependency detection endpoint - uses latexmk to find all required files
+// Helper to build authenticated git URL
+function buildAuthenticatedUrl(gitUrl, auth) {
+  if (!auth || !auth.username || !auth.password) {
+    return gitUrl;
+  }
+  const url = new URL(gitUrl);
+  url.username = encodeURIComponent(auth.username);
+  url.password = encodeURIComponent(auth.password);
+  return url.toString();
+}
+
+// Dependency detection endpoint
 app.post("/deps", rateLimit, async (req, res) => {
   const jobId = uuidv4();
   const workDir = `/tmp/latex-deps-${jobId}`;
 
-  try {
+  await withCleanup(workDir, async () => {
     const { resources, target, compiler = "pdflatex" } = req.body;
 
-    if (!resources || !Array.isArray(resources)) {
-      return res.status(400).json({ error: "Missing resources array" });
+    // Validate inputs
+    const resourcesValidation = validateResources(resources);
+    if (!resourcesValidation.valid) {
+      return res.status(400).json({ error: resourcesValidation.error });
     }
 
-    // Validate resource count
-    if (resources.length > MAX_RESOURCES) {
-      return res.status(400).json({ error: `Too many resources. Maximum is ${MAX_RESOURCES}` });
-    }
-
-    // Validate target
     const targetValidation = validateTarget(target);
     if (!targetValidation.valid) {
       return res.status(400).json({ error: targetValidation.error });
     }
 
-    // Validate compiler
-    if (!ALLOWED_COMPILERS.includes(compiler)) {
-      return res.status(400).json({ error: `Invalid compiler. Use: ${ALLOWED_COMPILERS.join(", ")}` });
+    const compilerValidation = validateCompiler(compiler);
+    if (!compilerValidation.valid) {
+      return res.status(400).json({ error: compilerValidation.error });
     }
 
     // Create work directory
     await fs.mkdir(workDir, { recursive: true });
 
-    // Write all resources to disk with path validation
+    // Write all resources to disk
     let totalSize = 0;
     for (const resource of resources) {
-      if (!resource.path || typeof resource.path !== "string") {
-        return res.status(400).json({ error: "Invalid resource: missing path" });
-      }
-
       const filePath = safePath(workDir, resource.path);
       if (!filePath) {
         return res.status(400).json({ error: `Invalid resource path: ${resource.path}` });
       }
 
-      const content = resource.encoding === "base64"
-        ? Buffer.from(resource.content, "base64")
-        : Buffer.from(resource.content || "");
-
-      // Check individual and total size
-      if (content.length > MAX_RESOURCE_SIZE) {
-        return res.status(400).json({ error: `Resource too large: ${resource.path}` });
-      }
-      totalSize += content.length;
-      if (totalSize > MAX_TOTAL_SIZE) {
-        return res.status(400).json({ error: "Total resources size exceeds limit" });
+      const parseResult = validateAndParseResource(resource, totalSize);
+      if (!parseResult.valid) {
+        return res.status(400).json({ error: parseResult.error });
       }
 
+      totalSize = parseResult.newTotalSize;
       const fileDir = path.dirname(filePath);
       await fs.mkdir(fileDir, { recursive: true });
-      await fs.writeFile(filePath, content);
+      await fs.writeFile(filePath, parseResult.content);
     }
 
-    // Run latexmk with -recorder to generate .fls file listing all dependencies
+    // Run latexmk with -recorder to generate .fls file
     const targetPath = path.join(workDir, target);
     const targetDir = path.dirname(targetPath);
     const targetName = path.basename(target, ".tex");
@@ -294,9 +221,12 @@ app.post("/deps", rateLimit, async (req, res) => {
                        : compiler === "lualatex" ? "-lualatex"
                        : "-pdf";
 
-    // Run latexmk with -recorder (creates .fls file) and -halt-on-error
-    // We use -interaction=nonstopmode so it doesn't hang on missing files
-    const result = await runLatexmkForDeps(compilerFlag, targetPath, targetDir);
+    const result = await runLatexmk(compilerFlag, targetPath, {
+      cwd: targetDir,
+      timeout: 60000,
+      recorder: true,
+      logger: req.log,
+    });
 
     // Parse the .fls file to get dependencies
     const flsPath = path.join(targetDir, `${targetName}.fls`);
@@ -309,29 +239,25 @@ app.post("/deps", rateLimit, async (req, res) => {
       for (const line of lines) {
         if (line.startsWith("INPUT ")) {
           const inputPath = line.substring(6).trim();
-          // Only include files within our work directory (not system files)
           if (inputPath.startsWith(workDir)) {
             const relativePath = inputPath.substring(workDir.length + 1);
-            // Skip auxiliary files generated by LaTeX
             if (!relativePath.match(/\.(aux|log|fls|fdb_latexmk|out|toc|lof|lot|bbl|blg|bcf|run\.xml)$/)) {
               deps.add(relativePath);
             }
           }
         }
       }
-    } catch (e) {
+    } catch {
       // .fls file might not exist if compilation failed early
-      // Fall back to parsing the log for missing files
     }
 
-    // Also parse the log file for missing file errors
+    // Parse log file for missing files
     const logPath = path.join(targetDir, `${targetName}.log`);
     const missingFiles = [];
 
     try {
       const logContent = await fs.readFile(logPath, "utf-8");
 
-      // Look for common "file not found" patterns
       const patterns = [
         /^! LaTeX Error: File `([^']+)' not found/gm,
         /^Package biblatex Error: Style '([^']+)' not found/gm,
@@ -348,158 +274,79 @@ app.post("/deps", rateLimit, async (req, res) => {
           }
         }
       }
-    } catch (e) {
+    } catch {
       // No log file
     }
 
     res.json({
       success: result.success,
       dependencies: Array.from(deps),
-      missingFiles: missingFiles,
+      missingFiles,
       providedFiles: resources.map(r => r.path),
     });
-  } catch (error) {
-    console.error("Dependency detection error:", error);
-    res.status(500).json({ error: error.message });
-  } finally {
-    // Cleanup
-    try {
-      await fs.rm(workDir, { recursive: true, force: true });
-    } catch (cleanupError) {
-      console.error(`Cleanup failed for ${workDir}:`, cleanupError.message || cleanupError);
-    }
-  }
+  }, req.log);
 });
-
-function runLatexmkForDeps(compilerFlag, targetPath, workDir) {
-  return new Promise((resolve) => {
-    const args = [
-      compilerFlag,
-      "-interaction=nonstopmode",
-      "-recorder",  // Creates .fls file with all file accesses
-      "-halt-on-error",
-      targetPath,
-    ];
-
-    const proc = spawn("latexmk", args, {
-      cwd: workDir,
-      timeout: 60000, // 1 minute timeout for dependency detection
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    proc.stdout.on("data", (data) => {
-      if (stdout.length < MAX_OUTPUT_SIZE) {
-        stdout += data.toString().slice(0, MAX_OUTPUT_SIZE - stdout.length);
-      }
-    });
-
-    proc.stderr.on("data", (data) => {
-      if (stderr.length < MAX_OUTPUT_SIZE) {
-        stderr += data.toString().slice(0, MAX_OUTPUT_SIZE - stderr.length);
-      }
-    });
-
-    proc.on("close", (code) => {
-      resolve({
-        success: code === 0,
-        log: stdout + stderr,
-      });
-    });
-
-    proc.on("error", (err) => {
-      resolve({
-        success: false,
-        log: err.message,
-      });
-    });
-  });
-}
 
 // Compile endpoint - accepts JSON with resources array
 app.post("/compile", rateLimit, async (req, res) => {
   const jobId = uuidv4();
   const workDir = `/tmp/latex-${jobId}`;
 
-  try {
+  await withCleanup(workDir, async () => {
     const { resources, target, compiler = "pdflatex" } = req.body;
 
-    if (!resources || !Array.isArray(resources)) {
-      return res.status(400).json({ error: "Missing resources array" });
+    // Validate inputs
+    const resourcesValidation = validateResources(resources);
+    if (!resourcesValidation.valid) {
+      return res.status(400).json({ error: resourcesValidation.error });
     }
 
-    // Validate resource count
-    if (resources.length > MAX_RESOURCES) {
-      return res.status(400).json({ error: `Too many resources. Maximum is ${MAX_RESOURCES}` });
-    }
-
-    // Validate target
     const targetValidation = validateTarget(target);
     if (!targetValidation.valid) {
       return res.status(400).json({ error: targetValidation.error });
     }
 
-    // Validate compiler
-    if (!ALLOWED_COMPILERS.includes(compiler)) {
-      return res.status(400).json({ error: `Invalid compiler. Use: ${ALLOWED_COMPILERS.join(", ")}` });
+    const compilerValidation = validateCompiler(compiler);
+    if (!compilerValidation.valid) {
+      return res.status(400).json({ error: compilerValidation.error });
     }
 
     // Create work directory
     await fs.mkdir(workDir, { recursive: true });
 
-    // Write all resources to disk with path validation
+    // Write all resources to disk
     let totalSize = 0;
     for (const resource of resources) {
-      if (!resource.path || typeof resource.path !== "string") {
-        return res.status(400).json({ error: "Invalid resource: missing path" });
-      }
-
       const filePath = safePath(workDir, resource.path);
       if (!filePath) {
         return res.status(400).json({ error: `Invalid resource path: ${resource.path}` });
       }
 
-      // Handle different encodings
-      let content;
-      if (resource.encoding === "base64") {
-        content = Buffer.from(resource.content, "base64");
-      } else if (resource.encoding === "bytes") {
-        content = Buffer.from(resource.content);
-      } else {
-        content = Buffer.from(resource.content || "");
+      const parseResult = validateAndParseResource(resource, totalSize);
+      if (!parseResult.valid) {
+        return res.status(400).json({ error: parseResult.error });
       }
 
-      // Check individual and total size
-      if (content.length > MAX_RESOURCE_SIZE) {
-        return res.status(400).json({ error: `Resource too large: ${resource.path}` });
-      }
-      totalSize += content.length;
-      if (totalSize > MAX_TOTAL_SIZE) {
-        return res.status(400).json({ error: "Total resources size exceeds limit" });
-      }
-
+      totalSize = parseResult.newTotalSize;
       const fileDir = path.dirname(filePath);
       await fs.mkdir(fileDir, { recursive: true });
-      await fs.writeFile(filePath, content);
+      await fs.writeFile(filePath, parseResult.content);
     }
 
-    // Use latexmk for automatic compilation (handles bibtex, multiple passes, etc.)
+    // Run latexmk
     const targetPath = path.join(workDir, target);
     const targetDir = path.dirname(targetPath);
     const targetName = path.basename(target, ".tex");
 
-    let lastError = "";
-
-    // Run latexmk with the appropriate compiler
     const compilerFlag = compiler === "xelatex" ? "-xelatex"
                        : compiler === "lualatex" ? "-lualatex"
                        : "-pdf";
 
-    const result = await runLatexmk(compilerFlag, targetPath, targetDir);
-    if (!result.success) {
-      lastError = result.log;
-    }
+    const result = await runLatexmk(compilerFlag, targetPath, {
+      cwd: targetDir,
+      timeout: 180000, // 3 minutes
+      logger: req.log,
+    });
 
     // Check if PDF was created
     const pdfPath = path.join(targetDir, `${targetName}.pdf`);
@@ -507,9 +354,8 @@ app.post("/compile", rateLimit, async (req, res) => {
     try {
       await fs.access(pdfPath);
     } catch {
-      // Try to get log file for error details
       const logPath = path.join(targetDir, `${targetName}.log`);
-      let logContent = lastError;
+      let logContent = result.log;
       try {
         logContent = await fs.readFile(logPath, "utf-8");
       } catch {
@@ -518,35 +364,25 @@ app.post("/compile", rateLimit, async (req, res) => {
 
       return res.status(400).json({
         error: "Compilation failed",
-        log: logContent,  // Return full log
+        log: logContent,
+        timedOut: result.timedOut,
       });
     }
 
     // Read and return PDF
     const pdfBuffer = await fs.readFile(pdfPath);
-
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Length", pdfBuffer.length);
     res.send(pdfBuffer);
-  } catch (error) {
-    console.error("Compilation error:", error);
-    res.status(500).json({ error: error.message });
-  } finally {
-    // Cleanup
-    try {
-      await fs.rm(workDir, { recursive: true, force: true });
-    } catch (cleanupError) {
-      console.error(`Cleanup failed for ${workDir}:`, cleanupError.message || cleanupError);
-    }
-  }
+  }, req.log);
 });
 
-// Compile endpoint with file uploads (multipart form)
+// Compile endpoint with file uploads
 app.post("/compile/upload", rateLimit, upload.array("files"), async (req, res) => {
   const jobId = uuidv4();
   const workDir = `/tmp/latex-${jobId}`;
 
-  try {
+  await withCleanup(workDir, async () => {
     const { target, compiler = "pdflatex" } = req.body;
     const files = req.files;
 
@@ -554,21 +390,20 @@ app.post("/compile/upload", rateLimit, upload.array("files"), async (req, res) =
       return res.status(400).json({ error: "No files uploaded" });
     }
 
-    // Validate target
     const targetValidation = validateTarget(target);
     if (!targetValidation.valid) {
       return res.status(400).json({ error: targetValidation.error });
     }
 
-    // Validate compiler
-    if (!ALLOWED_COMPILERS.includes(compiler)) {
-      return res.status(400).json({ error: `Invalid compiler. Use: ${ALLOWED_COMPILERS.join(", ")}` });
+    const compilerValidation = validateCompiler(compiler);
+    if (!compilerValidation.valid) {
+      return res.status(400).json({ error: compilerValidation.error });
     }
 
     // Create work directory
     await fs.mkdir(workDir, { recursive: true });
 
-    // Write uploaded files with path validation
+    // Write uploaded files
     for (const file of files) {
       const filePath = safePath(workDir, file.originalname);
       if (!filePath) {
@@ -579,7 +414,6 @@ app.post("/compile/upload", rateLimit, upload.array("files"), async (req, res) =
       await fs.writeFile(filePath, file.buffer);
     }
 
-    // Use latexmk for automatic compilation (handles bibtex, multiple passes, etc.)
     const targetPath = path.join(workDir, target);
     const targetDir = path.dirname(targetPath);
     const targetName = path.basename(target, ".tex");
@@ -588,9 +422,12 @@ app.post("/compile/upload", rateLimit, upload.array("files"), async (req, res) =
                        : compiler === "lualatex" ? "-lualatex"
                        : "-pdf";
 
-    const result = await runLatexmk(compilerFlag, targetPath, targetDir);
+    const result = await runLatexmk(compilerFlag, targetPath, {
+      cwd: targetDir,
+      timeout: 180000,
+      logger: req.log,
+    });
 
-    // Check if PDF was created
     const pdfPath = path.join(targetDir, `${targetName}.pdf`);
 
     try {
@@ -607,6 +444,7 @@ app.post("/compile/upload", rateLimit, upload.array("files"), async (req, res) =
       return res.status(400).json({
         error: "Compilation failed",
         log: logContent,
+        timedOut: result.timedOut,
       });
     }
 
@@ -614,132 +452,31 @@ app.post("/compile/upload", rateLimit, upload.array("files"), async (req, res) =
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Length", pdfBuffer.length);
     res.send(pdfBuffer);
-  } catch (error) {
-    console.error("Compilation error:", error);
-    res.status(500).json({ error: error.message });
-  } finally {
-    try {
-      await fs.rm(workDir, { recursive: true, force: true });
-    } catch {
-      // Ignore
-    }
-  }
+  }, req.log);
 });
 
-function runLatexmk(compilerFlag, targetPath, workDir) {
-  return new Promise((resolve) => {
-    const args = [
-      compilerFlag,
-      "-interaction=nonstopmode",
-      "-halt-on-error",
-      "-file-line-error",
-      "-bibtex",  // Enable bibtex/biber processing
-      targetPath,
-    ];
-    console.log(`Running latexmk with args: ${args.join(" ")}`);
-    console.log(`Working directory: ${workDir}`);
-
-    const proc = spawn(
-      "latexmk",
-      args,
-      {
-        cwd: workDir,
-        timeout: 180000, // 3 minute timeout for complex documents
-      }
-    );
-
-    let stdout = "";
-    let stderr = "";
-
-    proc.stdout.on("data", (data) => {
-      if (stdout.length < MAX_OUTPUT_SIZE) {
-        stdout += data.toString().slice(0, MAX_OUTPUT_SIZE - stdout.length);
-      }
-    });
-
-    proc.stderr.on("data", (data) => {
-      if (stderr.length < MAX_OUTPUT_SIZE) {
-        stderr += data.toString().slice(0, MAX_OUTPUT_SIZE - stderr.length);
-      }
-    });
-
-    proc.on("close", (code) => {
-      resolve({
-        success: code === 0,
-        log: stdout + stderr,
-      });
-    });
-
-    proc.on("error", (err) => {
-      resolve({
-        success: false,
-        log: err.message,
-      });
-    });
-  });
-}
-
-// ==========================================
-// Git endpoints for Overleaf and authenticated Git operations
-// ==========================================
-
-// Helper to build authenticated git URL
-function buildAuthenticatedUrl(gitUrl, auth) {
-  if (!auth || !auth.username || !auth.password) {
-    return gitUrl;
-  }
-  const url = new URL(gitUrl);
-  url.username = encodeURIComponent(auth.username);
-  url.password = encodeURIComponent(auth.password);
-  return url.toString();
-}
-
-// POST /git/refs - Get commit refs using git ls-remote
+// Git refs endpoint
 app.post("/git/refs", rateLimit, async (req, res) => {
   try {
     const { gitUrl, branch, auth } = req.body;
 
-    if (!gitUrl) {
-      return res.status(400).json({ error: "Missing gitUrl" });
+    const gitUrlValidation = validateGitUrl(gitUrl);
+    if (!gitUrlValidation.valid) {
+      return res.status(400).json({ error: gitUrlValidation.error });
     }
 
     const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
 
-    // Run git ls-remote to get refs
-    const result = await new Promise((resolve) => {
-      const proc = spawn("git", ["ls-remote", authenticatedUrl], {
-        timeout: 30000,
-      });
-
-      let stdout = "";
-      let stderr = "";
-
-      proc.stdout.on("data", (data) => {
-        if (stdout.length < MAX_OUTPUT_SIZE) {
-          stdout += data.toString().slice(0, MAX_OUTPUT_SIZE - stdout.length);
-        }
-      });
-
-      proc.stderr.on("data", (data) => {
-        if (stderr.length < MAX_OUTPUT_SIZE) {
-          stderr += data.toString().slice(0, MAX_OUTPUT_SIZE - stderr.length);
-        }
-      });
-
-      proc.on("close", (code) => {
-        resolve({ success: code === 0, stdout, stderr });
-      });
-
-      proc.on("error", (err) => {
-        resolve({ success: false, stdout: "", stderr: err.message });
-      });
+    const result = await spawnAsync("git", ["ls-remote", authenticatedUrl], {
+      timeout: 30000,
+      logger: req.log,
     });
 
     if (!result.success) {
       return res.status(400).json({ error: result.stderr || "Failed to access repository" });
     }
 
-    // Parse refs to find HEAD, default branch, and requested branch
+    // Parse refs
     const lines = result.stdout.trim().split("\n");
     let headSha = null;
     let defaultBranch = "master";
@@ -767,113 +504,26 @@ app.post("/git/refs", rateLimit, async (req, res) => {
       date: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("Git refs error:", error);
+    req.log.error({ err: error }, "Git refs error");
     res.status(500).json({ error: error.message });
   }
 });
 
-// POST /git/tree - List files by cloning and reading directory
+// Git tree endpoint
 app.post("/git/tree", rateLimit, async (req, res) => {
   const jobId = uuidv4();
   const workDir = `/tmp/git-tree-${jobId}`;
 
-  try {
+  await withCleanup(workDir, async () => {
     const { gitUrl, path: requestedPath, branch, auth } = req.body;
 
-    if (!gitUrl) {
-      return res.status(400).json({ error: "Missing gitUrl" });
+    const gitUrlValidation = validateGitUrl(gitUrl);
+    if (!gitUrlValidation.valid) {
+      return res.status(400).json({ error: gitUrlValidation.error });
     }
 
     const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
 
-    // Create work directory
-    await fs.mkdir(workDir, { recursive: true });
-
-    // Clone with depth 1 for efficiency
-    const cloneArgs = ["clone", "--depth", "1"];
-    if (branch) {
-      cloneArgs.push("--branch", branch);
-    }
-    cloneArgs.push(authenticatedUrl, workDir);
-
-    const cloneResult = await new Promise((resolve) => {
-      const proc = spawn("git", cloneArgs, { timeout: 60000 });
-
-      let stderr = "";
-      proc.stderr.on("data", (data) => {
-        stderr += data.toString();
-      });
-
-      proc.on("close", (code) => {
-        resolve({ success: code === 0, stderr });
-      });
-
-      proc.on("error", (err) => {
-        resolve({ success: false, stderr: err.message });
-      });
-    });
-
-    if (!cloneResult.success) {
-      return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
-    }
-
-    // List files in the requested path (with path traversal protection)
-    let targetDir = workDir;
-    if (requestedPath) {
-      targetDir = await safePathAsync(workDir, requestedPath);
-      if (!targetDir) {
-        return res.status(400).json({ error: "Invalid path" });
-      }
-    }
-    const files = [];
-
-    try {
-      const entries = await fs.readdir(targetDir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        // Skip .git directory
-        if (entry.name === ".git") continue;
-
-        const filePath = requestedPath ? `${requestedPath}/${entry.name}` : entry.name;
-        files.push({
-          name: entry.name,
-          path: filePath,
-          type: entry.isDirectory() ? "dir" : "file",
-        });
-      }
-    } catch (e) {
-      return res.status(404).json({ error: `Path not found: ${requestedPath}` });
-    }
-
-    res.json({ files });
-  } catch (error) {
-    console.error("Git tree error:", error);
-    res.status(500).json({ error: error.message });
-  } finally {
-    // Cleanup
-    try {
-      await fs.rm(workDir, { recursive: true, force: true });
-    } catch (cleanupError) {
-      console.error(`Cleanup failed for ${workDir}:`, cleanupError.message || cleanupError);
-    }
-  }
-});
-
-// POST /git/file - Fetch single file content
-app.post("/git/file", rateLimit, async (req, res) => {
-  const jobId = uuidv4();
-  const workDir = `/tmp/git-file-${jobId}`;
-
-  try {
-    const { gitUrl, filePath, branch, auth } = req.body;
-
-    if (!gitUrl || !filePath) {
-      return res.status(400).json({ error: "Missing gitUrl or filePath" });
-    }
-
-    const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
-
-    // Create work directory
     await fs.mkdir(workDir, { recursive: true });
 
     // Clone with depth 1
@@ -883,28 +533,83 @@ app.post("/git/file", rateLimit, async (req, res) => {
     }
     cloneArgs.push(authenticatedUrl, workDir);
 
-    const cloneResult = await new Promise((resolve) => {
-      const proc = spawn("git", cloneArgs, { timeout: 60000 });
-
-      let stderr = "";
-      proc.stderr.on("data", (data) => {
-        stderr += data.toString();
-      });
-
-      proc.on("close", (code) => {
-        resolve({ success: code === 0, stderr });
-      });
-
-      proc.on("error", (err) => {
-        resolve({ success: false, stderr: err.message });
-      });
+    const cloneResult = await spawnAsync("git", cloneArgs, {
+      timeout: 60000,
+      logger: req.log,
     });
 
     if (!cloneResult.success) {
       return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
     }
 
-    // Read the requested file (with path traversal protection)
+    // List files with path traversal protection
+    let targetDir = workDir;
+    if (requestedPath) {
+      targetDir = await safePathAsync(workDir, requestedPath);
+      if (!targetDir) {
+        return res.status(400).json({ error: "Invalid path" });
+      }
+    }
+
+    const files = [];
+    try {
+      const entries = await fs.readdir(targetDir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (entry.name === ".git") continue;
+
+        const filePath = requestedPath ? `${requestedPath}/${entry.name}` : entry.name;
+        files.push({
+          name: entry.name,
+          path: filePath,
+          type: entry.isDirectory() ? "dir" : "file",
+        });
+      }
+    } catch {
+      return res.status(404).json({ error: `Path not found: ${requestedPath}` });
+    }
+
+    res.json({ files });
+  }, req.log);
+});
+
+// Git file endpoint
+app.post("/git/file", rateLimit, async (req, res) => {
+  const jobId = uuidv4();
+  const workDir = `/tmp/git-file-${jobId}`;
+
+  await withCleanup(workDir, async () => {
+    const { gitUrl, filePath, branch, auth } = req.body;
+
+    const gitUrlValidation = validateGitUrl(gitUrl);
+    if (!gitUrlValidation.valid) {
+      return res.status(400).json({ error: gitUrlValidation.error });
+    }
+
+    const filePathValidation = validateFilePath(filePath);
+    if (!filePathValidation.valid) {
+      return res.status(400).json({ error: filePathValidation.error });
+    }
+
+    const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
+
+    await fs.mkdir(workDir, { recursive: true });
+
+    const cloneArgs = ["clone", "--depth", "1"];
+    if (branch) {
+      cloneArgs.push("--branch", branch);
+    }
+    cloneArgs.push(authenticatedUrl, workDir);
+
+    const cloneResult = await spawnAsync("git", cloneArgs, {
+      timeout: 60000,
+      logger: req.log,
+    });
+
+    if (!cloneResult.success) {
+      return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
+    }
+
     const targetPath = await safePathAsync(workDir, filePath);
     if (!targetPath) {
       return res.status(400).json({ error: "Invalid file path" });
@@ -912,8 +617,6 @@ app.post("/git/file", rateLimit, async (req, res) => {
 
     try {
       const content = await fs.readFile(targetPath);
-
-      // Check if binary
       const ext = path.extname(filePath).toLowerCase();
       const binaryExtensions = [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".eps", ".svg"];
 
@@ -928,94 +631,76 @@ app.post("/git/file", rateLimit, async (req, res) => {
           encoding: "utf-8",
         });
       }
-    } catch (e) {
+    } catch {
       return res.status(404).json({ error: `File not found: ${filePath}` });
     }
-  } catch (error) {
-    console.error("Git file error:", error);
-    res.status(500).json({ error: error.message });
-  } finally {
-    // Cleanup
-    try {
-      await fs.rm(workDir, { recursive: true, force: true });
-    } catch (cleanupError) {
-      console.error(`Cleanup failed for ${workDir}:`, cleanupError.message || cleanupError);
-    }
-  }
+  }, req.log);
 });
 
-// POST /git/archive - Fetch all project files as JSON array
+// Git archive endpoint
 app.post("/git/archive", rateLimit, async (req, res) => {
   const jobId = uuidv4();
   const workDir = `/tmp/git-archive-${jobId}`;
 
-  try {
+  await withCleanup(workDir, async () => {
     const { gitUrl, branch, auth } = req.body;
 
-    if (!gitUrl) {
-      return res.status(400).json({ error: "Missing gitUrl" });
+    const gitUrlValidation = validateGitUrl(gitUrl);
+    if (!gitUrlValidation.valid) {
+      return res.status(400).json({ error: gitUrlValidation.error });
     }
 
     const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
 
-    // Create work directory
     await fs.mkdir(workDir, { recursive: true });
 
-    // Clone with depth 1
     const cloneArgs = ["clone", "--depth", "1"];
     if (branch) {
       cloneArgs.push("--branch", branch);
     }
     cloneArgs.push(authenticatedUrl, workDir);
 
-    const cloneResult = await new Promise((resolve) => {
-      const proc = spawn("git", cloneArgs, { timeout: 120000 });
-
-      let stderr = "";
-      proc.stderr.on("data", (data) => {
-        stderr += data.toString();
-      });
-
-      proc.on("close", (code) => {
-        resolve({ success: code === 0, stderr });
-      });
-
-      proc.on("error", (err) => {
-        resolve({ success: false, stderr: err.message });
-      });
+    const cloneResult = await spawnAsync("git", cloneArgs, {
+      timeout: 120000,
+      logger: req.log,
     });
 
     if (!cloneResult.success) {
       return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
     }
 
-    // Recursively read all files
+    // Recursively read all files with depth limit
     const files = [];
     const binaryExtensions = new Set([
       ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif",
       ".eps", ".ps", ".svg", ".ico", ".webp", ".zip", ".tar", ".gz",
     ]);
+    const MAX_DEPTH = 20; // Prevent stack overflow on deeply nested repos
 
-    async function readDir(dirPath, relativePath = "") {
+    async function readDir(dirPath, relativePath = "", depth = 0) {
+      if (depth > MAX_DEPTH) {
+        req.log.warn(`Max directory depth (${MAX_DEPTH}) exceeded at ${relativePath}`);
+        return;
+      }
+
       const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
       for (const entry of entries) {
-        // Skip .git directory
         if (entry.name === ".git") continue;
 
         const fullPath = path.join(dirPath, entry.name);
         const relPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
 
         if (entry.isDirectory()) {
-          await readDir(fullPath, relPath);
+          await readDir(fullPath, relPath, depth + 1);
         } else {
           try {
             const content = await fs.readFile(fullPath);
             const ext = path.extname(entry.name).toLowerCase();
 
-            // Skip very large files (> 10MB)
-            if (content.length > 10 * 1024 * 1024) {
-              console.log(`Skipping large file: ${relPath} (${content.length} bytes)`);
+            // Skip very large files
+            if (content.length > LIMITS.MAX_RESOURCE_SIZE) {
+              req.log.info(`Skipping large file: ${relPath} (${content.length} bytes)`);
               continue;
             }
 
@@ -1032,7 +717,7 @@ app.post("/git/archive", rateLimit, async (req, res) => {
               });
             }
           } catch (e) {
-            console.error(`Error reading file ${relPath}:`, e);
+            req.log.error({ err: e }, `Error reading file ${relPath}`);
           }
         }
       }
@@ -1041,66 +726,43 @@ app.post("/git/archive", rateLimit, async (req, res) => {
     await readDir(workDir);
 
     res.json({ files });
-  } catch (error) {
-    console.error("Git archive error:", error);
-    res.status(500).json({ error: error.message });
-  } finally {
-    // Cleanup
-    try {
-      await fs.rm(workDir, { recursive: true, force: true });
-    } catch (cleanupError) {
-      console.error(`Cleanup failed for ${workDir}:`, cleanupError.message || cleanupError);
-    }
-  }
+  }, req.log);
 });
 
-// POST /git/file-hash - Get file hash (blob SHA) without downloading full content
-// Used for efficient dependency change detection
-// Supports both single file (filePath) and batch (filePaths array) requests
-// Single: { gitUrl, filePath, branch, auth } → { hash: "..." }
-// Batch: { gitUrl, filePaths: [...], branch, auth } → { hashes: { "path": "hash", ... } }
+// Git file-hash endpoint
 app.post("/git/file-hash", rateLimit, async (req, res) => {
   const jobId = uuidv4();
   const workDir = `/tmp/git-hash-${jobId}`;
 
-  try {
+  await withCleanup(workDir, async () => {
     const { gitUrl, filePath, filePaths, branch, auth } = req.body;
 
-    // Determine if this is a batch request
+    // Determine if batch request
     const isBatch = Array.isArray(filePaths) && filePaths.length > 0;
     const pathsToProcess = isBatch ? filePaths : (filePath ? [filePath] : []);
 
-    if (!gitUrl || pathsToProcess.length === 0) {
-      return res.status(400).json({ error: "Missing gitUrl or filePath/filePaths" });
+    const gitUrlValidation = validateGitUrl(gitUrl);
+    if (!gitUrlValidation.valid) {
+      return res.status(400).json({ error: gitUrlValidation.error });
+    }
+
+    if (pathsToProcess.length === 0) {
+      return res.status(400).json({ error: "Missing filePath or filePaths" });
     }
 
     const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
 
-    // Create work directory
     await fs.mkdir(workDir, { recursive: true });
 
-    // Clone with depth 1 (single clone for all files)
     const cloneArgs = ["clone", "--depth", "1"];
     if (branch) {
       cloneArgs.push("--branch", branch);
     }
     cloneArgs.push(authenticatedUrl, workDir);
 
-    const cloneResult = await new Promise((resolve) => {
-      const proc = spawn("git", cloneArgs, { timeout: 60000 });
-
-      let stderr = "";
-      proc.stderr.on("data", (data) => {
-        stderr += data.toString();
-      });
-
-      proc.on("close", (code) => {
-        resolve({ success: code === 0, stderr });
-      });
-
-      proc.on("error", (err) => {
-        resolve({ success: false, stderr: err.message });
-      });
+    const cloneResult = await spawnAsync("git", cloneArgs, {
+      timeout: 60000,
+      logger: req.log,
     });
 
     if (!cloneResult.success) {
@@ -1110,93 +772,57 @@ app.post("/git/file-hash", rateLimit, async (req, res) => {
     // Process all file paths
     const hashes = {};
     for (const fp of pathsToProcess) {
-      // Validate file path (with path traversal protection)
       const targetPath = await safePathAsync(workDir, fp);
       if (!targetPath) {
-        hashes[fp] = null; // Invalid path
+        hashes[fp] = null;
         continue;
       }
 
-      // Check if file exists
       try {
         await fs.access(targetPath);
       } catch {
-        hashes[fp] = null; // File not found
+        hashes[fp] = null;
         continue;
       }
 
-      // Use git hash-object to compute the blob SHA
-      const hashResult = await new Promise((resolve) => {
-        const proc = spawn("git", ["hash-object", fp], {
-          cwd: workDir,
-          timeout: 10000,
-        });
-
-        let stdout = "";
-        let stderr = "";
-
-        proc.stdout.on("data", (data) => {
-          stdout += data.toString();
-        });
-
-        proc.stderr.on("data", (data) => {
-          stderr += data.toString();
-        });
-
-        proc.on("close", (code) => {
-          resolve({ success: code === 0, stdout: stdout.trim(), stderr });
-        });
-
-        proc.on("error", (err) => {
-          resolve({ success: false, stdout: "", stderr: err.message });
-        });
+      const hashResult = await spawnAsync("git", ["hash-object", fp], {
+        cwd: workDir,
+        timeout: 10000,
+        logger: req.log,
       });
 
-      hashes[fp] = hashResult.success ? hashResult.stdout : null;
+      hashes[fp] = hashResult.success ? hashResult.stdout.trim() : null;
     }
 
-    // Return appropriate response format
     if (isBatch) {
       res.json({ hashes });
     } else {
-      // Single file - maintain backwards compatibility
       const hash = hashes[filePath];
       if (hash === null) {
         return res.status(404).json({ error: `File not found or invalid: ${filePath}` });
       }
       res.json({ hash });
     }
-  } catch (error) {
-    console.error("Git file-hash error:", error);
-    res.status(500).json({ error: error.message });
-  } finally {
-    // Cleanup
-    try {
-      await fs.rm(workDir, { recursive: true, force: true });
-    } catch (cleanupError) {
-      console.error(`Cleanup failed for ${workDir}:`, cleanupError.message || cleanupError);
-    }
-  }
+  }, req.log);
 });
 
-// POST /thumbnail - Generate thumbnail from PDF first page
+// Thumbnail endpoint
 app.post("/thumbnail", rateLimit, async (req, res) => {
   const jobId = uuidv4();
   const workDir = `/tmp/thumbnail-${jobId}`;
 
-  try {
+  await withCleanup(workDir, async () => {
     const { pdfBase64, width = 800, format = "png" } = req.body;
 
     if (!pdfBase64) {
       return res.status(400).json({ error: "Missing pdfBase64" });
     }
 
-    // Validate format
-    if (!["png", "jpeg"].includes(format)) {
-      return res.status(400).json({ error: "Invalid format. Use: png, jpeg" });
+    const optionsValidation = validateThumbnailOptions({ width, format });
+    if (!optionsValidation.valid) {
+      return res.status(400).json({ error: optionsValidation.error });
     }
 
-    // Create work directory
     await fs.mkdir(workDir, { recursive: true });
 
     // Decode and write PDF
@@ -1204,48 +830,22 @@ app.post("/thumbnail", rateLimit, async (req, res) => {
     const pdfPath = path.join(workDir, "input.pdf");
     await fs.writeFile(pdfPath, pdfBuffer);
 
-    // Generate thumbnail using pdftoppm
-    // -f 1 -l 1: only first page
-    // -singlefile: don't add page number suffix
-    // -scale-to: scale to width while maintaining aspect ratio
     const outputPrefix = path.join(workDir, "thumb");
-    const formatFlag = format === "png" ? "-png" : "-jpeg";
 
-    const result = await new Promise((resolve) => {
-      const args = [
-        formatFlag,
-        "-f", "1",
-        "-l", "1",
-        "-singlefile",
-        "-scale-to", String(width),
-        pdfPath,
-        outputPrefix,
-      ];
-
-      const proc = spawn("pdftoppm", args, {
-        timeout: 30000, // 30 second timeout
-      });
-
-      let stderr = "";
-
-      proc.stderr.on("data", (data) => {
-        stderr += data.toString();
-      });
-
-      proc.on("close", (code) => {
-        resolve({ success: code === 0, stderr });
-      });
-
-      proc.on("error", (err) => {
-        resolve({ success: false, stderr: err.message });
-      });
+    const result = await runPdftoppm(pdfPath, outputPrefix, {
+      format,
+      width,
+      timeout: 30000,
+      logger: req.log,
     });
 
     if (!result.success) {
-      return res.status(400).json({ error: `Thumbnail generation failed: ${result.stderr}` });
+      return res.status(400).json({
+        error: `Thumbnail generation failed: ${result.stderr}`,
+        timedOut: result.timedOut,
+      });
     }
 
-    // Read the generated thumbnail
     const ext = format === "png" ? "png" : "jpg";
     const thumbPath = path.join(workDir, `thumb.${ext}`);
 
@@ -1256,22 +856,75 @@ app.post("/thumbnail", rateLimit, async (req, res) => {
       res.setHeader("Content-Type", contentType);
       res.setHeader("Content-Length", thumbBuffer.length);
       res.send(thumbBuffer);
-    } catch (e) {
+    } catch {
       return res.status(500).json({ error: "Failed to read generated thumbnail" });
     }
-  } catch (error) {
-    console.error("Thumbnail generation error:", error);
-    res.status(500).json({ error: error.message });
-  } finally {
-    // Cleanup
-    try {
-      await fs.rm(workDir, { recursive: true, force: true });
-    } catch (cleanupError) {
-      console.error(`Cleanup failed for ${workDir}:`, cleanupError.message || cleanupError);
-    }
-  }
+  }, req.log);
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`LaTeX compilation service running on port ${PORT}`);
+// Start server with proper configuration
+const server = app.listen(PORT, "0.0.0.0", () => {
+  logger.info(`LaTeX compilation service running on port ${PORT}`);
 });
+
+// Set server-level timeouts
+server.timeout = 300000; // 5 minutes
+server.keepAliveTimeout = 65000; // Slightly higher than common load balancer timeouts
+server.headersTimeout = 66000; // Slightly higher than keepAliveTimeout
+
+// Helper to wait for active requests to drain
+function waitForRequestsDrain(maxWaitMs = 25000) {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const checkInterval = setInterval(() => {
+      if (activeRequests === 0) {
+        clearInterval(checkInterval);
+        resolve(true);
+      } else if (Date.now() - startTime > maxWaitMs) {
+        logger.warn(`${activeRequests} requests still active after ${maxWaitMs}ms, proceeding with cleanup`);
+        clearInterval(checkInterval);
+        resolve(false);
+      } else {
+        logger.info(`Waiting for ${activeRequests} active request(s) to complete...`);
+      }
+    }, 1000);
+  });
+}
+
+// Graceful shutdown handling
+async function shutdown(signal) {
+  if (shuttingDown) {
+    logger.warn(`Received ${signal} during shutdown, forcing exit`);
+    process.exit(1);
+  }
+
+  shuttingDown = true;
+  logger.info(`${signal} received, starting graceful shutdown...`);
+  logger.info(`Active requests: ${activeRequests}`);
+
+  // Stop accepting new connections
+  server.close(async () => {
+    logger.info("HTTP server closed, no new connections accepted");
+
+    // Wait for active requests to complete
+    if (activeRequests > 0) {
+      logger.info(`Waiting for ${activeRequests} active request(s) to drain...`);
+      await waitForRequestsDrain();
+    }
+
+    // Clean up pending work directories (should be empty if all requests completed)
+    await cleanupAllPendingWorkDirs(logger);
+
+    logger.info("Shutdown complete");
+    process.exit(0);
+  });
+
+  // Force exit after timeout
+  setTimeout(() => {
+    logger.error("Graceful shutdown timed out, forcing exit");
+    process.exit(1);
+  }, 30000);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

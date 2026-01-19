@@ -1,18 +1,22 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useMutation, useAction } from "convex/react";
+import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "../../convex/_generated/api";
 import { useUser } from "../hooks/useUser";
 import { validatePassword, PASSWORD_REQUIREMENTS } from "../lib/validation";
 import { GitHubIcon, GitLabIcon, OverleafIcon } from "../components/icons";
 import { OverleafSetupModal } from "../components/repositories/OverleafSetupModal";
 import { SelfHostedGitLabSetupModal } from "../components/repositories/SelfHostedGitLabSetupModal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 export const Route = createFileRoute("/profile")({
   component: ProfilePage,
 });
 
 function ProfilePage() {
+  const navigate = useNavigate();
+  const { signOut } = useAuthActions();
   const {
     user,
     linkWithGitHub,
@@ -29,6 +33,8 @@ function ProfilePage() {
   const changePassword = useAction(api.passwordActions.changePassword);
   const saveOverleafCredentials = useMutation(api.users.saveOverleafCredentials);
   const addSelfHostedGitLabInstance = useMutation(api.users.addSelfHostedGitLabInstance);
+  const deleteSelfHostedGitLabInstance = useMutation(api.users.deleteSelfHostedGitLabInstance);
+  const deleteAccountMutation = useMutation(api.users.deleteAccount);
 
   // Name editing state
   const [isEditingName, setIsEditingName] = useState(false);
@@ -50,6 +56,19 @@ function ProfilePage() {
 
   // Self-hosted GitLab setup modal state
   const [showSelfHostedGitLabSetup, setShowSelfHostedGitLabSetup] = useState(false);
+
+  // Delete account state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Delete GitLab instance state
+  const [instanceToDelete, setInstanceToDelete] = useState<{ id: string; name: string } | null>(null);
+
+  // Disconnect provider confirmation states
+  const [showDisconnectGitHub, setShowDisconnectGitHub] = useState(false);
+  const [showDisconnectGitLab, setShowDisconnectGitLab] = useState(false);
+  const [showDisconnectOverleaf, setShowDisconnectOverleaf] = useState(false);
 
   const handleSaveName = async () => {
     setNameLoading(true);
@@ -117,6 +136,30 @@ function ProfilePage() {
       }
     } finally {
       setPasswordLoading(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteAccountMutation();
+      // Sign out and redirect to home after deletion
+      await signOut();
+      navigate({ to: "/" });
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "Failed to delete account");
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteGitLabInstance = async () => {
+    if (!instanceToDelete) return;
+    try {
+      await deleteSelfHostedGitLabInstance({ id: instanceToDelete.id as Parameters<typeof deleteSelfHostedGitLabInstance>[0]["id"] });
+      setInstanceToDelete(null);
+    } catch (error) {
+      console.error("Failed to delete GitLab instance:", error);
     }
   };
 
@@ -289,7 +332,7 @@ function ProfilePage() {
             </div>
             {connectedProviders.github ? (
               <button
-                onClick={disconnectGitHub}
+                onClick={() => setShowDisconnectGitHub(true)}
                 className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 Disconnect
@@ -321,7 +364,7 @@ function ProfilePage() {
             </div>
             {connectedProviders.gitlab ? (
               <button
-                onClick={disconnectGitLab}
+                onClick={() => setShowDisconnectGitLab(true)}
                 className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 Disconnect
@@ -353,7 +396,7 @@ function ProfilePage() {
             </div>
             {connectedProviders.overleaf ? (
               <button
-                onClick={disconnectOverleaf}
+                onClick={() => setShowDisconnectOverleaf(true)}
                 className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 Disconnect
@@ -369,56 +412,153 @@ function ProfilePage() {
           </div>
 
           {/* Self-hosted GitLab instances */}
-          {selfHostedGitLabInstances.length > 0 ? (
-            selfHostedGitLabInstances.map((instance: { _id: string; name: string }) => (
-              <div
-                key={instance._id}
-                className="flex items-center justify-between rounded-lg border p-4 dark:border-gray-800"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#554488]">
-                    <GitLabIcon className="h-5 w-5 text-white" />
+          {selfHostedGitLabInstances.length > 0 && (
+            <>
+              {selfHostedGitLabInstances.map((instance: { _id: string; name: string; url: string }) => (
+                <div
+                  key={instance._id}
+                  className="flex items-center justify-between rounded-lg border p-4 dark:border-gray-800"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#554488]">
+                      <GitLabIcon className="h-5 w-5 text-white" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 dark:text-gray-100">{instance.name}</p>
+                      <p className="truncate text-sm text-gray-500 dark:text-gray-400" title={instance.url}>
+                        {instance.url.replace(/^https?:\/\//, "")}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-gray-100">{instance.name}</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Self-hosted GitLab</p>
-                  </div>
+                  <button
+                    onClick={() => setInstanceToDelete({ id: instance._id, name: instance.name })}
+                    className="shrink-0 rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                    aria-label={`Disconnect ${instance.name}`}
+                  >
+                    Disconnect
+                  </button>
                 </div>
-                <span className="flex items-center gap-1 text-sm text-green-600">
-                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  Configured
-                </span>
-              </div>
-            ))
-          ) : (
-            <div className="flex items-center justify-between rounded-lg border border-dashed p-4 dark:border-gray-700">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800">
-                  <GitLabIcon className="h-5 w-5 text-[#554488]" />
-                </div>
-                <div>
-                  <p className="font-medium text-gray-900 dark:text-gray-100">Self-Hosted GitLab</p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Add your own GitLab instance
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowSelfHostedGitLabSetup(true)}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-              >
-                Configure
-              </button>
-            </div>
+              ))}
+            </>
           )}
+
+          {/* Add Self-hosted GitLab Instance */}
+          <div className="flex items-center justify-between rounded-lg border border-dashed p-4 dark:border-gray-700">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800">
+                <GitLabIcon className="h-5 w-5 text-[#554488]" />
+              </div>
+              <div>
+                <p className="font-medium text-gray-900 dark:text-gray-100">
+                  {selfHostedGitLabInstances.length > 0 ? "Add Another Instance" : "Self-Hosted GitLab"}
+                </p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {selfHostedGitLabInstances.length > 0
+                    ? "Connect additional GitLab servers"
+                    : "Add your own GitLab instance"}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowSelfHostedGitLabSetup(true)}
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              {selfHostedGitLabInstances.length > 0 ? "Add" : "Configure"}
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Danger Zone */}
+      <div className="rounded-lg border border-red-200 bg-white p-6 shadow-sm dark:border-red-900 dark:bg-gray-900">
+        <h3 className="mb-4 text-lg font-semibold text-red-600 dark:text-red-400">
+          Danger Zone
+        </h3>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="font-medium text-gray-900 dark:text-gray-100">Delete Account</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Permanently delete your account and all associated data. This action cannot be undone.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="shrink-0 rounded-md border border-red-600 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-500 dark:text-red-500 dark:hover:bg-red-950"
+          >
+            Delete Account
+          </button>
+        </div>
+        {deleteError && (
+          <p className="mt-4 text-sm text-red-600 dark:text-red-400">{deleteError}</p>
+        )}
+      </div>
+
+      {/* Delete Account Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        title="Delete Account"
+        message="Are you sure you want to permanently delete your account? This will remove all your repositories, papers, and data. This action cannot be undone."
+        confirmLabel={isDeleting ? "Deleting..." : "Delete Account"}
+        variant="danger"
+        onConfirm={handleDeleteAccount}
+        onCancel={() => {
+          setShowDeleteConfirm(false);
+          setDeleteError(null);
+        }}
+      />
+
+      {/* Disconnect GitHub Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={showDisconnectGitHub}
+        title="Disconnect GitHub"
+        message="Are you sure you want to disconnect GitHub? All repositories and papers from GitHub will be permanently deleted."
+        confirmLabel="Disconnect"
+        variant="danger"
+        onConfirm={() => {
+          disconnectGitHub();
+          setShowDisconnectGitHub(false);
+        }}
+        onCancel={() => setShowDisconnectGitHub(false)}
+      />
+
+      {/* Disconnect GitLab Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={showDisconnectGitLab}
+        title="Disconnect GitLab"
+        message="Are you sure you want to disconnect GitLab? All repositories and papers from GitLab will be permanently deleted."
+        confirmLabel="Disconnect"
+        variant="danger"
+        onConfirm={() => {
+          disconnectGitLab();
+          setShowDisconnectGitLab(false);
+        }}
+        onCancel={() => setShowDisconnectGitLab(false)}
+      />
+
+      {/* Disconnect Overleaf Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={showDisconnectOverleaf}
+        title="Disconnect Overleaf"
+        message="Are you sure you want to disconnect Overleaf? All repositories and papers from Overleaf will be permanently deleted."
+        confirmLabel="Disconnect"
+        variant="danger"
+        onConfirm={() => {
+          disconnectOverleaf();
+          setShowDisconnectOverleaf(false);
+        }}
+        onCancel={() => setShowDisconnectOverleaf(false)}
+      />
+
+      {/* Disconnect GitLab Instance Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={!!instanceToDelete}
+        title="Disconnect GitLab Instance"
+        message={`Are you sure you want to disconnect "${instanceToDelete?.name}"? All repositories and papers from this instance will be permanently deleted.`}
+        confirmLabel="Disconnect"
+        variant="danger"
+        onConfirm={handleDeleteGitLabInstance}
+        onCancel={() => setInstanceToDelete(null)}
+      />
 
       {/* Overleaf Setup Modal */}
       {showOverleafSetup && (

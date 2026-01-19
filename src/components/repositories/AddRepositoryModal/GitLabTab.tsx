@@ -6,6 +6,7 @@ interface GitLabTabProps {
   isLoading: boolean;
   isAdding: boolean;
   error: string | null;
+  loadError: string | null;
   search: string;
   onSearchChange: (search: string) => void;
   onAddRepo: (repo: GitRepo) => void;
@@ -20,6 +21,7 @@ export function GitLabTab({
   isLoading,
   isAdding,
   error,
+  loadError,
   search,
   onSearchChange,
   onAddRepo,
@@ -43,6 +45,27 @@ export function GitLabTab({
           <div className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
             Connect GitLab to list repositories, or use the Manual tab.
           </div>
+        ) : loadError ? (
+          <div className="py-6 text-center">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
+              <svg className="h-6 w-6 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <p className="mb-2 text-sm font-medium text-gray-900 dark:text-gray-100">
+              {loadError.includes("401") || loadError.includes("Unauthorized")
+                ? "GitLab session expired"
+                : "Failed to load repositories"}
+            </p>
+            <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
+              {loadError.includes("401") || loadError.includes("Unauthorized")
+                ? "Your GitLab authorization has expired. Please sign out and sign back in with GitLab to refresh your access."
+                : loadError}
+            </p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              You can still add repositories manually using a URL below.
+            </p>
+          </div>
         ) : isLoading ? (
           <div className="flex items-center justify-center py-8">
             <svg className="h-6 w-6 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
@@ -62,7 +85,7 @@ export function GitLabTab({
               />
             ))}
           </div>
-        ) : repos && repos.length === 0 ? (
+        ) : repos && repos.length === 0 && search ? (
           <div className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
             No repositories found matching "{search}"
           </div>

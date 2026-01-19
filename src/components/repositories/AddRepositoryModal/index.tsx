@@ -16,6 +16,8 @@ interface AddRepositoryModalProps {
   gitlabRepos: GitRepo[] | null;
   isLoadingRepos: boolean;
   isLoadingGitLabRepos: boolean;
+  gitlabLoadError: string | null;
+  githubLoadError: string | null;
   onClose: () => void;
   onAddFromUrl: (url: string) => Promise<void>;
   onAddFromList: (repo: GitRepo) => Promise<void>;
@@ -37,6 +39,8 @@ export function AddRepositoryModal({
   gitlabRepos,
   isLoadingRepos,
   isLoadingGitLabRepos,
+  gitlabLoadError,
+  githubLoadError,
   onClose,
   onAddFromUrl,
   onAddFromList,
@@ -196,6 +200,7 @@ export function AddRepositoryModal({
             isLoading={isLoadingRepos}
             isAdding={isAdding}
             error={error}
+            loadError={githubLoadError}
             search={repoSearch}
             onSearchChange={setRepoSearch}
             onAddRepo={handleAddFromList}
@@ -209,6 +214,7 @@ export function AddRepositoryModal({
             isLoading={isLoadingGitLabRepos}
             isAdding={isAdding}
             error={error}
+            loadError={gitlabLoadError}
             search={repoSearch}
             onSearchChange={setRepoSearch}
             onAddRepo={handleAddFromList}

@@ -3,8 +3,9 @@ import { useState } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { Toast } from "../components/ConfirmDialog";
+import { Toast, ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../hooks/useToast";
+import { StatusBadge } from "../components/ui";
 
 export const Route = createFileRoute("/papers/$id")({
   component: PaperDetailPage,
@@ -187,38 +188,28 @@ function PaperDetailPage() {
               )}
               <div className="flex justify-between">
                 <dt className="text-gray-500 dark:text-gray-400">Status</dt>
-                <dd>
+                <dd className="flex items-center gap-2">
                   {(syncError || paper.lastSyncError) ? (
-                    <span
-                      className="inline-flex items-center gap-1 text-red-600"
-                      title={syncError || paper.lastSyncError}
-                    >
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                      {paper.trackedFile?.pdfSourceType === "compile" ? "Compilation failed" : "Sync failed"}
-                    </span>
+                    <>
+                      <StatusBadge
+                        status="error"
+                        label={paper.trackedFile?.pdfSourceType === "compile" ? "Compilation failed" : "Sync failed"}
+                        title={syncError || paper.lastSyncError || undefined}
+                      />
+                      <button
+                        onClick={handleSync}
+                        disabled={isSyncing}
+                        className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                      >
+                        Retry
+                      </button>
+                    </>
                   ) : !paper.repository ? (
-                    <span className="inline-flex items-center gap-1 text-purple-600">
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                      </svg>
-                      Uploaded
-                    </span>
+                    <StatusBadge status="info" label="Uploaded" />
                   ) : paper.isUpToDate === true ? (
-                    <span className="inline-flex items-center gap-1 text-green-600">
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      Up to date
-                    </span>
+                    <StatusBadge status="success" label="Up to date" />
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-yellow-600">
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      Needs sync
-                    </span>
+                    <StatusBadge status="warning" label="Needs sync" />
                   )}
                 </dd>
               </div>
@@ -337,6 +328,7 @@ function PaperDetailPage() {
                     );
                   }}
                   className="rounded bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-700"
+                  aria-label="Copy share link to clipboard"
                 >
                   Copy
                 </button>
@@ -443,30 +435,15 @@ function PaperDetailPage() {
       </div>
 
       {/* Delete Confirmation Dialog */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="mx-4 w-full max-w-sm rounded-lg bg-white p-6 shadow-xl dark:bg-gray-900">
-            <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">Delete Paper</h3>
-            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-              Are you sure you want to delete this paper? This action cannot be undone.
-            </p>
-            <div className="mt-4 flex justify-end gap-3">
-              <button
-                onClick={() => setShowDeleteConfirm(false)}
-                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDelete}
-                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        title="Delete Paper"
+        message="Are you sure you want to delete this paper? This action cannot be undone."
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={handleDelete}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
 
       {/* Toast Notification */}
       {toast && (

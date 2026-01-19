@@ -1,4 +1,5 @@
-FROM texlive/texlive:latest
+# Pin to specific TeX Live version for reproducibility
+FROM texlive/texlive:TL2024-historic
 
 # Install Node.js and poppler-utils for PDF thumbnail generation
 RUN apt-get update && apt-get install -y \
@@ -18,8 +19,9 @@ WORKDIR /home/latexuser/app
 COPY --chown=latexuser:latexuser package.json ./
 RUN npm install --production
 
-# Copy server code
+# Copy server code and lib directory
 COPY --chown=latexuser:latexuser server.js ./
+COPY --chown=latexuser:latexuser lib/ ./lib/
 
 # Create work directory for compilations
 RUN mkdir -p /home/latexuser/work && chown -R latexuser:latexuser /home/latexuser
@@ -30,9 +32,12 @@ USER latexuser
 # Set work directory for temp files
 ENV WORK_DIR=/home/latexuser/work
 
+# Production mode for structured logging
+ENV NODE_ENV=production
+
 EXPOSE 3001
 
-# Health check
+# Health check - now verifies dependencies
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:3001/health || exit 1
 

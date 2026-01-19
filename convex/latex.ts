@@ -19,6 +19,76 @@ import {
 // Type for dependency with hash
 type DependencyHash = { path: string; hash: string };
 
+// Default timeout for latex service requests (3 minutes)
+const DEFAULT_LATEX_SERVICE_TIMEOUT = 180000;
+
+// Fetch with timeout using AbortSignal
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit & { timeout?: number } = {}
+): Promise<Response> {
+  const { timeout = DEFAULT_LATEX_SERVICE_TIMEOUT, ...fetchOptions } = options;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const response = await fetch(url, {
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+    return response;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Request to ${url} timed out after ${timeout}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// Sleep helper for retry backoff
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Fetch with retry and exponential backoff
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit & { timeout?: number } = {},
+  maxRetries = 3
+): Promise<Response> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetchWithTimeout(url, options);
+      // Don't retry on client errors (4xx), only on server errors (5xx) or network issues
+      if (response.ok || response.status < 500) {
+        return response;
+      }
+      // Server error - will retry
+      lastError = new Error(`Server error: ${response.status} ${response.statusText}`);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      // Don't retry on timeout for long operations
+      if (lastError.message.includes("timed out")) {
+        throw lastError;
+      }
+    }
+
+    // Exponential backoff: 1s, 2s, 4s
+    if (attempt < maxRetries - 1) {
+      const backoffMs = Math.pow(2, attempt) * 1000;
+      console.log(`Retry attempt ${attempt + 1}/${maxRetries} after ${backoffMs}ms`);
+      await sleep(backoffMs);
+    }
+  }
+
+  throw lastError || new Error("Request failed after retries");
+}
+
 // Normalize a path and ensure it stays within the repository root
 // Returns null if the path would escape the root
 function normalizePath(basePath: string, relativePath: string): string | null {
@@ -163,8 +233,8 @@ export const compileLatexInternal = internalAction({
 
       await updateProgress("Fetching files from Overleaf...");
 
-      // Fetch all project files via git archive
-      const archiveResponse = await fetch(`${latexServiceUrl}/git/archive`, {
+      // Fetch all project files via git archive (with retry for transient failures)
+      const archiveResponse = await fetchWithRetry(`${latexServiceUrl}/git/archive`, {
         method: "POST",
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
@@ -172,6 +242,7 @@ export const compileLatexInternal = internalAction({
           branch: args.branch,
           auth: credentials,
         }),
+        timeout: 120000, // 2 minutes for archive fetch
       });
 
       if (!archiveResponse.ok) {
@@ -204,8 +275,8 @@ export const compileLatexInternal = internalAction({
 
       await updateProgress(`Compiling LaTeX (${allResources.size} files)...`);
 
-      // Compile with all files
-      pdfResponse = await fetch(`${latexServiceUrl}/compile`, {
+      // Compile with all files (no retry for compile - it's idempotent but expensive)
+      pdfResponse = await fetchWithTimeout(`${latexServiceUrl}/compile`, {
         method: "POST",
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
@@ -213,6 +284,7 @@ export const compileLatexInternal = internalAction({
           target: args.filePath,
           compiler: "pdflatex",
         }),
+        timeout: DEFAULT_LATEX_SERVICE_TIMEOUT,
       });
     } else {
       // GitHub/GitLab handling (both gitlab.com and self-hosted)
@@ -293,8 +365,8 @@ export const compileLatexInternal = internalAction({
         console.log(`\nDependency resolution iteration ${iteration + 1}`);
         await updateProgress(`Detecting dependencies (pass ${iteration + 1})...`);
 
-        // Send current resources to /deps
-        const depsResponse = await fetch(`${latexServiceUrl}/deps`, {
+        // Send current resources to /deps (with retry for transient failures)
+        const depsResponse = await fetchWithRetry(`${latexServiceUrl}/deps`, {
           method: "POST",
           headers: getLatexServiceHeaders(),
           body: JSON.stringify({
@@ -302,6 +374,7 @@ export const compileLatexInternal = internalAction({
             target: args.filePath,
             compiler: "pdflatex",
           }),
+          timeout: 60000, // 1 minute for deps detection
         });
 
         if (!depsResponse.ok) {
@@ -394,8 +467,8 @@ export const compileLatexInternal = internalAction({
       console.log(`\nCompiling with ${allResources.size} total files`);
       await updateProgress(`Compiling LaTeX (${allResources.size} files)...`);
 
-      // Final compile with all resolved dependencies
-      pdfResponse = await fetch(`${latexServiceUrl}/compile`, {
+      // Final compile with all resolved dependencies (no retry - expensive operation)
+      pdfResponse = await fetchWithTimeout(`${latexServiceUrl}/compile`, {
         method: "POST",
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
@@ -403,6 +476,7 @@ export const compileLatexInternal = internalAction({
           target: args.filePath,
           compiler: "pdflatex",
         }),
+        timeout: DEFAULT_LATEX_SERVICE_TIMEOUT,
       });
     } else {
       // Fallback to LaTeX.Online for public repos
