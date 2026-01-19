@@ -9,29 +9,43 @@ import { auth } from "./auth";
 type CachedDependency = { path: string; hash: string };
 
 // Helper function to check if any dependency files have changed
+// Uses batch fetch to optimize Overleaf (single clone instead of one per file)
 async function checkDependenciesChanged(
   ctx: ActionCtx,
   gitUrl: string,
   branch: string,
   cachedDeps: CachedDependency[]
 ): Promise<boolean> {
-  for (const dep of cachedDeps) {
-    try {
-      const currentHash = await ctx.runAction(internal.git.fetchFileHashInternal, {
-        gitUrl,
-        filePath: dep.path,
-        branch,
-      });
+  if (cachedDeps.length === 0) {
+    return false;
+  }
+
+  try {
+    // Fetch all file hashes in one batch call
+    const filePaths = cachedDeps.map((d) => d.path);
+    const currentHashes = await ctx.runAction(internal.git.fetchFileHashBatchInternal, {
+      gitUrl,
+      filePaths,
+      branch,
+    });
+
+    // Compare each dependency hash
+    for (const dep of cachedDeps) {
+      const currentHash = currentHashes[dep.path];
+      if (currentHash === null || currentHash === undefined) {
+        console.log(`Dependency missing or error: ${dep.path}`);
+        return true; // File missing - assume changed
+      }
       if (currentHash !== dep.hash) {
         console.log(`Dependency changed: ${dep.path} (${dep.hash} -> ${currentHash})`);
         return true; // File changed
       }
-    } catch (error) {
-      console.log(`Could not check dependency ${dep.path}: ${error}`);
-      return true; // File missing or error - assume changed
     }
+    return false; // All dependencies unchanged
+  } catch (error) {
+    console.log(`Could not check dependencies: ${error}`);
+    return true; // Error fetching hashes - assume changed
   }
-  return false; // All dependencies unchanged
 }
 
 // Check if repository is currently syncing (used for optimistic locking)
@@ -66,12 +80,17 @@ export const getTrackedFileById = internalQuery({
 // Sync lock timeout in milliseconds (5 minutes)
 const SYNC_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 
-// Try to acquire sync lock - returns true if lock acquired, false if already syncing
+// Generate a unique attempt ID
+function generateAttemptId(): string {
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+}
+
+// Try to acquire sync lock - returns attempt ID if acquired, null if already syncing
 export const tryAcquireSyncLock = internalMutation({
   args: { id: v.id("repositories") },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ acquired: boolean; attemptId: string | null }> => {
     const repo = await ctx.db.get(args.id);
-    if (!repo) return false;
+    if (!repo) return { acquired: false, attemptId: null };
 
     const now = Date.now();
 
@@ -83,18 +102,35 @@ export const tryAcquireSyncLock = internalMutation({
 
       if (timeSinceLockAcquired < SYNC_LOCK_TIMEOUT_MS) {
         // Lock is still valid, don't allow new sync
-        return false;
+        return { acquired: false, attemptId: null };
       }
       // Lock has timed out, allow override
       console.log(`Sync lock for repository ${args.id} timed out after ${timeSinceLockAcquired}ms, allowing new sync`);
     }
 
+    // Generate a new attempt ID
+    const attemptId = generateAttemptId();
+
     // Acquire the lock by setting status to syncing and recording lock acquisition time
     await ctx.db.patch(args.id, {
       syncStatus: "syncing",
       syncLockAcquiredAt: now,
+      currentSyncAttemptId: attemptId,
     });
-    return true;
+    return { acquired: true, attemptId };
+  },
+});
+
+// Validate that the given attempt ID matches the current sync attempt
+export const validateSyncAttempt = internalQuery({
+  args: {
+    repositoryId: v.id("repositories"),
+    attemptId: v.string(),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const repo = await ctx.db.get(args.repositoryId);
+    if (!repo) return false;
+    return repo.currentSyncAttemptId === args.attemptId;
   },
 });
 
@@ -103,8 +139,17 @@ export const releaseSyncLock = internalMutation({
   args: {
     id: v.id("repositories"),
     status: v.union(v.literal("idle"), v.literal("error")),
+    attemptId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    // If attemptId is provided, validate it first
+    if (args.attemptId) {
+      const repo = await ctx.db.get(args.id);
+      if (repo && repo.currentSyncAttemptId !== args.attemptId) {
+        console.log(`Sync attempt ${args.attemptId} superseded, skipping lock release`);
+        return;
+      }
+    }
     await ctx.db.patch(args.id, { syncStatus: args.status });
   },
 });
@@ -138,14 +183,25 @@ export const updateRepositoryAfterSync = internalMutation({
     lastCommitTime: v.optional(v.number()),
     lastSyncedAt: v.number(),
     syncStatus: v.union(v.literal("idle"), v.literal("syncing"), v.literal("error")),
+    attemptId: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ success: boolean; reason?: string }> => {
+    // If attemptId is provided, validate it first
+    if (args.attemptId) {
+      const repo = await ctx.db.get(args.id);
+      if (repo && repo.currentSyncAttemptId !== args.attemptId) {
+        console.log(`Sync attempt ${args.attemptId} superseded, skipping repository update`);
+        return { success: false, reason: "superseded" };
+      }
+    }
+
     await ctx.db.patch(args.id, {
       lastCommitHash: args.lastCommitHash,
       lastCommitTime: args.lastCommitTime,
       lastSyncedAt: args.lastSyncedAt,
       syncStatus: args.syncStatus,
     });
+    return { success: true };
   },
 });
 
@@ -166,13 +222,15 @@ export const syncRepository = action({
     }
 
     // Try to acquire sync lock (optimistic locking to prevent concurrent syncs)
-    const lockAcquired = await ctx.runMutation(internal.sync.tryAcquireSyncLock, {
+    const lockResult = await ctx.runMutation(internal.sync.tryAcquireSyncLock, {
       id: args.repositoryId,
     });
 
-    if (!lockAcquired) {
+    if (!lockResult.acquired || !lockResult.attemptId) {
       throw new Error("Repository is already syncing. Please wait for the current sync to complete.");
     }
+
+    const attemptId = lockResult.attemptId;
 
     try {
       // Repository already loaded and authorized above
@@ -194,14 +252,28 @@ export const syncRepository = action({
       // Check if we need to update
       if (repository.lastCommitHash === latestCommit.sha) {
         // No changes, just update sync time
-        await ctx.runMutation(internal.sync.updateRepositoryAfterSync, {
+        const result = await ctx.runMutation(internal.sync.updateRepositoryAfterSync, {
           id: args.repositoryId,
           lastCommitHash: latestCommit.sha,
           lastCommitTime: commitTime,
           lastSyncedAt: Date.now(),
           syncStatus: "idle",
+          attemptId,
         });
+        if (!result.success) {
+          console.log(`Sync attempt ${attemptId} was superseded`);
+        }
         return { updated: false, commitHash: latestCommit.sha };
+      }
+
+      // Validate attempt before expensive operations
+      const isStillValid = await ctx.runQuery(internal.sync.validateSyncAttempt, {
+        repositoryId: args.repositoryId,
+        attemptId,
+      });
+      if (!isStillValid) {
+        console.log(`Sync attempt ${attemptId} was superseded before processing papers`);
+        return { updated: false, commitHash: latestCommit.sha, superseded: true };
       }
 
       // New commit detected - compute needsSync for each paper
@@ -258,13 +330,19 @@ export const syncRepository = action({
       }
 
       // Update repository with new commit
-      await ctx.runMutation(internal.sync.updateRepositoryAfterSync, {
+      const result = await ctx.runMutation(internal.sync.updateRepositoryAfterSync, {
         id: args.repositoryId,
         lastCommitHash: latestCommit.sha,
         lastCommitTime: commitTime,
         lastSyncedAt: Date.now(),
         syncStatus: "idle",
+        attemptId,
       });
+
+      if (!result.success) {
+        console.log(`Sync attempt ${attemptId} was superseded at final update`);
+        return { updated: true, commitHash: latestCommit.sha, superseded: true };
+      }
 
       return { updated: true, commitHash: latestCommit.sha };
     } catch (error) {
@@ -272,6 +350,7 @@ export const syncRepository = action({
       await ctx.runMutation(internal.sync.releaseSyncLock, {
         id: args.repositoryId,
         status: "idle",
+        attemptId,
       });
       throw error;
     }
@@ -289,8 +368,34 @@ export const updatePaperPdf = internalMutation({
       path: v.string(),
       hash: v.string(),
     }))),
+    repositoryId: v.optional(v.id("repositories")),
+    attemptId: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ success: boolean; reason?: string }> => {
+    // If attemptId and repositoryId are provided, validate first
+    if (args.attemptId && args.repositoryId) {
+      const repo = await ctx.db.get(args.repositoryId);
+      if (repo && repo.currentSyncAttemptId !== args.attemptId) {
+        console.log(`Sync attempt ${args.attemptId} superseded, skipping paper PDF update`);
+        return { success: false, reason: "superseded" };
+      }
+    }
+
+    // Get current paper to create version history entry
+    const paper = await ctx.db.get(args.id);
+    if (paper?.pdfFileId && paper?.cachedCommitHash) {
+      // Create a version entry for the current (soon to be previous) PDF
+      await ctx.db.insert("paperVersions", {
+        paperId: args.id,
+        commitHash: paper.cachedCommitHash,
+        versionCreatedAt: paper.updatedAt || Date.now(),
+        pdfFileId: paper.pdfFileId,
+        thumbnailFileId: paper.thumbnailFileId,
+        fileSize: paper.fileSize,
+        pageCount: paper.pageCount,
+      });
+    }
+
     await ctx.db.patch(args.id, {
       pdfFileId: args.pdfFileId,
       cachedCommitHash: args.cachedCommitHash,
@@ -300,6 +405,7 @@ export const updatePaperPdf = internalMutation({
       lastSyncError: undefined, // Clear any previous error on success
       updatedAt: Date.now(),
     });
+    return { success: true };
   },
 });
 
@@ -376,13 +482,15 @@ export const syncPaper = action({
     }
 
     // Try to acquire sync lock (optimistic locking to prevent concurrent syncs)
-    const lockAcquired = await ctx.runMutation(internal.sync.tryAcquireSyncLock, {
+    const lockResult = await ctx.runMutation(internal.sync.tryAcquireSyncLock, {
       id: repository._id,
     });
 
-    if (!lockAcquired) {
+    if (!lockResult.acquired || !lockResult.attemptId) {
       throw new Error("Repository is already syncing. Please wait for the current sync to complete.");
     }
+
+    const attemptId = lockResult.attemptId;
 
     // Clear any previous sync error at the start
     await ctx.runMutation(internal.sync.updatePaperSyncError, {
@@ -400,6 +508,16 @@ export const syncPaper = action({
       // Convert commit date to Unix timestamp
       const commitTime = new Date(latestCommit.date).getTime();
 
+      // Validate attempt before expensive operations
+      const isStillValid = await ctx.runQuery(internal.sync.validateSyncAttempt, {
+        repositoryId: repository._id,
+        attemptId,
+      });
+      if (!isStillValid) {
+        console.log(`Sync attempt ${attemptId} was superseded before paper sync`);
+        return { updated: false, commitHash: latestCommit.sha, superseded: true };
+      }
+
       // Always update repository metadata with latest commit info
       await ctx.runMutation(internal.sync.updateRepositoryAfterSync, {
         id: repository._id,
@@ -407,6 +525,7 @@ export const syncPaper = action({
         lastCommitTime: commitTime,
         lastSyncedAt: Date.now(),
         syncStatus: "idle",
+        attemptId,
       });
 
       // Check if PDF is already cached for this commit
@@ -439,6 +558,16 @@ export const syncPaper = action({
         }
       }
 
+      // Validate attempt before expensive compile/fetch operations
+      const isStillValidBeforeCompile = await ctx.runQuery(internal.sync.validateSyncAttempt, {
+        repositoryId: repository._id,
+        attemptId,
+      });
+      if (!isStillValidBeforeCompile) {
+        console.log(`Sync attempt ${attemptId} was superseded before compile/fetch`);
+        return { updated: false, commitHash: latestCommit.sha, superseded: true };
+      }
+
       let storageId: string;
       let fileSize: number;
       let dependencies: Array<{ path: string; hash: string }> | undefined;
@@ -468,13 +597,20 @@ export const syncPaper = action({
       }
 
       // Update paper with new PDF (also clears lastSyncError)
-      await ctx.runMutation(internal.sync.updatePaperPdf, {
+      const updateResult = await ctx.runMutation(internal.sync.updatePaperPdf, {
         id: args.paperId,
         pdfFileId: storageId as Id<"_storage">,
         cachedCommitHash: latestCommit.sha,
         fileSize,
         cachedDependencies: dependencies,
+        repositoryId: repository._id,
+        attemptId,
       });
+
+      if (!updateResult.success) {
+        console.log(`Sync attempt ${attemptId} was superseded at paper PDF update`);
+        return { updated: true, commitHash: latestCommit.sha, superseded: true };
+      }
 
       // Generate thumbnail (non-blocking, errors are logged but don't fail sync)
       try {
@@ -499,6 +635,7 @@ export const syncPaper = action({
       await ctx.runMutation(internal.sync.releaseSyncLock, {
         id: repository._id,
         status: "idle",
+        attemptId,
       });
       throw error;
     }

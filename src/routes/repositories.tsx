@@ -11,6 +11,7 @@ import { ConfigureRepositoryModal } from "../components/repositories/ConfigureRe
 import { OverleafSetupModal } from "../components/repositories/OverleafSetupModal";
 import { SelfHostedGitLabSetupModal } from "../components/repositories/SelfHostedGitLabSetupModal";
 import type { GitRepo, Repository, SelectedFile } from "../components/repositories/types";
+import { useToast } from "../hooks/useToast";
 
 export const Route = createFileRoute("/repositories")({
   component: RepositoriesPage,
@@ -67,7 +68,7 @@ function RepositoriesPage() {
     variant: "danger" | "warning" | "default";
     onConfirm: () => void | Promise<void>;
   }>({ isOpen: false, title: "", message: "", variant: "default", onConfirm: () => {} });
-  const [toast, setToast] = useState<{ message: string; type: "error" | "success" | "info" } | null>(null);
+  const { toast, showError, showToast, clearToast } = useToast();
 
   const hasGitHubToken = Boolean(user?.hasGitHubToken);
   const hasGitLabToken = Boolean(user?.hasGitLabToken);
@@ -76,15 +77,23 @@ function RepositoriesPage() {
   useEffect(() => {
     if (repositories && repositories.length > 0 && !hasQuickSyncedRef.current) {
       hasQuickSyncedRef.current = true;
-      repositories.forEach((repo) => {
-        if (repo.syncStatus !== "syncing") {
+      let hasErrors = false;
+      const syncPromises = repositories
+        .filter((repo) => repo.syncStatus !== "syncing")
+        .map((repo) =>
           syncRepository({ repositoryId: repo._id }).catch((err) => {
             console.error(`Quick sync failed for ${repo.name}:`, err);
-          });
+            hasErrors = true;
+          })
+        );
+      Promise.all(syncPromises).then(() => {
+        if (hasErrors) {
+          showToast("Some repositories failed to sync", "info");
         }
       });
     }
-  }, [repositories, syncRepository]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repositories]);
 
   // Load user repos when GitHub tab is active
   useEffect(() => {
@@ -94,9 +103,11 @@ function RepositoriesPage() {
         .then(setUserRepos)
         .catch((err) => {
           console.error("Failed to load repos:", err);
+          showError(err, "Failed to load GitHub repositories");
         })
         .finally(() => setIsLoadingRepos(false));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAddModalOpen, hasGitHubToken, userRepos, isLoadingRepos, listUserRepos]);
 
   // Load GitLab repos when modal is open
@@ -107,10 +118,12 @@ function RepositoriesPage() {
         .then(setGitlabRepos)
         .catch((err) => {
           console.error("Failed to load GitLab repos:", err);
+          showError(err, "Failed to load GitLab repositories");
           setGitlabRepos([]);
         })
         .finally(() => setIsLoadingGitLabRepos(false));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAddModalOpen, hasGitLabToken, gitlabRepos, isLoadingGitLabRepos, listUserGitLabRepos]);
 
   // Handlers
@@ -167,7 +180,7 @@ function RepositoriesPage() {
       await syncRepository({ repositoryId: repoId });
     } catch (error) {
       console.error("Failed to sync repository:", error);
-      setToast({ message: "Failed to sync repository.", type: "error" });
+      showError(error, "Failed to sync repository");
     } finally {
       setSyncingRepoId(null);
     }
@@ -185,7 +198,7 @@ function RepositoriesPage() {
           setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
         } catch (error) {
           console.error("Failed to delete repository:", error);
-          setToast({ message: "Failed to delete repository.", type: "error" });
+          showError(error, "Failed to delete repository");
         }
       },
     });
@@ -196,6 +209,7 @@ function RepositoriesPage() {
       await updateRepository({ id: repoId, name });
     } catch (error) {
       console.error("Failed to update repository name:", error);
+      showError(error, "Failed to update repository name");
     }
   };
 
@@ -211,7 +225,7 @@ function RepositoriesPage() {
           setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
         } catch (error) {
           console.error("Failed to clear Overleaf credentials:", error);
-          setToast({ message: "Failed to disconnect Overleaf account.", type: "error" });
+          showError(error, "Failed to disconnect Overleaf account");
         }
       },
     });
@@ -229,7 +243,7 @@ function RepositoriesPage() {
           setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
         } catch (error) {
           console.error("Failed to delete self-hosted GitLab instance:", error);
-          setToast({ message: "Failed to delete GitLab instance.", type: "error" });
+          showError(error, "Failed to delete GitLab instance");
         }
       },
     });
@@ -246,14 +260,20 @@ function RepositoriesPage() {
   const handleAddTrackedFiles = async (files: SelectedFile[]) => {
     if (!configureRepo) return;
     const paperIds: string[] = [];
-    for (const file of files) {
-      const result = await addTrackedFile({
-        repositoryId: configureRepo._id,
-        filePath: file.path,
-        title: file.title,
-        pdfSourceType: file.pdfSourceType,
-      });
-      paperIds.push(result.paperId);
+    try {
+      for (const file of files) {
+        const result = await addTrackedFile({
+          repositoryId: configureRepo._id,
+          filePath: file.path,
+          title: file.title,
+          pdfSourceType: file.pdfSourceType,
+        });
+        paperIds.push(result.paperId);
+      }
+    } catch (error) {
+      console.error("Failed to add tracked files:", error);
+      showError(error, "Failed to add tracked files");
+      return;
     }
 
     // Auto-sync each paper in the background
@@ -266,14 +286,19 @@ function RepositoriesPage() {
 
   const handleSyncAll = async () => {
     if (!repositories || repositories.length === 0) return;
+    let failedCount = 0;
     const syncPromises = repositories
       .filter((repo) => repo.syncStatus !== "syncing")
       .map((repo) =>
         syncRepository({ repositoryId: repo._id }).catch((err) => {
           console.error(`Quick sync failed for ${repo.name}:`, err);
+          failedCount++;
         })
       );
     await Promise.all(syncPromises);
+    if (failedCount > 0) {
+      showToast(`${failedCount} ${failedCount === 1 ? "repository" : "repositories"} failed to sync`, "error");
+    }
   };
 
   // Transform repositories to match the expected type
@@ -459,7 +484,7 @@ function RepositoriesPage() {
         <Toast
           message={toast.message}
           type={toast.type}
-          onClose={() => setToast(null)}
+          onClose={clearToast}
         />
       )}
     </div>

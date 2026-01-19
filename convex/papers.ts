@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, internalMutation } from "./_generated/server";
 import { auth } from "./auth";
+import { validateFilePath } from "./lib/validation";
 
 // List all papers for a user (via repositories + direct uploads)
 export const list = query({
@@ -379,13 +380,19 @@ export const addTrackedFile = mutation({
       throw new Error("Unauthorized");
     }
 
+    // Validate file path (prevents path traversal attacks)
+    const filePathValidation = validateFilePath(args.filePath);
+    if (!filePathValidation.valid) {
+      throw new Error(filePathValidation.error);
+    }
+
     // Determine file type from extension
-    const fileType = args.filePath.endsWith(".pdf") ? "pdf" : "tex";
+    const fileType = filePathValidation.normalized.endsWith(".pdf") ? "pdf" : "tex";
 
     // Create tracked file
     const trackedFileId = await ctx.db.insert("trackedFiles", {
       repositoryId: args.repositoryId,
-      filePath: args.filePath,
+      filePath: filePathValidation.normalized, // Use normalized path
       fileType: fileType as "tex" | "pdf",
       pdfSourceType: args.pdfSourceType,
       isActive: true,
@@ -542,6 +549,32 @@ export const deletePaper = mutation({
       }
     }
 
+    // Delete version history and their stored files
+    const versions = await ctx.db
+      .query("paperVersions")
+      .withIndex("by_paper", (q) => q.eq("paperId", args.id))
+      .collect();
+
+    for (const version of versions) {
+      if (version.pdfFileId) {
+        await ctx.storage.delete(version.pdfFileId);
+      }
+      if (version.thumbnailFileId) {
+        await ctx.storage.delete(version.thumbnailFileId);
+      }
+      await ctx.db.delete(version._id);
+    }
+
+    // Delete any compilation jobs for this paper
+    const compilationJobs = await ctx.db
+      .query("compilationJobs")
+      .withIndex("by_paper", (q) => q.eq("paperId", args.id))
+      .collect();
+
+    for (const job of compilationJobs) {
+      await ctx.db.delete(job._id);
+    }
+
     // Delete stored files
     if (paper.pdfFileId) {
       await ctx.storage.delete(paper.pdfFileId);
@@ -551,5 +584,154 @@ export const deletePaper = mutation({
     }
 
     await ctx.db.delete(args.id);
+  },
+});
+
+// List version history for a paper
+export const listVersions = query({
+  args: { paperId: v.id("papers") },
+  handler: async (ctx, args) => {
+    // Authorization check
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId) {
+      return [];
+    }
+
+    const paper = await ctx.db.get(args.paperId);
+    if (!paper) return [];
+
+    // Check ownership
+    if (paper.userId && paper.userId !== authenticatedUserId) {
+      return [];
+    }
+    if (paper.repositoryId) {
+      const repository = await ctx.db.get(paper.repositoryId);
+      if (!repository || repository.userId !== authenticatedUserId) {
+        return [];
+      }
+    }
+
+    // Get all versions for this paper
+    const versions = await ctx.db
+      .query("paperVersions")
+      .withIndex("by_paper", (q) => q.eq("paperId", args.paperId))
+      .collect();
+
+    // Enrich with PDF URLs and sort by date (newest first)
+    const enrichedVersions = await Promise.all(
+      versions.map(async (version) => {
+        const pdfUrl = await ctx.storage.getUrl(version.pdfFileId);
+        const thumbnailUrl = version.thumbnailFileId
+          ? await ctx.storage.getUrl(version.thumbnailFileId)
+          : null;
+
+        return {
+          ...version,
+          pdfUrl,
+          thumbnailUrl,
+        };
+      })
+    );
+
+    return enrichedVersions.sort((a, b) => b.versionCreatedAt - a.versionCreatedAt);
+  },
+});
+
+// Get a specific version
+export const getVersion = query({
+  args: {
+    paperId: v.id("papers"),
+    versionId: v.id("paperVersions"),
+  },
+  handler: async (ctx, args) => {
+    // Authorization check
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId) {
+      return null;
+    }
+
+    const paper = await ctx.db.get(args.paperId);
+    if (!paper) return null;
+
+    // Check ownership
+    if (paper.userId && paper.userId !== authenticatedUserId) {
+      return null;
+    }
+    if (paper.repositoryId) {
+      const repository = await ctx.db.get(paper.repositoryId);
+      if (!repository || repository.userId !== authenticatedUserId) {
+        return null;
+      }
+    }
+
+    const version = await ctx.db.get(args.versionId);
+    if (!version || version.paperId !== args.paperId) {
+      return null;
+    }
+
+    const pdfUrl = await ctx.storage.getUrl(version.pdfFileId);
+    const thumbnailUrl = version.thumbnailFileId
+      ? await ctx.storage.getUrl(version.thumbnailFileId)
+      : null;
+
+    return {
+      ...version,
+      pdfUrl,
+      thumbnailUrl,
+    };
+  },
+});
+
+// Delete old versions (keep the most recent N versions)
+export const deleteOldVersions = mutation({
+  args: {
+    paperId: v.id("papers"),
+    keepCount: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const keepCount = args.keepCount ?? 10;
+
+    // Authorization check
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
+
+    const paper = await ctx.db.get(args.paperId);
+    if (!paper) throw new Error("Paper not found");
+
+    // Check ownership
+    if (paper.userId && paper.userId !== authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
+    if (paper.repositoryId) {
+      const repository = await ctx.db.get(paper.repositoryId);
+      if (!repository || repository.userId !== authenticatedUserId) {
+        throw new Error("Unauthorized");
+      }
+    }
+
+    // Get all versions sorted by date (newest first)
+    const versions = await ctx.db
+      .query("paperVersions")
+      .withIndex("by_paper", (q) => q.eq("paperId", args.paperId))
+      .collect();
+
+    const sortedVersions = versions.sort((a, b) => b.versionCreatedAt - a.versionCreatedAt);
+
+    // Delete versions beyond the keep count
+    const versionsToDelete = sortedVersions.slice(keepCount);
+
+    for (const version of versionsToDelete) {
+      if (version.pdfFileId) {
+        await ctx.storage.delete(version.pdfFileId);
+      }
+      if (version.thumbnailFileId) {
+        await ctx.storage.delete(version.thumbnailFileId);
+      }
+      await ctx.db.delete(version._id);
+    }
+
+    return { deletedCount: versionsToDelete.length };
   },
 });

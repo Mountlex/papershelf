@@ -3,6 +3,8 @@ import { useState } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { Toast } from "../components/ConfirmDialog";
+import { useToast } from "../hooks/useToast";
 
 export const Route = createFileRoute("/papers/$id")({
   component: PaperDetailPage,
@@ -12,12 +14,15 @@ function PaperDetailPage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
   const paper = useQuery(api.papers.get, { id: id as Id<"papers"> });
+  const versions = useQuery(api.papers.listVersions, { paperId: id as Id<"papers"> });
   const togglePublic = useMutation(api.papers.togglePublic);
   const deletePaper = useMutation(api.papers.deletePaper);
   const syncPaper = useAction(api.sync.syncPaper);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const { toast, showError, clearToast } = useToast();
 
   const handleSync = async () => {
     if (!paper) return;
@@ -39,6 +44,7 @@ function PaperDetailPage() {
       await togglePublic({ id: paper._id });
     } catch (error) {
       console.error("Failed to toggle public status:", error);
+      showError(error, "Failed to update sharing status");
     }
   };
 
@@ -49,6 +55,8 @@ function PaperDetailPage() {
       navigate({ to: "/" });
     } catch (error) {
       console.error("Failed to delete paper:", error);
+      showError(error, "Failed to delete paper");
+      setShowDeleteConfirm(false);
     }
   };
 
@@ -358,6 +366,79 @@ function PaperDetailPage() {
               </dl>
             </div>
           )}
+
+          {/* Version History */}
+          {versions && versions.length > 0 && (
+            <div className="rounded-lg border bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+              <button
+                onClick={() => setShowVersionHistory(!showVersionHistory)}
+                className="flex w-full items-center justify-between text-sm font-semibold text-gray-900 dark:text-gray-100"
+              >
+                <span>Version History ({versions.length})</span>
+                <svg
+                  className={`h-4 w-4 transition-transform ${showVersionHistory ? "rotate-180" : ""}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {showVersionHistory && (
+                <div className="mt-3 space-y-2">
+                  {/* Current version indicator */}
+                  <div className="rounded border border-green-200 bg-green-50 p-2 dark:border-green-800 dark:bg-green-950">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center rounded bg-green-600 px-1.5 py-0.5 text-xs font-medium text-white">
+                          Current
+                        </span>
+                        <span className="font-mono text-xs text-gray-700 dark:text-gray-300">
+                          {paper.cachedCommitHash?.slice(0, 7) || "N/A"}
+                        </span>
+                      </div>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        {new Date(paper.updatedAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Previous versions */}
+                  {versions.map((version) => (
+                    <div
+                      key={version._id}
+                      className="rounded border border-gray-200 bg-gray-50 p-2 dark:border-gray-700 dark:bg-gray-800"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-xs text-gray-700 dark:text-gray-300">
+                          {version.commitHash.slice(0, 7)}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            {new Date(version.versionCreatedAt).toLocaleDateString()}
+                          </span>
+                          <a
+                            href={version.pdfUrl || "#"}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                          >
+                            View
+                          </a>
+                        </div>
+                      </div>
+                      {version.fileSize && (
+                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {(version.fileSize / 1024 / 1024).toFixed(2)} MB
+                          {version.pageCount && ` · ${version.pageCount} pages`}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -385,6 +466,15 @@ function PaperDetailPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={clearToast}
+        />
       )}
     </div>
   );

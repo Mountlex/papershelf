@@ -5,6 +5,7 @@ import { api } from "../../convex/_generated/api";
 import { useUser } from "../hooks/useUser";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Toast } from "../components/ConfirmDialog";
+import { useToast } from "../hooks/useToast";
 
 export const Route = createFileRoute("/")({
   component: GalleryPage,
@@ -53,8 +54,8 @@ function GalleryPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "a-z" | "repository">("newest");
 
-  // Toast state
-  const [toast, setToast] = useState<{ message: string; type: "error" | "success" | "info" } | null>(null);
+  // Toast state using hook
+  const { toast, showError, showToast, clearToast } = useToast();
 
   // Track if we've already synced on page load
   const hasSyncedOnLoad = useRef(false);
@@ -90,15 +91,20 @@ function GalleryPage() {
       hasSyncedOnLoad.current = true;
       // Quick sync all repositories in parallel (non-blocking)
       setIsSyncing(true);
+      let hasErrors = false;
       const syncPromises = repositories
         .filter((repo) => repo.syncStatus !== "syncing")
         .map((repo) =>
           syncRepository({ repositoryId: repo._id }).catch((err) => {
             console.error(`Quick sync failed for ${repo.name}:`, err);
+            hasErrors = true;
           })
         );
       Promise.all(syncPromises).finally(() => {
         setIsSyncing(false);
+        if (hasErrors) {
+          showToast("Some repositories failed to sync", "info");
+        }
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally run once on load
@@ -168,6 +174,7 @@ function GalleryPage() {
         await updatePaper({ id: editingPaperId, title: editTitle.trim() });
       } catch (error) {
         console.error("Failed to update title:", error);
+        showError(error, "Failed to update paper title");
       }
     }
     setEditingPaperId(null);
@@ -195,6 +202,7 @@ function GalleryPage() {
         await deletePaper({ id: deletingPaperId });
       } catch (error) {
         console.error("Failed to delete paper:", error);
+        showError(error, "Failed to delete paper");
       }
       setDeletingPaperId(null);
     }
@@ -208,6 +216,7 @@ function GalleryPage() {
     setSyncProgress({ current: 0, total: repositories.length });
 
     // Quick sync all repositories in parallel
+    let failedCount = 0;
     const syncPromises = repositories
       .filter((repo) => repo.syncStatus !== "syncing")
       .map(async (repo, index) => {
@@ -215,6 +224,7 @@ function GalleryPage() {
           await syncRepository({ repositoryId: repo._id });
         } catch (err) {
           console.error(`Quick sync failed for ${repo.name}:`, err);
+          failedCount++;
         }
         setSyncProgress((prev) => prev ? { ...prev, current: index + 1 } : null);
       });
@@ -223,6 +233,10 @@ function GalleryPage() {
 
     setIsSyncing(false);
     setSyncProgress(null);
+
+    if (failedCount > 0) {
+      showToast(`${failedCount} ${failedCount === 1 ? "repository" : "repositories"} failed to sync`, "error");
+    }
   };
 
   const handleUploadClick = () => {
@@ -234,7 +248,7 @@ function GalleryPage() {
     if (!file || !user) return;
 
     if (!file.name.endsWith(".pdf")) {
-      setToast({ message: "Please select a PDF file", type: "error" });
+      showToast("Please select a PDF file", "error");
       return;
     }
 
@@ -265,13 +279,14 @@ function GalleryPage() {
         fileSize: file.size,
       });
 
-      // Generate thumbnail in the background (don't block on it)
+      // Generate thumbnail in the background (don't block on it, show warning only)
       generateThumbnail({ paperId }).catch((error) => {
         console.error("Thumbnail generation failed:", error);
+        showToast("Thumbnail generation failed - PDF uploaded successfully", "info");
       });
     } catch (error) {
       console.error("Upload failed:", error);
-      setToast({ message: "Failed to upload PDF", type: "error" });
+      showError(error, "Failed to upload PDF");
     } finally {
       setIsUploading(false);
       // Reset file input
@@ -710,7 +725,7 @@ function GalleryPage() {
         <Toast
           message={toast.message}
           type={toast.type}
-          onClose={() => setToast(null)}
+          onClose={clearToast}
         />
       )}
     </div>

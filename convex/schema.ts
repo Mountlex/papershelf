@@ -56,6 +56,7 @@ export default defineSchema({
     defaultBranch: v.string(),
     lastSyncedAt: v.optional(v.number()),
     syncLockAcquiredAt: v.optional(v.number()), // When sync lock was acquired (for timeout calculation)
+    currentSyncAttemptId: v.optional(v.string()), // UUID to track current sync attempt (prevents stale writes)
     lastCommitHash: v.optional(v.string()),
     lastCommitTime: v.optional(v.number()), // Unix timestamp of the latest commit
     syncStatus: v.union(
@@ -82,6 +83,20 @@ export default defineSchema({
     releasePattern: v.optional(v.string()),
     isActive: v.boolean(),
   }).index("by_repository", ["repositoryId"]),
+
+  // Paper version history (stores previous PDF versions)
+  paperVersions: defineTable({
+    paperId: v.id("papers"),
+    commitHash: v.string(),
+    commitMessage: v.optional(v.string()),
+    versionCreatedAt: v.number(),
+    pdfFileId: v.id("_storage"),
+    thumbnailFileId: v.optional(v.id("_storage")),
+    fileSize: v.optional(v.number()),
+    pageCount: v.optional(v.number()),
+  })
+    .index("by_paper", ["paperId"])
+    .index("by_paper_and_commit", ["paperId", "commitHash"]),
 
   // Papers (the main gallery items)
   papers: defineTable({

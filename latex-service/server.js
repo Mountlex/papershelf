@@ -1054,6 +1054,131 @@ app.post("/git/archive", rateLimit, async (req, res) => {
   }
 });
 
+// POST /git/file-hash - Get file hash (blob SHA) without downloading full content
+// Used for efficient dependency change detection
+// Supports both single file (filePath) and batch (filePaths array) requests
+// Single: { gitUrl, filePath, branch, auth } → { hash: "..." }
+// Batch: { gitUrl, filePaths: [...], branch, auth } → { hashes: { "path": "hash", ... } }
+app.post("/git/file-hash", rateLimit, async (req, res) => {
+  const jobId = uuidv4();
+  const workDir = `/tmp/git-hash-${jobId}`;
+
+  try {
+    const { gitUrl, filePath, filePaths, branch, auth } = req.body;
+
+    // Determine if this is a batch request
+    const isBatch = Array.isArray(filePaths) && filePaths.length > 0;
+    const pathsToProcess = isBatch ? filePaths : (filePath ? [filePath] : []);
+
+    if (!gitUrl || pathsToProcess.length === 0) {
+      return res.status(400).json({ error: "Missing gitUrl or filePath/filePaths" });
+    }
+
+    const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
+
+    // Create work directory
+    await fs.mkdir(workDir, { recursive: true });
+
+    // Clone with depth 1 (single clone for all files)
+    const cloneArgs = ["clone", "--depth", "1"];
+    if (branch) {
+      cloneArgs.push("--branch", branch);
+    }
+    cloneArgs.push(authenticatedUrl, workDir);
+
+    const cloneResult = await new Promise((resolve) => {
+      const proc = spawn("git", cloneArgs, { timeout: 60000 });
+
+      let stderr = "";
+      proc.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      proc.on("close", (code) => {
+        resolve({ success: code === 0, stderr });
+      });
+
+      proc.on("error", (err) => {
+        resolve({ success: false, stderr: err.message });
+      });
+    });
+
+    if (!cloneResult.success) {
+      return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
+    }
+
+    // Process all file paths
+    const hashes = {};
+    for (const fp of pathsToProcess) {
+      // Validate file path (with path traversal protection)
+      const targetPath = await safePathAsync(workDir, fp);
+      if (!targetPath) {
+        hashes[fp] = null; // Invalid path
+        continue;
+      }
+
+      // Check if file exists
+      try {
+        await fs.access(targetPath);
+      } catch {
+        hashes[fp] = null; // File not found
+        continue;
+      }
+
+      // Use git hash-object to compute the blob SHA
+      const hashResult = await new Promise((resolve) => {
+        const proc = spawn("git", ["hash-object", fp], {
+          cwd: workDir,
+          timeout: 10000,
+        });
+
+        let stdout = "";
+        let stderr = "";
+
+        proc.stdout.on("data", (data) => {
+          stdout += data.toString();
+        });
+
+        proc.stderr.on("data", (data) => {
+          stderr += data.toString();
+        });
+
+        proc.on("close", (code) => {
+          resolve({ success: code === 0, stdout: stdout.trim(), stderr });
+        });
+
+        proc.on("error", (err) => {
+          resolve({ success: false, stdout: "", stderr: err.message });
+        });
+      });
+
+      hashes[fp] = hashResult.success ? hashResult.stdout : null;
+    }
+
+    // Return appropriate response format
+    if (isBatch) {
+      res.json({ hashes });
+    } else {
+      // Single file - maintain backwards compatibility
+      const hash = hashes[filePath];
+      if (hash === null) {
+        return res.status(404).json({ error: `File not found or invalid: ${filePath}` });
+      }
+      res.json({ hash });
+    }
+  } catch (error) {
+    console.error("Git file-hash error:", error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    // Cleanup
+    try {
+      await fs.rm(workDir, { recursive: true, force: true });
+    } catch (cleanupError) {
+      console.error(`Cleanup failed for ${workDir}:`, cleanupError.message || cleanupError);
+    }
+  }
+});
+
 // POST /thumbnail - Generate thumbnail from PDF first page
 app.post("/thumbnail", rateLimit, async (req, res) => {
   const jobId = uuidv4();

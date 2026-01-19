@@ -45,30 +45,40 @@ function normalizePath(basePath: string, relativePath: string): string | null {
 }
 
 // Helper to fetch blob hashes for dependencies
+// Uses batch fetch to optimize Overleaf (single clone instead of one per file)
 async function fetchDependencyHashes(
   ctx: ActionCtx,
   gitUrl: string,
   branch: string,
   dependencies: string[]
 ): Promise<DependencyHash[]> {
-  const results: DependencyHash[] = [];
-
-  for (const dep of dependencies) {
-    // Dependencies are already full paths from the latex service
-    try {
-      const hash = await ctx.runAction(internal.git.fetchFileHashInternal, {
-        gitUrl,
-        filePath: dep,
-        branch,
-      });
-      results.push({ path: dep, hash });
-    } catch (error) {
-      // Skip files that can't be hashed (e.g., system files, missing files)
-      console.log(`Could not fetch hash for ${dep}: ${error}`);
-    }
+  if (dependencies.length === 0) {
+    return [];
   }
 
-  return results;
+  try {
+    // Fetch all hashes in one batch call
+    const hashes = await ctx.runAction(internal.git.fetchFileHashBatchInternal, {
+      gitUrl,
+      filePaths: dependencies,
+      branch,
+    });
+
+    // Convert to array format, filtering out files that couldn't be hashed
+    const results: DependencyHash[] = [];
+    for (const dep of dependencies) {
+      const hash = hashes[dep];
+      if (hash) {
+        results.push({ path: dep, hash });
+      } else {
+        console.log(`Could not fetch hash for ${dep}`);
+      }
+    }
+    return results;
+  } catch (error) {
+    console.log(`Could not fetch dependency hashes: ${error}`);
+    return [];
+  }
 }
 
 // Helper to get headers for LaTeX service requests (includes API key if configured)

@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { auth } from "./auth";
+import { validateFilePath, validatePattern } from "./lib/validation";
 
 // List all repositories for a user (with sync status)
 export const list = query({
@@ -279,9 +280,29 @@ export const addTrackedFile = mutation({
       throw new Error("Unauthorized");
     }
 
+    // Validate file path (prevents path traversal attacks)
+    const filePathValidation = validateFilePath(args.filePath);
+    if (!filePathValidation.valid) {
+      throw new Error(filePathValidation.error);
+    }
+
+    // Validate patterns if provided
+    if (args.artifactPattern) {
+      const artifactValidation = validatePattern(args.artifactPattern);
+      if (!artifactValidation.valid) {
+        throw new Error(artifactValidation.error);
+      }
+    }
+    if (args.releasePattern) {
+      const releaseValidation = validatePattern(args.releasePattern);
+      if (!releaseValidation.valid) {
+        throw new Error(releaseValidation.error);
+      }
+    }
+
     const trackedFileId = await ctx.db.insert("trackedFiles", {
       repositoryId: args.repositoryId,
-      filePath: args.filePath,
+      filePath: filePathValidation.normalized, // Use normalized path
       fileType: args.fileType,
       pdfSourceType: args.pdfSourceType,
       artifactPattern: args.artifactPattern,
@@ -293,7 +314,7 @@ export const addTrackedFile = mutation({
     const repo = await ctx.db.get(args.repositoryId);
     if (repo) {
       // Extract title from file path (e.g., "paper/main.tex" -> "main")
-      const fileName = args.filePath.split("/").pop() || args.filePath;
+      const fileName = filePathValidation.normalized.split("/").pop() || filePathValidation.normalized;
       const title = fileName.replace(/\.(tex|pdf)$/, "");
 
       await ctx.db.insert("papers", {

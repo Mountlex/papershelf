@@ -19,11 +19,20 @@ bun run build         # TypeScript check + Vite production build
 
 # Code quality
 bun run lint          # Run ESLint
+bun run test          # Run tests in watch mode
+bun run test:run      # Run tests once
 
 # Convex
 npx convex dev        # Start Convex dev server (also generates types)
 npx convex deploy     # Deploy Convex functions to production
+
+# Deployment
+bun run deploy        # Deploy everything (Convex + build + Cloudflare)
+bun run deploy:frontend  # Build and deploy to Cloudflare only
+bun run deploy:backend   # Deploy Convex functions only
 ```
+
+Push a version tag (e.g., `git tag v1.0.0 && git push origin v1.0.0`) to trigger the full CI/CD pipeline.
 
 ## Architecture
 
@@ -41,7 +50,7 @@ npx convex deploy     # Deploy Convex functions to production
 
 ## Backend Organization (`convex/`)
 
-- `schema.ts` - Database tables: users, repositories, trackedFiles, papers, compilationJobs, selfHostedGitLabInstances
+- `schema.ts` - Database tables: users, repositories, trackedFiles, papers, compilationJobs, selfHostedGitLabInstances, mobileTokens, auditLogs
 - `auth.ts` / `auth.config.ts` - Convex Auth setup with GitHub + GitLab OAuth
 - `repositories.ts` - CRUD for Git repositories and tracked files
 - `papers.ts` - Paper queries, metadata updates, public sharing
@@ -59,6 +68,7 @@ npx convex deploy     # Deploy Convex functions to production
 - `routes/papers.$id.tsx` - Single paper detail view
 - `routes/share.$slug.tsx` - Public share page
 - `hooks/useUser.ts` - Auth state and provider detection
+- `routes/mobile-auth.tsx` - Mobile OAuth flow
 
 Routes are file-based via TanStack Router - `routeTree.gen.ts` is auto-generated.
 
@@ -90,3 +100,13 @@ Optional Docker microservice for:
 - `POST /git/archive` - Fetch git repository archives
 
 Requires `LATEX_SERVICE_URL` environment variable when enabled.
+
+## Environment Variables
+
+Set these in your Convex dashboard:
+- `AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET` - GitHub OAuth credentials
+- `AUTH_GITLAB_ID` / `AUTH_GITLAB_SECRET` - GitLab OAuth credentials
+- `AUTH_RESEND_KEY` - Resend API key for email/password auth
+- `JWT_PRIVATE_KEY` / `JWKS` - JWT signing keys for mobile auth
+- `SITE_URL` - Your app URL (used in OAuth callbacks)
+- `LATEX_SERVICE_URL` - Optional LaTeX compilation service URL

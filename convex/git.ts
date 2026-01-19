@@ -728,20 +728,24 @@ export const fetchFileContentInternal = internalAction({
   },
 });
 
-// Internal action to fetch file hash (blob SHA) without downloading content
-// Used for dependency change detection
-export const fetchFileHashInternal = internalAction({
+// Internal action to fetch file hashes in batch (for multiple files at once)
+// Optimizes Overleaf by cloning once for all files instead of once per file
+export const fetchFileHashBatchInternal = internalAction({
   args: {
     gitUrl: v.string(),
-    filePath: v.string(),
+    filePaths: v.array(v.string()),
     branch: v.string(),
   },
-  handler: async (ctx, args): Promise<string> => {
+  handler: async (ctx, args): Promise<Record<string, string | null>> => {
+    if (args.filePaths.length === 0) {
+      return {};
+    }
+
     // Get all self-hosted GitLab instances to check if URL matches any
     const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
     const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
 
-    // Handle Overleaf projects via latex-service
+    // Handle Overleaf projects via latex-service batch endpoint
     if (provider === "overleaf") {
       const overleafParsed = parseOverleafUrl(args.gitUrl);
       if (!overleafParsed) {
@@ -758,13 +762,13 @@ export const fetchFileHashInternal = internalAction({
         throw new Error("LATEX_SERVICE_URL not configured.");
       }
 
-      // Use latex-service /git/file-hash endpoint
+      // Use latex-service /git/file-hash batch endpoint (single clone for all files)
       const response = await fetch(`${latexServiceUrl}/git/file-hash`, {
         method: "POST",
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
           gitUrl: overleafParsed.gitUrl,
-          filePath: args.filePath,
+          filePaths: args.filePaths, // Batch request
           branch: args.branch,
           auth: credentials,
         }),
@@ -772,21 +776,23 @@ export const fetchFileHashInternal = internalAction({
 
       if (!response.ok) {
         const error = await response.text();
-        throw new Error(`Failed to get file hash from Overleaf: ${error}`);
+        throw new Error(`Failed to get file hashes from Overleaf: ${error}`);
       }
 
       const data = await response.json();
-      return data.hash;
+      return data.hashes as Record<string, string | null>;
     }
 
+    // For GitHub/GitLab/Self-hosted: use Promise.all with individual API calls
+    // (these are already efficient - 1 HTTP request per file, no git clone)
     const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
     if (!parsed) {
       throw new Error("Invalid repository URL.");
     }
 
+    const results: Record<string, string | null> = {};
+
     if (parsed.provider === "github") {
-      // GitHub: GET /repos/{owner}/{repo}/contents/{path}?ref={branch}
-      // Returns: { sha: "blob_sha", type: "file", ... }
       const token = await getGitHubToken(ctx);
       const headers: Record<string, string> = {
         Accept: "application/vnd.github.v3+json",
@@ -796,31 +802,37 @@ export const fetchFileHashInternal = internalAction({
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      const encodedPath = args.filePath.split("/").map(encodeURIComponent).join("/");
-      const response = await fetch(
-        `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${encodedPath}?ref=${encodeURIComponent(args.branch)}`,
-        { headers }
-      );
+      // Fetch all file hashes in parallel
+      const fetchPromises = args.filePaths.map(async (filePath) => {
+        try {
+          const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
+          const response = await fetch(
+            `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${encodedPath}?ref=${encodeURIComponent(args.branch)}`,
+            { headers }
+          );
+          if (!response.ok) {
+            return { path: filePath, hash: null };
+          }
+          const data = await response.json();
+          return { path: filePath, hash: data.sha as string };
+        } catch {
+          return { path: filePath, hash: null };
+        }
+      });
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch file hash: ${response.statusText}`);
+      const fetchResults = await Promise.all(fetchPromises);
+      for (const result of fetchResults) {
+        results[result.path] = result.hash;
       }
-
-      const data = await response.json();
-      return data.sha;
     } else {
       // GitLab API (both gitlab.com and self-hosted)
-      // GET /projects/{id}/repository/files/{path}?ref={branch}
-      // Returns: { blob_id: "sha", ... }
       const isSelfHosted = parsed.provider === "selfhosted-gitlab";
       const matchingInstance = isSelfHosted
         ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
         : null;
       const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
       const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
-
       const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
-      const encodedFilePath = encodeURIComponent(args.filePath);
 
       const headers: Record<string, string> = {
         "User-Agent": "Carrel",
@@ -829,18 +841,31 @@ export const fetchFileHashInternal = internalAction({
         headers["PRIVATE-TOKEN"] = token;
       }
 
-      const response = await fetch(
-        `${baseUrl}/api/v4/projects/${projectId}/repository/files/${encodedFilePath}?ref=${encodeURIComponent(args.branch)}`,
-        { headers }
-      );
+      // Fetch all file hashes in parallel
+      const fetchPromises = args.filePaths.map(async (filePath) => {
+        try {
+          const encodedFilePath = encodeURIComponent(filePath);
+          const response = await fetch(
+            `${baseUrl}/api/v4/projects/${projectId}/repository/files/${encodedFilePath}?ref=${encodeURIComponent(args.branch)}`,
+            { headers }
+          );
+          if (!response.ok) {
+            return { path: filePath, hash: null };
+          }
+          const data = await response.json();
+          return { path: filePath, hash: data.blob_id as string };
+        } catch {
+          return { path: filePath, hash: null };
+        }
+      });
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch file hash: ${response.statusText}`);
+      const fetchResults = await Promise.all(fetchPromises);
+      for (const result of fetchResults) {
+        results[result.path] = result.hash;
       }
-
-      const data = await response.json();
-      return data.blob_id;
     }
+
+    return results;
   },
 });
 
