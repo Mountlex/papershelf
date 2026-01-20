@@ -677,7 +677,40 @@ function GalleryPage() {
                   {paper.repository ? (
                     <span className="flex items-center gap-1 truncate">
                       <span className="truncate">{paper.repository.name}</span>
-                      {paper.isUpToDate === true && (
+                      {paper.buildStatus === "building" ? (
+                        <span
+                          className="flex shrink-0 items-center gap-0.5 text-blue-600"
+                          title={paper.compilationProgress || (paper.pdfSourceType === "compile" ? "Compiling LaTeX..." : "Fetching PDF...")}
+                        >
+                          <svg
+                            className="h-3 w-3 animate-spin"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          <span className="text-[10px]">
+                            {paper.pdfSourceType === "compile" ? "Compiling" : "Fetching"}
+                          </span>
+                        </span>
+                      ) : paper.repository.syncStatus === "syncing" ? (
+                        <span
+                          className="flex shrink-0 items-center gap-0.5 text-gray-500"
+                          title="Checking for updates..."
+                        >
+                          <svg
+                            className="h-3 w-3 animate-spin"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          <span className="text-[10px]">Checking</span>
+                        </span>
+                      ) : null}
+                      {paper.buildStatus !== "building" && paper.repository.syncStatus !== "syncing" && paper.isUpToDate === true && (
                         <span
                           className="flex shrink-0 items-center gap-0.5 text-green-600"
                           title={`Up to date - committed ${formatRelativeTime(paper.repository.lastCommitTime ?? paper.repository.lastSyncedAt)}`}
@@ -700,7 +733,7 @@ function GalleryPage() {
                           </span>
                         </span>
                       )}
-                      {paper.isUpToDate === false && !paper.lastSyncError && (
+                      {paper.buildStatus !== "building" && paper.repository.syncStatus !== "syncing" && paper.isUpToDate === false && !paper.lastSyncError && (
                         <span
                           className="flex shrink-0 items-center gap-0.5 text-yellow-600"
                           title={`New commit available - committed ${formatRelativeTime(paper.repository.lastCommitTime ?? paper.repository.lastSyncedAt)}`}
@@ -723,7 +756,7 @@ function GalleryPage() {
                           </span>
                         </span>
                       )}
-                      {paper.lastSyncError && (
+                      {paper.buildStatus !== "building" && paper.repository.syncStatus !== "syncing" && paper.lastSyncError && (
                         <span
                           className="flex shrink-0 items-center gap-0.5 text-red-600"
                           title={`${paper.pdfSourceType === "compile" ? "Compilation" : "Sync"} failed: ${paper.lastSyncError}`}

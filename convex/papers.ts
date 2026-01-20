@@ -107,6 +107,7 @@ export const list = query({
                 name: repository.name,
                 lastSyncedAt: repository.lastSyncedAt,
                 lastCommitTime: repository.lastCommitTime,
+                syncStatus: repository.syncStatus,
               }
             : null,
         };

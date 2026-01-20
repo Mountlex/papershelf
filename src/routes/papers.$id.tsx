@@ -5,7 +5,7 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Toast, ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../hooks/useToast";
-import { StatusBadge } from "../components/ui";
+import { StatusBadge, BuildProgress } from "../components/ui";
 import { PdfViewer } from "../components/PdfViewer";
 
 export const Route = createFileRoute("/papers/$id")({
@@ -20,7 +20,8 @@ function PaperDetailPage() {
   const togglePublic = useMutation(api.papers.togglePublic);
   const deletePaper = useMutation(api.papers.deletePaper);
   const buildPaper = useAction(api.sync.buildPaper);
-  const [isBuilding, setIsBuilding] = useState(false);
+  const [isLocallyBuilding, setIsLocallyBuilding] = useState(false);
+  const isBuilding = isLocallyBuilding || paper?.buildStatus === "building";
   const [buildError, setBuildError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
@@ -28,7 +29,7 @@ function PaperDetailPage() {
 
   const handleBuild = async () => {
     if (!paper) return;
-    setIsBuilding(true);
+    setIsLocallyBuilding(true);
     setBuildError(null);
     try {
       const result = await buildPaper({ paperId: paper._id });
@@ -40,7 +41,7 @@ function PaperDetailPage() {
       const isCompile = paper.trackedFile?.pdfSourceType === "compile";
       setBuildError(error instanceof Error ? error.message : (isCompile ? "Failed to compile" : "Failed to fetch"));
     } finally {
-      setIsBuilding(false);
+      setIsLocallyBuilding(false);
     }
   };
 
@@ -153,7 +154,7 @@ function PaperDetailPage() {
                     ) : (paper.trackedFile?.pdfSourceType === "compile" ? "Compile" : "Fetch")}
                   </button>
                   {isBuilding && paper.compilationProgress && (
-                    <p className="mt-2 text-xs text-blue-600">{paper.compilationProgress}</p>
+                    <p className="mt-2 text-xs text-blue-600 dark:text-blue-400">{paper.compilationProgress}</p>
                   )}
                   {buildError && (
                     <p className="mt-2 text-xs text-red-500">{buildError}</p>
@@ -190,7 +191,12 @@ function PaperDetailPage() {
               <div className="flex justify-between">
                 <dt className="text-gray-500 dark:text-gray-400">Status</dt>
                 <dd className="flex items-center gap-2">
-                  {(buildError || paper.lastSyncError) ? (
+                  {paper.buildStatus === "building" ? (
+                    <StatusBadge
+                      status="building"
+                      label={paper.trackedFile?.pdfSourceType === "compile" ? "Compiling..." : "Fetching..."}
+                    />
+                  ) : (buildError || paper.lastSyncError) ? (
                     <>
                       <StatusBadge
                         status="error"
@@ -264,11 +270,11 @@ function PaperDetailPage() {
               )}
             </button>
             {/* Compilation Progress */}
-            {isBuilding && paper.compilationProgress && (
-              <div className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-                {paper.compilationProgress}
-              </div>
-            )}
+            <BuildProgress
+              status={paper.buildStatus}
+              progress={paper.compilationProgress}
+              isCompile={paper.trackedFile?.pdfSourceType === "compile"}
+            />
             {buildError && (
               <p className="text-xs text-red-500">{buildError}</p>
             )}
