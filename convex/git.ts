@@ -17,6 +17,7 @@ import {
   getLatexServiceHeaders,
   BATCH_OPERATION_TIMEOUT,
 } from "./lib/http";
+import { decryptTokenIfNeeded, encryptTokenIfNeeded } from "./lib/crypto";
 
 // Token refresh buffer: refresh 5 minutes before expiry to avoid race conditions
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -28,7 +29,10 @@ export async function getGitHubToken(ctx: ActionCtx): Promise<string | null> {
 
   // Get the user record which contains the GitHub access token
   const user = await ctx.runQuery(internal.git.getUser, { userId });
-  return user?.githubAccessToken || null;
+  if (!user?.githubAccessToken) return null;
+
+  // Decrypt the token (handles both encrypted and plaintext for migration)
+  return decryptTokenIfNeeded(user.githubAccessToken);
 }
 
 // Helper to get GitLab token for authenticated user (with automatic refresh)
@@ -47,9 +51,13 @@ export async function getGitLabToken(ctx: ActionCtx): Promise<string | null> {
   if (expiresAt && now >= expiresAt - TOKEN_REFRESH_BUFFER_MS) {
     if (user.gitlabRefreshToken) {
       console.log("GitLab token expired or expiring soon, refreshing...");
-      const refreshed = await refreshGitLabToken(ctx, userId, user.gitlabRefreshToken);
-      if (refreshed) {
-        return refreshed.accessToken;
+      // Decrypt the refresh token first
+      const decryptedRefreshToken = await decryptTokenIfNeeded(user.gitlabRefreshToken);
+      if (decryptedRefreshToken) {
+        const refreshed = await refreshGitLabToken(ctx, userId, decryptedRefreshToken);
+        if (refreshed) {
+          return refreshed.accessToken;
+        }
       }
       // If refresh failed, return the old token (might still work briefly)
       console.warn("GitLab token refresh failed, using potentially expired token");
@@ -58,7 +66,8 @@ export async function getGitLabToken(ctx: ActionCtx): Promise<string | null> {
     }
   }
 
-  return user.gitlabAccessToken;
+  // Decrypt the token (handles both encrypted and plaintext for migration)
+  return decryptTokenIfNeeded(user.gitlabAccessToken);
 }
 
 // Helper to get Overleaf credentials for authenticated user
@@ -69,8 +78,11 @@ export async function getOverleafCredentials(ctx: ActionCtx): Promise<{ username
 
   const user = await ctx.runQuery(internal.git.getUser, { userId });
   if (user?.overleafEmail && user?.overleafToken) {
+    // Decrypt the token (handles both encrypted and plaintext for migration)
+    const decryptedToken = await decryptTokenIfNeeded(user.overleafToken);
+    if (!decryptedToken) return null;
     // Overleaf requires username "git" and token as password
-    return { username: "git", password: user.overleafToken };
+    return { username: "git", password: decryptedToken };
   }
   return null;
 }
@@ -81,7 +93,20 @@ export async function getAllSelfHostedGitLabInstances(ctx: ActionCtx): Promise<S
   if (!userId) return [];
 
   const instances = await ctx.runQuery(internal.git.getSelfHostedGitLabInstancesInternal, { userId });
-  return instances || [];
+  if (!instances) return [];
+
+  // Decrypt tokens for all instances (handles both encrypted and plaintext for migration)
+  const decryptedInstances = await Promise.all(
+    instances.map(async (instance) => {
+      const decryptedToken = await decryptTokenIfNeeded(instance.token);
+      return {
+        ...instance,
+        token: decryptedToken || instance.token, // Fallback to original if decryption fails
+      };
+    })
+  );
+
+  return decryptedInstances;
 }
 
 // Helper to get self-hosted GitLab credentials by instance ID
@@ -91,7 +116,10 @@ export async function getSelfHostedGitLabCredentialsById(
 ): Promise<{ url: string; token: string } | null> {
   const instance = await ctx.runQuery(internal.git.getSelfHostedGitLabInstanceById, { id: instanceId });
   if (!instance) return null;
-  return { url: instance.url, token: instance.token };
+  // Decrypt the token (handles both encrypted and plaintext for migration)
+  const decryptedToken = await decryptTokenIfNeeded(instance.token);
+  if (!decryptedToken) return null;
+  return { url: instance.url, token: decryptedToken };
 }
 
 // Get user by ID (to retrieve access token)
@@ -131,9 +159,13 @@ export const updateGitLabTokens = internalMutation({
     expiresAt: v.number(),
   },
   handler: async (ctx, args) => {
+    // Encrypt tokens before storing
+    const encryptedAccessToken = await encryptTokenIfNeeded(args.accessToken);
+    const encryptedRefreshToken = await encryptTokenIfNeeded(args.refreshToken);
+
     await ctx.db.patch(args.userId, {
-      gitlabAccessToken: args.accessToken,
-      gitlabRefreshToken: args.refreshToken,
+      gitlabAccessToken: encryptedAccessToken,
+      gitlabRefreshToken: encryptedRefreshToken,
       gitlabTokenExpiresAt: args.expiresAt,
     });
   },

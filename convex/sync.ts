@@ -552,6 +552,12 @@ export const updatePaperPdf = internalMutation({
         fileSize: paper.fileSize,
         pageCount: paper.pageCount,
       });
+
+      // Schedule cleanup of old versions (keep last 5 non-pinned + all pinned)
+      await ctx.scheduler.runAfter(0, internal.papers.cleanupOldVersions, {
+        paperId: args.id,
+        keepCount: 5,
+      });
     }
 
     await ctx.db.patch(args.id, {
@@ -605,6 +611,12 @@ export const updatePaperPdfWithBuildLock = internalMutation({
         thumbnailFileId: paper.thumbnailFileId,
         fileSize: paper.fileSize,
         pageCount: paper.pageCount,
+      });
+
+      // Schedule cleanup of old versions (keep last 5 non-pinned + all pinned)
+      await ctx.scheduler.runAfter(0, internal.papers.cleanupOldVersions, {
+        paperId: args.id,
+        keepCount: 5,
       });
     }
 

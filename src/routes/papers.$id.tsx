@@ -19,6 +19,7 @@ function PaperDetailPage() {
   const versions = useQuery(api.papers.listVersions, { paperId: id as Id<"papers"> });
   const togglePublic = useMutation(api.papers.togglePublic);
   const deletePaper = useMutation(api.papers.deletePaper);
+  const toggleVersionPinned = useMutation(api.papers.toggleVersionPinned);
   const buildPaper = useAction(api.sync.buildPaper);
   const [isLocallyBuilding, setIsLocallyBuilding] = useState(false);
   const isBuilding = isLocallyBuilding || paper?.buildStatus === "building";
@@ -423,12 +424,31 @@ function PaperDetailPage() {
                   {versions.map((version) => (
                     <div
                       key={version._id}
-                      className="rounded border border-gray-200 bg-gray-50 p-2 dark:border-gray-700 dark:bg-gray-800"
+                      className={`rounded border p-2 ${
+                        version.pinned
+                          ? "border-yellow-300 bg-yellow-50 dark:border-yellow-700 dark:bg-yellow-950"
+                          : "border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800"
+                      }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="font-mono text-xs text-gray-700 dark:text-gray-300">
-                          {version.commitHash.slice(0, 7)}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => toggleVersionPinned({ versionId: version._id })}
+                            className={`rounded p-0.5 transition-colors ${
+                              version.pinned
+                                ? "text-yellow-500 hover:text-yellow-600"
+                                : "text-gray-400 hover:text-yellow-500"
+                            }`}
+                            title={version.pinned ? "Unpin version (allows auto-deletion)" : "Pin version (prevents auto-deletion)"}
+                          >
+                            <svg className="h-4 w-4" fill={version.pinned ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                            </svg>
+                          </button>
+                          <span className="font-mono text-xs text-gray-700 dark:text-gray-300">
+                            {version.commitHash.slice(0, 7)}
+                          </span>
+                        </div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-500 dark:text-gray-400">
                             {new Date(version.versionCreatedAt).toLocaleDateString()}

@@ -5,6 +5,7 @@ import { convexAuth } from "@convex-dev/auth/server";
 import type { TokenSet } from "@auth/core/types";
 import { ResendOTP, ResendOTPPasswordReset } from "./ResendOTP";
 import type { DataModel } from "./_generated/dataModel";
+import { encryptTokenIfNeeded } from "./lib/crypto";
 
 interface GitHubProfile {
   id: number;
@@ -76,21 +77,26 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   ],
   callbacks: {
     async createOrUpdateUser(ctx, { existingUserId, profile }) {
+      // Encrypt OAuth tokens before storing
+      const encryptedGithubToken = await encryptTokenIfNeeded(profile.githubAccessToken);
+      const encryptedGitlabToken = await encryptTokenIfNeeded(profile.gitlabAccessToken);
+      const encryptedGitlabRefreshToken = await encryptTokenIfNeeded(profile.gitlabRefreshToken);
+
       if (existingUserId) {
         // User exists - only update tokens, preserve email
         const existingUser = await ctx.db.get(existingUserId);
         if (existingUser) {
           const updates: Record<string, unknown> = {};
 
-          // Update tokens if provided (from OAuth)
-          if (profile.githubAccessToken) {
-            updates.githubAccessToken = profile.githubAccessToken;
+          // Update tokens if provided (from OAuth) - now encrypted
+          if (encryptedGithubToken) {
+            updates.githubAccessToken = encryptedGithubToken;
           }
-          if (profile.gitlabAccessToken) {
-            updates.gitlabAccessToken = profile.gitlabAccessToken;
+          if (encryptedGitlabToken) {
+            updates.gitlabAccessToken = encryptedGitlabToken;
           }
-          if (profile.gitlabRefreshToken) {
-            updates.gitlabRefreshToken = profile.gitlabRefreshToken;
+          if (encryptedGitlabRefreshToken) {
+            updates.gitlabRefreshToken = encryptedGitlabRefreshToken;
           }
           if (profile.gitlabTokenExpiresAt) {
             updates.gitlabTokenExpiresAt = profile.gitlabTokenExpiresAt;
@@ -110,15 +116,15 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
         }
       }
 
-      // New user - create with full profile
+      // New user - create with full profile (tokens encrypted)
       return ctx.db.insert("users", {
         name: profile.name,
         email: profile.email,
         image: profile.image,
         emailVerificationTime: profile.emailVerificationTime,
-        githubAccessToken: profile.githubAccessToken,
-        gitlabAccessToken: profile.gitlabAccessToken,
-        gitlabRefreshToken: profile.gitlabRefreshToken,
+        githubAccessToken: encryptedGithubToken,
+        gitlabAccessToken: encryptedGitlabToken,
+        gitlabRefreshToken: encryptedGitlabRefreshToken,
         gitlabTokenExpiresAt: profile.gitlabTokenExpiresAt,
       });
     },

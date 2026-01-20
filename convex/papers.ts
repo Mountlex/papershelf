@@ -750,3 +750,94 @@ export const deleteOldVersions = mutation({
     return { deletedCount: versionsToDelete.length };
   },
 });
+
+// Toggle pinned status of a version
+export const toggleVersionPinned = mutation({
+  args: {
+    versionId: v.id("paperVersions"),
+  },
+  handler: async (ctx, args) => {
+    const authenticatedUserId = await auth.getUserId(ctx);
+    if (!authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
+
+    const version = await ctx.db.get(args.versionId);
+    if (!version) {
+      throw new Error("Version not found");
+    }
+
+    const paper = await ctx.db.get(version.paperId);
+    if (!paper) {
+      throw new Error("Paper not found");
+    }
+
+    // Check ownership through paper
+    if (paper.userId && paper.userId !== authenticatedUserId) {
+      throw new Error("Unauthorized");
+    }
+    if (paper.repositoryId) {
+      const repository = await ctx.db.get(paper.repositoryId);
+      if (!repository || repository.userId !== authenticatedUserId) {
+        throw new Error("Unauthorized");
+      }
+    }
+
+    // Toggle pinned status
+    const newPinned = !version.pinned;
+    await ctx.db.patch(args.versionId, { pinned: newPinned });
+
+    return { pinned: newPinned };
+  },
+});
+
+// Internal mutation to clean up old versions (called after version creation)
+// Keeps all pinned versions + last N non-pinned versions
+export const cleanupOldVersions = internalMutation({
+  args: {
+    paperId: v.id("papers"),
+    keepCount: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const keepCount = args.keepCount ?? 5;
+
+    // Get all versions for this paper
+    const versions = await ctx.db
+      .query("paperVersions")
+      .withIndex("by_paper", (q) => q.eq("paperId", args.paperId))
+      .collect();
+
+    // Separate pinned and non-pinned versions
+    const pinnedVersions = versions.filter((v) => v.pinned);
+    const nonPinnedVersions = versions.filter((v) => !v.pinned);
+
+    // Sort non-pinned by date (newest first) and keep only the most recent keepCount
+    const sortedNonPinned = nonPinnedVersions.sort(
+      (a, b) => b.versionCreatedAt - a.versionCreatedAt
+    );
+    const versionsToDelete = sortedNonPinned.slice(keepCount);
+
+    if (versionsToDelete.length === 0) {
+      return { deletedCount: 0, keptPinned: pinnedVersions.length };
+    }
+
+    // Collect all storage delete promises for parallel execution
+    const storageDeletePromises: Promise<void>[] = [];
+    for (const version of versionsToDelete) {
+      if (version.pdfFileId) {
+        storageDeletePromises.push(ctx.storage.delete(version.pdfFileId));
+      }
+      if (version.thumbnailFileId) {
+        storageDeletePromises.push(ctx.storage.delete(version.thumbnailFileId));
+      }
+    }
+
+    // Execute all storage deletions in parallel, then delete DB records
+    await Promise.all(storageDeletePromises);
+    for (const version of versionsToDelete) {
+      await ctx.db.delete(version._id);
+    }
+
+    return { deletedCount: versionsToDelete.length, keptPinned: pinnedVersions.length };
+  },
+});

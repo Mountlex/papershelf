@@ -3,6 +3,7 @@ import { query, mutation, internalQuery, internalMutation, type MutationCtx } fr
 import type { Id } from "./_generated/dataModel";
 import { auth } from "./auth";
 import { logAudit } from "./lib/audit";
+import { encryptTokenIfNeeded } from "./lib/crypto";
 
 async function requireUserId(ctx: Parameters<typeof auth.getUserId>[0]) {
   const userId = await auth.getUserId(ctx);
@@ -314,9 +315,12 @@ export const saveOverleafCredentials = mutation({
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
 
+    // Encrypt the Overleaf token before storing
+    const encryptedToken = await encryptTokenIfNeeded(args.token);
+
     await ctx.db.patch(userId, {
       overleafEmail: args.email,
-      overleafToken: args.token,
+      overleafToken: encryptedToken,
     });
   },
 });
@@ -460,11 +464,14 @@ export const addSelfHostedGitLabInstance = mutation({
       throw new Error("An instance with this URL already exists");
     }
 
+    // Encrypt the token before storing
+    const encryptedToken = await encryptTokenIfNeeded(args.token);
+
     const instanceId = await ctx.db.insert("selfHostedGitLabInstances", {
       userId,
       name: args.name,
       url: normalizedUrl,
-      token: args.token,
+      token: encryptedToken,
       createdAt: Date.now(),
     });
 
@@ -497,7 +504,10 @@ export const updateSelfHostedGitLabInstance = mutation({
       }
       updates.url = normalizedUrl;
     }
-    if (args.token !== undefined) updates.token = args.token;
+    if (args.token !== undefined) {
+      // Encrypt the new token before storing
+      updates.token = await encryptTokenIfNeeded(args.token);
+    }
 
     await ctx.db.patch(args.id, updates);
   },

@@ -228,7 +228,12 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
       formData.set("email", email);
 
       if (mode === "verify") {
-        formData.set("flow", "resend-email-verification");
+        // Re-trigger signUp flow to resend verification email
+        formData.set("flow", "signUp");
+        // Password is required for signUp flow
+        if (password) {
+          formData.set("password", password);
+        }
       } else {
         formData.set("flow", "reset");
       }

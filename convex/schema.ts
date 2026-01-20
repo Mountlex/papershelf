@@ -96,6 +96,7 @@ export default defineSchema({
     thumbnailFileId: v.optional(v.id("_storage")),
     fileSize: v.optional(v.number()),
     pageCount: v.optional(v.number()),
+    pinned: v.optional(v.boolean()), // Pinned versions are preserved during cleanup
   })
     .index("by_paper", ["paperId"])
     .index("by_paper_and_commit", ["paperId", "commitHash"]),

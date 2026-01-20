@@ -10,11 +10,13 @@
 
 import type * as ResendOTP from "../ResendOTP.js";
 import type * as auth from "../auth.js";
+import type * as crons from "../crons.js";
 import type * as git from "../git.js";
 import type * as http from "../http.js";
 import type * as latex from "../latex.js";
 import type * as lib_audit from "../lib/audit.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_crypto from "../lib/crypto.js";
 import type * as lib_fileFetching from "../lib/fileFetching.js";
 import type * as lib_gitProviders from "../lib/gitProviders.js";
 import type * as lib_http from "../lib/http.js";
@@ -25,6 +27,7 @@ import type * as mobileAuth from "../mobileAuth.js";
 import type * as papers from "../papers.js";
 import type * as passwordActions from "../passwordActions.js";
 import type * as repositories from "../repositories.js";
+import type * as sessionCleanup from "../sessionCleanup.js";
 import type * as sync from "../sync.js";
 import type * as thumbnail from "../thumbnail.js";
 import type * as users from "../users.js";
@@ -38,11 +41,13 @@ import type {
 declare const fullApi: ApiFromModules<{
   ResendOTP: typeof ResendOTP;
   auth: typeof auth;
+  crons: typeof crons;
   git: typeof git;
   http: typeof http;
   latex: typeof latex;
   "lib/audit": typeof lib_audit;
   "lib/auth": typeof lib_auth;
+  "lib/crypto": typeof lib_crypto;
   "lib/fileFetching": typeof lib_fileFetching;
   "lib/gitProviders": typeof lib_gitProviders;
   "lib/http": typeof lib_http;
@@ -53,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   papers: typeof papers;
   passwordActions: typeof passwordActions;
   repositories: typeof repositories;
+  sessionCleanup: typeof sessionCleanup;
   sync: typeof sync;
   thumbnail: typeof thumbnail;
   users: typeof users;

@@ -10,9 +10,12 @@ export const ResendOTP = Email({
     return generateRandomString(6, alphabet("0-9"));
   },
   async sendVerificationRequest({ identifier: email, provider, token }) {
+    const fromAddress = process.env.EMAIL_FROM || "Carrel <onboarding@resend.dev>";
+    console.log(`[ResendOTP] Sending verification email to ${email}, code: ${token}, from: ${fromAddress}`);
+
     const resend = new Resend(provider.apiKey);
-    const { error } = await resend.emails.send({
-      from: "Carrel <onboarding@resend.dev>",
+    const { error, data } = await resend.emails.send({
+      from: fromAddress,
       to: [email],
       subject: `Your Carrel verification code: ${token}`,
       html: `
@@ -29,8 +32,10 @@ export const ResendOTP = Email({
     });
 
     if (error) {
+      console.error(`[ResendOTP] Failed to send email:`, error);
       throw new Error(`Failed to send verification email: ${error.message}`);
     }
+    console.log(`[ResendOTP] Email sent successfully, id: ${data?.id}`);
   },
 });
 
@@ -44,7 +49,7 @@ export const ResendOTPPasswordReset = Email({
   async sendVerificationRequest({ identifier: email, provider, token }) {
     const resend = new Resend(provider.apiKey);
     const { error } = await resend.emails.send({
-      from: "Carrel <onboarding@resend.dev>",
+      from: process.env.EMAIL_FROM || "Carrel <onboarding@resend.dev>",
       to: [email],
       subject: `Reset your Carrel password: ${token}`,
       html: `

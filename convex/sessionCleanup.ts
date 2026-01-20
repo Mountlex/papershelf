@@ -1,0 +1,89 @@
+import { internalMutation } from "./_generated/server";
+
+// Session expiry: 30 days
+const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Rate limit window expiry: 24 hours
+const RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Internal mutation to clean up expired sessions and tokens.
+ * Called daily by the cron job.
+ *
+ * Cleans up:
+ * - authSessions older than 30 days
+ * - Expired mobileTokens (by expiresAt)
+ * - Revoked mobileTokens
+ * - Expired linkIntents (by expiresAt)
+ * - Used or expired passwordChangeCodes
+ * - Stale emailRateLimits (window > 24 hours old)
+ */
+export const cleanupExpiredSessions = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const sessionCutoff = now - SESSION_MAX_AGE_MS;
+    const rateLimitCutoff = now - RATE_LIMIT_WINDOW_MS;
+
+    const counts = {
+      authSessions: 0,
+      mobileTokens: 0,
+      linkIntents: 0,
+      passwordChangeCodes: 0,
+      emailRateLimits: 0,
+    };
+
+    // Clean up old auth sessions (by _creationTime)
+    const oldSessions = await ctx.db
+      .query("authSessions")
+      .filter((q) => q.lt(q.field("_creationTime"), sessionCutoff))
+      .collect();
+
+    for (const session of oldSessions) {
+      await ctx.db.delete(session._id);
+      counts.authSessions++;
+    }
+
+    // Clean up expired or revoked mobile tokens
+    const allMobileTokens = await ctx.db.query("mobileTokens").collect();
+    for (const token of allMobileTokens) {
+      if (token.isRevoked || token.expiresAt < now) {
+        await ctx.db.delete(token._id);
+        counts.mobileTokens++;
+      }
+    }
+
+    // Clean up expired link intents
+    const allLinkIntents = await ctx.db.query("linkIntents").collect();
+    for (const intent of allLinkIntents) {
+      if (intent.expiresAt < now) {
+        await ctx.db.delete(intent._id);
+        counts.linkIntents++;
+      }
+    }
+
+    // Clean up used or expired password change codes
+    const allPasswordCodes = await ctx.db.query("passwordChangeCodes").collect();
+    for (const code of allPasswordCodes) {
+      if (code.used || code.expiresAt < now) {
+        await ctx.db.delete(code._id);
+        counts.passwordChangeCodes++;
+      }
+    }
+
+    // Clean up stale email rate limits (window older than 24 hours)
+    const allRateLimits = await ctx.db.query("emailRateLimits").collect();
+    for (const limit of allRateLimits) {
+      if (limit.windowStart < rateLimitCutoff) {
+        await ctx.db.delete(limit._id);
+        counts.emailRateLimits++;
+      }
+    }
+
+    console.log(
+      `Session cleanup completed: ${JSON.stringify(counts)}`
+    );
+
+    return counts;
+  },
+});
