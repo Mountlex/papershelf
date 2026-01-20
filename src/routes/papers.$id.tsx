@@ -5,7 +5,7 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Toast, ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../hooks/useToast";
-import { StatusBadge, BuildProgress } from "../components/ui";
+import { StatusBadge, BuildProgress, CompilationLog } from "../components/ui";
 import { PdfViewer } from "../components/PdfViewer";
 
 export const Route = createFileRoute("/papers/$id")({
@@ -157,7 +157,9 @@ function PaperDetailPage() {
                     <p className="mt-2 text-xs text-blue-600 dark:text-blue-400">{paper.compilationProgress}</p>
                   )}
                   {buildError && (
-                    <p className="mt-2 text-xs text-red-500">{buildError}</p>
+                    <div className="mt-2">
+                      <CompilationLog error={buildError} />
+                    </div>
                   )}
                 </div>
               </div>
@@ -251,6 +253,11 @@ function PaperDetailPage() {
             </dl>
           </div>
 
+          {/* Persisted compilation error */}
+          {paper.lastSyncError && !buildError && (
+            <CompilationLog error={paper.lastSyncError} />
+          )}
+
           <div className="flex flex-col gap-2">
             <button
               onClick={handleBuild}
@@ -276,7 +283,7 @@ function PaperDetailPage() {
               isCompile={paper.trackedFile?.pdfSourceType === "compile"}
             />
             {buildError && (
-              <p className="text-xs text-red-500">{buildError}</p>
+              <CompilationLog error={buildError} />
             )}
             {paper.pdfUrl && (
               <a

@@ -5,3 +5,4 @@ export { PaperCardSkeleton, PaperCardSkeletonGrid } from "./PaperCardSkeleton";
 export { LiveRegion } from "./LiveRegion";
 export { ProgressBar } from "./ProgressBar";
 export { BuildProgress } from "./BuildProgress";
+export { CompilationLog } from "./CompilationLog";

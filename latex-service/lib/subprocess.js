@@ -153,7 +153,7 @@ async function runLatexmk(compilerFlag, targetPath, options = {}) {
     compilerFlag,
     "-interaction=nonstopmode",
     "-file-line-error",
-    "-cd", // Change to file's directory (safer for relative paths)
+    "-cd", // Change to file's directory
   ];
 
   if (recorder) {
@@ -161,13 +161,6 @@ async function runLatexmk(compilerFlag, targetPath, options = {}) {
   } else {
     // -bibtex-cond1 runs bibtex/biber only when needed and auto-detects backend
     args.push("-bibtex-cond1");
-    // Enable makeindex for documents with indexes
-    args.push("-makeindex");
-    // Add glossary support via custom rule (makeglossaries)
-    args.push(
-      "-e",
-      `add_cus_dep('glo', 'gls', 0, 'makeglossaries'); sub makeglossaries { system("makeglossaries $_[0]"); }`
-    );
   }
 
   args.push(targetPath);
