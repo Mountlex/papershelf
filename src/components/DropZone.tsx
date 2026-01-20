@@ -81,7 +81,7 @@ export function DropZone({
                 d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
               />
             </svg>
-            <p className="mt-2 text-lg font-medium text-blue-700 dark:text-blue-300">
+            <p className="mt-2 text-lg font-normal text-blue-700 dark:text-blue-300">
               Drop PDF to upload
             </p>
           </div>

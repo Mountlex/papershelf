@@ -103,7 +103,7 @@ function MobileAuthPage() {
   return (
     <MobileAuthLayout>
       <div className="w-full max-w-sm">
-        <h1 className="mb-2 text-center text-2xl font-bold text-gray-900">
+        <h1 className="mb-2 text-center text-2xl font-normal text-gray-900">
           Sign in to Carrel
         </h1>
         <p className="mb-8 text-center text-gray-600">
@@ -149,7 +149,7 @@ function MobileAuthPage() {
                     redirectTo: window.location.origin + "/mobile-auth",
                   });
                 }}
-                className="inline-flex w-full items-center justify-center rounded-md bg-gray-900 px-4 py-3 text-base font-medium text-white hover:bg-gray-800"
+                className="inline-flex w-full items-center justify-center rounded-md bg-gray-900 px-4 py-3 text-base font-normal text-white hover:bg-gray-800"
               >
                 <GitHubIcon className="mr-2 h-5 w-5" />
                 Continue with GitHub
@@ -162,7 +162,7 @@ function MobileAuthPage() {
                     redirectTo: window.location.origin + "/mobile-auth",
                   });
                 }}
-                className="inline-flex w-full items-center justify-center rounded-md bg-[#FC6D26] px-4 py-3 text-base font-medium text-white hover:bg-[#E24329]"
+                className="inline-flex w-full items-center justify-center rounded-md bg-[#FC6D26] px-4 py-3 text-base font-normal text-white hover:bg-[#E24329]"
               >
                 <GitLabIcon className="mr-2 h-5 w-5" />
                 Continue with GitLab
@@ -180,7 +180,7 @@ function MobileAuthPage() {
                 redirectTo: window.location.origin + "/mobile-auth",
               });
             }}
-            className="inline-flex w-full items-center justify-center rounded-md bg-gray-900 px-4 py-3 text-base font-medium text-white hover:bg-gray-800"
+            className="inline-flex w-full items-center justify-center rounded-md bg-gray-900 px-4 py-3 text-base font-normal text-white hover:bg-gray-800"
           >
             <GitHubIcon className="mr-2 h-5 w-5" />
             Continue with GitHub
@@ -195,7 +195,7 @@ function MobileAuthPage() {
                 redirectTo: window.location.origin + "/mobile-auth",
               });
             }}
-            className="inline-flex w-full items-center justify-center rounded-md bg-[#FC6D26] px-4 py-3 text-base font-medium text-white hover:bg-[#E24329]"
+            className="inline-flex w-full items-center justify-center rounded-md bg-[#FC6D26] px-4 py-3 text-base font-normal text-white hover:bg-[#E24329]"
           >
             <GitLabIcon className="mr-2 h-5 w-5" />
             Continue with GitLab
@@ -224,7 +224,7 @@ function MobileAuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-white p-6">
       <div className="mb-8">
-        <span className="font-serif text-3xl font-semibold tracking-tight text-gray-900">
+        <span className="font-serif text-3xl font-normal tracking-tight text-gray-900">
           Carrel
         </span>
       </div>

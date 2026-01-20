@@ -34,7 +34,7 @@ export function SelfHostedTab({
           <svg className="h-5 w-5 text-[#554488]" fill="currentColor" viewBox="0 0 24 24">
             <path d="M4.845.904c-.435 0-.82.28-.955.692C2.639 5.449 1.246 9.728.07 13.335a1.437 1.437 0 00.522 1.607l11.071 8.045c.2.145.472.144.67-.004l11.073-8.04a1.436 1.436 0 00.522-1.61c-1.285-3.942-2.683-8.256-3.817-11.746a1.004 1.004 0 00-.957-.684.987.987 0 00-.949.69l-2.405 7.408H8.203l-2.41-7.408a.987.987 0 00-.942-.69h-.006z" />
           </svg>
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Self-Hosted GitLab</span>
+          <span className="text-sm font-normal text-gray-700 dark:text-gray-300">Self-Hosted GitLab</span>
         </div>
         <button
           onClick={onShowSetup}
@@ -69,7 +69,7 @@ export function SelfHostedTab({
                     className="h-4 w-4 text-[#554488]"
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{instance.name}</p>
+                    <p className="truncate text-sm font-normal text-gray-900 dark:text-gray-100">{instance.name}</p>
                     <p className="truncate text-xs text-gray-500 dark:text-gray-400">{instance.url}</p>
                   </div>
                 </button>
@@ -107,7 +107,7 @@ export function SelfHostedTab({
                 <button
                   onClick={() => onAddRepo(urlValue.trim())}
                   disabled={isAdding || !urlValue.trim()}
-                  className="shrink-0 rounded-md bg-[#554488] px-4 py-2 text-sm font-medium text-white hover:bg-[#443377] disabled:opacity-50"
+                  className="shrink-0 rounded-md bg-[#554488] px-4 py-2 text-sm font-normal text-white hover:bg-[#443377] disabled:opacity-50"
                 >
                   {isAdding ? "Adding..." : "Add"}
                 </button>

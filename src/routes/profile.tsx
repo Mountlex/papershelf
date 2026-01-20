@@ -165,15 +165,15 @@ function ProfilePage() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <h1 className="mb-8 text-2xl font-bold text-gray-900 dark:text-gray-100">Profile</h1>
+      <h1 className="mb-8 text-2xl font-normal text-gray-900 dark:text-gray-100">Profile</h1>
 
       {/* Account Settings */}
       <div className="mb-8 rounded-lg border bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-        <h3 className="mb-6 text-lg font-semibold text-gray-900 dark:text-gray-100">Account Settings</h3>
+        <h3 className="mb-6 text-lg font-normal text-gray-900 dark:text-gray-100">Account Settings</h3>
 
         {/* Name Field */}
         <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2 dark:text-gray-300">Name</label>
+          <label className="block text-sm font-normal text-gray-700 mb-2 dark:text-gray-300">Name</label>
           {isEditingName ? (
             <div className="flex gap-2">
               <input
@@ -186,7 +186,7 @@ function ProfilePage() {
               <button
                 onClick={handleSaveName}
                 disabled={nameLoading}
-                className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200"
+                className="rounded-md bg-gray-900 px-4 py-2 text-sm font-normal text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200"
               >
                 {nameLoading ? "Saving..." : "Save"}
               </button>
@@ -196,7 +196,7 @@ function ProfilePage() {
                   setName(user?.name || "");
                   setNameError(null);
                 }}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 Cancel
               </button>
@@ -221,7 +221,7 @@ function ProfilePage() {
 
         {/* Email Field (read-only) */}
         <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2 dark:text-gray-300">Email</label>
+          <label className="block text-sm font-normal text-gray-700 mb-2 dark:text-gray-300">Email</label>
           <div className="flex items-center justify-between">
             <span className="text-gray-900 dark:text-gray-100">{user?.email}</span>
           </div>
@@ -229,7 +229,7 @@ function ProfilePage() {
 
         {/* Password Field */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2 dark:text-gray-300">Password</label>
+          <label className="block text-sm font-normal text-gray-700 mb-2 dark:text-gray-300">Password</label>
           {passwordMode === "idle" && (
             <div className="flex items-center justify-between">
               <span className="text-gray-500 dark:text-gray-400">••••••••</span>
@@ -269,7 +269,7 @@ function ProfilePage() {
                 <button
                   type="submit"
                   disabled={passwordLoading}
-                  className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200"
+                  className="rounded-md bg-gray-900 px-4 py-2 text-sm font-normal text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200"
                 >
                   {passwordLoading ? "Updating..." : "Update password"}
                 </button>
@@ -281,7 +281,7 @@ function ProfilePage() {
                     setNewPassword("");
                     setPasswordError(null);
                   }}
-                  className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                  className="rounded-md border border-gray-300 px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
                 >
                   Cancel
                 </button>
@@ -307,7 +307,7 @@ function ProfilePage() {
 
       {/* Connected Accounts */}
       <div className="mb-8 rounded-lg border bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-        <h3 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <h3 className="mb-4 text-lg font-normal text-gray-900 dark:text-gray-100">
           Connected Accounts
         </h3>
         <p className="mb-6 text-sm text-gray-500 dark:text-gray-400">
@@ -322,7 +322,7 @@ function ProfilePage() {
                 <GitHubIcon className="h-5 w-5 text-white dark:text-gray-900" />
               </div>
               <div>
-                <p className="font-medium text-gray-900 dark:text-gray-100">GitHub</p>
+                <p className="font-normal text-gray-900 dark:text-gray-100">GitHub</p>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   {connectedProviders.github
                     ? "Connected"
@@ -333,14 +333,14 @@ function ProfilePage() {
             {connectedProviders.github ? (
               <button
                 onClick={() => setShowDisconnectGitHub(true)}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 Disconnect
               </button>
             ) : (
               <button
                 onClick={linkWithGitHub}
-                className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200"
+                className="rounded-md bg-gray-900 px-4 py-2 text-sm font-normal text-white hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200"
               >
                 Connect
               </button>
@@ -354,7 +354,7 @@ function ProfilePage() {
                 <GitLabIcon className="h-5 w-5 text-white" />
               </div>
               <div>
-                <p className="font-medium text-gray-900 dark:text-gray-100">GitLab</p>
+                <p className="font-normal text-gray-900 dark:text-gray-100">GitLab</p>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   {connectedProviders.gitlab
                     ? "Connected"
@@ -365,14 +365,14 @@ function ProfilePage() {
             {connectedProviders.gitlab ? (
               <button
                 onClick={() => setShowDisconnectGitLab(true)}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 Disconnect
               </button>
             ) : (
               <button
                 onClick={linkWithGitLab}
-                className="rounded-md bg-[#FC6D26] px-4 py-2 text-sm font-medium text-white hover:bg-[#E24329]"
+                className="rounded-md bg-[#FC6D26] px-4 py-2 text-sm font-normal text-white hover:bg-[#E24329]"
               >
                 Connect
               </button>
@@ -386,7 +386,7 @@ function ProfilePage() {
                 <OverleafIcon className="h-5 w-5 text-white" />
               </div>
               <div>
-                <p className="font-medium text-gray-900 dark:text-gray-100">Overleaf</p>
+                <p className="font-normal text-gray-900 dark:text-gray-100">Overleaf</p>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   {connectedProviders.overleaf
                     ? "Connected"
@@ -397,14 +397,14 @@ function ProfilePage() {
             {connectedProviders.overleaf ? (
               <button
                 onClick={() => setShowDisconnectOverleaf(true)}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 Disconnect
               </button>
             ) : (
               <button
                 onClick={() => setShowOverleafSetup(true)}
-                className="rounded-md bg-[#47A141] px-4 py-2 text-sm font-medium text-white hover:bg-[#3d8a37]"
+                className="rounded-md bg-[#47A141] px-4 py-2 text-sm font-normal text-white hover:bg-[#3d8a37]"
               >
                 Configure
               </button>
@@ -424,7 +424,7 @@ function ProfilePage() {
                       <GitLabIcon className="h-5 w-5 text-white" />
                     </div>
                     <div className="min-w-0">
-                      <p className="font-medium text-gray-900 dark:text-gray-100">{instance.name}</p>
+                      <p className="font-normal text-gray-900 dark:text-gray-100">{instance.name}</p>
                       <p className="truncate text-sm text-gray-500 dark:text-gray-400" title={instance.url}>
                         {instance.url.replace(/^https?:\/\//, "")}
                       </p>
@@ -432,7 +432,7 @@ function ProfilePage() {
                   </div>
                   <button
                     onClick={() => setInstanceToDelete({ id: instance._id, name: instance.name })}
-                    className="shrink-0 rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                    className="shrink-0 rounded-md border border-gray-300 px-3 py-1.5 text-sm font-normal text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
                     aria-label={`Disconnect ${instance.name}`}
                   >
                     Disconnect
@@ -449,7 +449,7 @@ function ProfilePage() {
                 <GitLabIcon className="h-5 w-5 text-[#554488]" />
               </div>
               <div>
-                <p className="font-medium text-gray-900 dark:text-gray-100">
+                <p className="font-normal text-gray-900 dark:text-gray-100">
                   {selfHostedGitLabInstances.length > 0 ? "Add Another Instance" : "Self-Hosted GitLab"}
                 </p>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -461,7 +461,7 @@ function ProfilePage() {
             </div>
             <button
               onClick={() => setShowSelfHostedGitLabSetup(true)}
-              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
             >
               {selfHostedGitLabInstances.length > 0 ? "Add" : "Configure"}
             </button>
@@ -471,19 +471,19 @@ function ProfilePage() {
 
       {/* Danger Zone */}
       <div className="rounded-lg border border-red-200 bg-white p-6 shadow-sm dark:border-red-900 dark:bg-gray-900">
-        <h3 className="mb-4 text-lg font-semibold text-red-600 dark:text-red-400">
+        <h3 className="mb-4 text-lg font-normal text-red-600 dark:text-red-400">
           Danger Zone
         </h3>
         <div className="flex items-center justify-between">
           <div>
-            <p className="font-medium text-gray-900 dark:text-gray-100">Delete Account</p>
+            <p className="font-normal text-gray-900 dark:text-gray-100">Delete Account</p>
             <p className="text-sm text-gray-500 dark:text-gray-400">
               Permanently delete your account and all associated data. This action cannot be undone.
             </p>
           </div>
           <button
             onClick={() => setShowDeleteConfirm(true)}
-            className="shrink-0 rounded-md border border-red-600 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-500 dark:text-red-500 dark:hover:bg-red-950"
+            className="shrink-0 rounded-md border border-red-600 px-4 py-2 text-sm font-normal text-red-600 hover:bg-red-50 dark:border-red-500 dark:text-red-500 dark:hover:bg-red-950"
           >
             Delete Account
           </button>

@@ -250,7 +250,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
   if (mode === "verify") {
     return (
       <div className="w-full max-w-sm mx-auto">
-        <h2 className="text-xl font-semibold text-gray-900 text-center mb-2">
+        <h2 className="text-xl font-normal text-gray-900 text-center mb-2">
           Verify your email
         </h2>
         <p className="text-sm text-gray-600 text-center mb-2">
@@ -304,7 +304,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
   if (mode === "forgotPassword") {
     return (
       <div className="w-full max-w-sm mx-auto">
-        <h2 className="text-xl font-semibold text-gray-900 text-center mb-2">
+        <h2 className="text-xl font-normal text-gray-900 text-center mb-2">
           Reset your password
         </h2>
         <p className="text-sm text-gray-600 text-center mb-6">
@@ -313,7 +313,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
 
         <form onSubmit={handleForgotPassword} className="space-y-4">
           <div>
-            <label htmlFor="reset-email" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="reset-email" className="block text-sm font-normal text-gray-700">
               Email
             </label>
             <input
@@ -334,7 +334,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+            className="w-full rounded-md bg-gray-900 px-4 py-2 text-sm font-normal text-white hover:bg-gray-800 disabled:opacity-50"
           >
             {isLoading ? "Sending..." : "Send reset code"}
           </button>
@@ -360,7 +360,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
   if (mode === "resetPassword") {
     return (
       <div className="w-full max-w-sm mx-auto">
-        <h2 className="text-xl font-semibold text-gray-900 text-center mb-2">
+        <h2 className="text-xl font-normal text-gray-900 text-center mb-2">
           Enter reset code
         </h2>
         <p className="text-sm text-gray-600 text-center mb-2">
@@ -372,7 +372,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
 
         <form onSubmit={handleResetPassword} className="space-y-4">
           <div>
-            <label htmlFor="reset-code" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="reset-code" className="block text-sm font-normal text-gray-700">
               Verification code
             </label>
             <input
@@ -390,7 +390,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
           </div>
 
           <div>
-            <label htmlFor="new-password" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="new-password" className="block text-sm font-normal text-gray-700">
               New password
             </label>
             <input
@@ -414,7 +414,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+            className="w-full rounded-md bg-gray-900 px-4 py-2 text-sm font-normal text-white hover:bg-gray-800 disabled:opacity-50"
           >
             {isLoading ? "Resetting..." : "Reset password"}
           </button>
@@ -458,7 +458,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
             resetForm();
             setMode("signIn");
           }}
-          className={`flex-1 pb-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`flex-1 pb-2 text-sm font-normal border-b-2 transition-colors ${
             mode === "signIn"
               ? "border-gray-900 text-gray-900"
               : "border-transparent text-gray-500 hover:text-gray-700"
@@ -472,7 +472,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
             resetForm();
             setMode("signUp");
           }}
-          className={`flex-1 pb-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`flex-1 pb-2 text-sm font-normal border-b-2 transition-colors ${
             mode === "signUp"
               ? "border-gray-900 text-gray-900"
               : "border-transparent text-gray-500 hover:text-gray-700"
@@ -485,7 +485,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
       <form onSubmit={mode === "signUp" ? handleSignUp : handleSignIn} className="space-y-4">
         {mode === "signUp" && (
           <div>
-            <label htmlFor="name" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="name" className="block text-sm font-normal text-gray-700">
               Name <span className="text-gray-400">(optional)</span>
             </label>
             <input
@@ -503,7 +503,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
         )}
 
         <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+          <label htmlFor="email" className="block text-sm font-normal text-gray-700">
             Email
           </label>
           <input
@@ -521,7 +521,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
         </div>
 
         <div>
-          <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+          <label htmlFor="password" className="block text-sm font-normal text-gray-700">
             Password
           </label>
           <input
@@ -563,7 +563,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+          className="w-full rounded-md bg-gray-900 px-4 py-2 text-sm font-normal text-white hover:bg-gray-800 disabled:opacity-50"
         >
           {isLoading
             ? mode === "signUp"

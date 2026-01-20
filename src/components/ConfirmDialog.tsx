@@ -98,7 +98,7 @@ export function ConfirmDialog({
           <div className="flex-1">
             <h3
               id="confirm-dialog-title"
-              className="text-lg font-semibold text-gray-900 dark:text-gray-100"
+              className="text-lg font-normal text-gray-900 dark:text-gray-100"
             >
               {title}
             </h3>
@@ -117,7 +117,7 @@ export function ConfirmDialog({
             type="button"
             onClick={onCancel}
             disabled={isLoading}
-            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
           >
             {cancelLabel}
           </button>
@@ -125,7 +125,7 @@ export function ConfirmDialog({
             type="button"
             onClick={handleConfirm}
             disabled={isLoading}
-            className={`rounded-md px-4 py-2 text-sm font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 ${styles.button}`}
+            className={`rounded-md px-4 py-2 text-sm font-normal text-white focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 ${styles.button}`}
           >
             {isLoading ? "..." : confirmLabel}
           </button>

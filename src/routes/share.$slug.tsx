@@ -31,7 +31,7 @@ function SharePage() {
   if (paper === null) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <h2 className="text-lg font-medium text-gray-900 dark:text-gray-100">Paper not found</h2>
+        <h2 className="text-lg font-normal text-gray-900 dark:text-gray-100">Paper not found</h2>
         <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
           This paper may have been made private or deleted.
         </p>
@@ -72,7 +72,7 @@ function SharePage() {
 
       {/* Paper Info */}
       <div className="text-center">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{paper.title}</h1>
+        <h1 className="text-2xl font-normal text-gray-900 dark:text-gray-100">{paper.title}</h1>
         {paper.authors && paper.authors.length > 0 && (
           <p className="mt-1 text-gray-600 dark:text-gray-400">by {paper.authors.join(", ")}</p>
         )}
@@ -86,7 +86,7 @@ function SharePage() {
             <a
               href={paper.pdfUrl}
               download
-              className="inline-flex items-center rounded-md bg-blue-600 px-6 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              className="inline-flex items-center rounded-md bg-blue-600 px-6 py-2 text-sm font-normal text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
               <svg
                 className="mr-2 h-4 w-4"

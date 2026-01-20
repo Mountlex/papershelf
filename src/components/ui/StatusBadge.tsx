@@ -61,7 +61,7 @@ export function StatusBadge({
       role="status"
       aria-label={title || label}
       title={title}
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[status]} ${className}`}
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-normal ${statusStyles[status]} ${className}`}
     >
       {displayIcon}
       <span>{label}</span>

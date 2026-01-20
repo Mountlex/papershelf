@@ -3,14 +3,65 @@
 /* Enable class-based dark mode for Tailwind v4 */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Libertinus Serif - for headings/branding */
+@font-face {
+  font-family: 'Libertinus Serif';
+  src: url('/fonts/LibertinusSerif-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Libertinus Serif';
+  src: url('/fonts/LibertinusSerif-Bold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Libertinus Serif';
+  src: url('/fonts/LibertinusSerif-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Libertinus Sans - for UI */
+@font-face {
+  font-family: 'Libertinus Sans';
+  src: url('/fonts/LibertinusSans-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Libertinus Sans';
+  src: url('/fonts/LibertinusSans-Bold.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Libertinus Sans';
+  src: url('/fonts/LibertinusSans-Bold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Tailwind v4 theme customization */
 @theme {
-  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
-  --font-serif: 'Source Serif 4', ui-serif, Georgia, serif;
+  --font-sans: 'Libertinus Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Libertinus Serif', ui-serif, Georgia, serif;
 }
 
 /* Base refinements */
 html {
+  font-size: 112.5%; /* 18px base - scales all rem units up */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

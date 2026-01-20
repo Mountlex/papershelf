@@ -64,7 +64,7 @@ export function RepositoryCard({
                     if (e.key === "Escape") handleCancel();
                   }}
                   autoFocus
-                  className="w-full rounded border border-blue-300 px-2 py-1 text-sm font-medium focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-blue-600 dark:bg-gray-700 dark:text-gray-100"
+                  className="w-full rounded border border-blue-300 px-2 py-1 text-sm font-normal focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-blue-600 dark:bg-gray-700 dark:text-gray-100"
                 />
                 <button
                   onClick={handleSave}
@@ -94,7 +94,7 @@ export function RepositoryCard({
                 className="group flex items-center gap-1 text-left"
                 title="Click to edit name"
               >
-                <h3 className="font-medium text-gray-900 dark:text-gray-100">{repo.name}</h3>
+                <h3 className="font-normal text-gray-900 dark:text-gray-100">{repo.name}</h3>
                 <svg className="h-3 w-3 text-gray-400 opacity-0 group-hover:opacity-100" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                 </svg>
@@ -114,7 +114,7 @@ export function RepositoryCard({
               )}
               <SyncStatusBadge repo={repo} />
               {repo.papersWithErrors > 0 && (
-                <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-normal text-red-800 dark:bg-red-900/30 dark:text-red-400">
                   {repo.papersWithErrors} error{repo.papersWithErrors !== 1 ? "s" : ""}
                 </span>
               )}
@@ -124,7 +124,7 @@ export function RepositoryCard({
         <div className="flex items-center space-x-2">
           <button
             onClick={() => onConfigure(repo)}
-            className="inline-flex items-center rounded-md border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-blue-600 dark:bg-gray-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
+            className="inline-flex items-center rounded-md border border-blue-300 bg-white px-3 py-1.5 text-xs font-normal text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-blue-600 dark:bg-gray-800 dark:text-blue-400 dark:hover:bg-blue-900/30"
           >
             <svg className="mr-1 h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
@@ -134,7 +134,7 @@ export function RepositoryCard({
           <button
             onClick={() => onSync(repo._id)}
             disabled={isSyncing}
-            className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-normal text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             {isSyncing ? (
               <>
@@ -155,7 +155,7 @@ export function RepositoryCard({
           </button>
           <button
             onClick={() => onDelete(repo._id)}
-            className="inline-flex items-center rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:border-red-600 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/30"
+            className="inline-flex items-center rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-normal text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:border-red-600 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/30"
           >
             Delete
           </button>
@@ -168,28 +168,28 @@ export function RepositoryCard({
 function SyncStatusBadge({ repo }: { repo: Repository }) {
   if (repo.syncStatus === "syncing") {
     return (
-      <span className="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
+      <span className="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-normal text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
         Checking...
       </span>
     );
   }
   if (repo.paperSyncStatus === "in_sync") {
     return (
-      <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/30 dark:text-green-400">
+      <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-normal text-green-800 dark:bg-green-900/30 dark:text-green-400">
         Up to date
       </span>
     );
   }
   if (repo.paperSyncStatus === "needs_sync") {
     return (
-      <span className="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
+      <span className="inline-flex items-center rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-normal text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
         Needs check
       </span>
     );
   }
   if (repo.paperSyncStatus === "never_synced") {
     return (
-      <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-800 dark:bg-gray-700 dark:text-gray-300">
+      <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-normal text-gray-800 dark:bg-gray-700 dark:text-gray-300">
         Never checked
       </span>
     );

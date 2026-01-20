@@ -91,7 +91,7 @@ export function ConfigureRepositoryModal({
       <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-lg bg-white shadow-xl dark:bg-gray-800">
         <div className="flex items-center justify-between border-b p-4 dark:border-gray-700">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Configure Papers</h2>
+            <h2 className="text-lg font-normal text-gray-900 dark:text-gray-100">Configure Papers</h2>
             <p className="text-sm text-gray-500 dark:text-gray-400">{repo.name}</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
@@ -164,7 +164,7 @@ export function ConfigureRepositoryModal({
           {/* Selected Files */}
           <div className="flex w-1/2 flex-col">
             <div className="border-b bg-gray-50 px-4 py-2 dark:border-gray-700 dark:bg-gray-900">
-              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              <h3 className="text-sm font-normal text-gray-700 dark:text-gray-300">
                 Selected Files ({selectedFiles.length})
               </h3>
             </div>
@@ -213,14 +213,14 @@ export function ConfigureRepositoryModal({
         <div className="flex items-center justify-end gap-3 border-t p-4 dark:border-gray-700">
           <button
             onClick={onClose}
-            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             Cancel
           </button>
           <button
             onClick={handleAddFiles}
             disabled={selectedFiles.length === 0 || isAddingFiles}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-normal text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {isAddingFiles ? "Adding..." : `Add ${selectedFiles.length} Paper${selectedFiles.length !== 1 ? "s" : ""}`}
           </button>

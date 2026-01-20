@@ -345,12 +345,12 @@ function RepositoriesPage() {
   return (
     <div>
       <div className="mb-8 flex items-center justify-between">
-        <h1 className="font-serif text-2xl font-semibold text-gray-900 dark:text-gray-100">Repositories</h1>
+        <h1 className="font-serif text-2xl font-normal text-gray-900 dark:text-gray-100">Repositories</h1>
         <div className="flex items-center gap-3">
           <button
             onClick={handleCheckAll}
             disabled={isSyncingAny || !repositories || repositories.length === 0}
-            className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             {isSyncingAny ? (
               <>
@@ -373,7 +373,7 @@ function RepositoriesPage() {
             onClick={() => {
               setIsAddModalOpen(true);
                           }}
-            className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-normal text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
             <svg className="mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -395,7 +395,7 @@ function RepositoriesPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
             </svg>
           </div>
-          <h3 className="mb-1 text-lg font-medium text-gray-900 dark:text-gray-100">No repositories connected</h3>
+          <h3 className="mb-1 text-lg font-normal text-gray-900 dark:text-gray-100">No repositories connected</h3>
           <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
             Add a GitHub, GitLab, or Overleaf repository to start tracking your LaTeX papers.
           </p>
@@ -403,7 +403,7 @@ function RepositoriesPage() {
             onClick={() => {
               setIsAddModalOpen(true);
                           }}
-            className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-normal text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
             Add Repository
           </button>

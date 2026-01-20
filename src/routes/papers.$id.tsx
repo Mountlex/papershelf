@@ -79,7 +79,7 @@ function PaperDetailPage() {
   if (paper === null) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <h2 className="text-lg font-medium text-gray-900 dark:text-gray-100">Paper not found</h2>
+        <h2 className="text-lg font-normal text-gray-900 dark:text-gray-100">Paper not found</h2>
         <Link to="/" className="mt-4 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">
           Back to Gallery
         </Link>
@@ -142,7 +142,7 @@ function PaperDetailPage() {
                   <button
                     onClick={handleBuild}
                     disabled={isBuilding}
-                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    className="rounded-md bg-blue-600 px-4 py-2 text-sm font-normal text-white hover:bg-blue-700 disabled:opacity-50"
                   >
                     {isBuilding ? (
                       <span className="flex items-center">
@@ -171,7 +171,7 @@ function PaperDetailPage() {
         {/* Paper Details */}
         <div className="space-y-6">
           <div>
-            <h1 className="font-serif text-2xl font-semibold text-gray-900 dark:text-gray-100">{paper.title}</h1>
+            <h1 className="font-serif text-2xl font-normal text-gray-900 dark:text-gray-100">{paper.title}</h1>
             {paper.authors && paper.authors.length > 0 && (
               <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
                 Authors: {paper.authors.join(", ")}
@@ -183,7 +183,7 @@ function PaperDetailPage() {
           </div>
 
           <div className="rounded-lg border bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-            <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-gray-100">Details</h3>
+            <h3 className="mb-3 text-sm font-normal text-gray-900 dark:text-gray-100">Details</h3>
             <dl className="space-y-2 text-sm">
               {paper.repository && (
                 <div className="flex justify-between">
@@ -267,7 +267,7 @@ function PaperDetailPage() {
                 handleBuild(!!(isUpToDate && isCompile));
               }}
               disabled={isBuilding}
-              className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+              className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-normal text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
             >
               {isBuilding ? (
                 <span className="flex items-center justify-center">
@@ -300,7 +300,7 @@ function PaperDetailPage() {
               <a
                 href={paper.pdfUrl}
                 download
-                className="w-full rounded-md border border-gray-300 px-4 py-2 text-center text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                className="w-full rounded-md border border-gray-300 px-4 py-2 text-center text-sm font-normal text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 Download PDF
               </a>
@@ -310,14 +310,14 @@ function PaperDetailPage() {
                 href={paper.pdfUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-full rounded-md border border-gray-300 px-4 py-2 text-center text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                className="w-full rounded-md border border-gray-300 px-4 py-2 text-center text-sm font-normal text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 View Full Screen
               </a>
             )}
             <button
               onClick={handleTogglePublic}
-              className={`w-full rounded-md border px-4 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+              className={`w-full rounded-md border px-4 py-2 text-sm font-normal focus:outline-none focus:ring-2 focus:ring-offset-2 ${
                 paper.isPublic
                   ? "border-green-300 text-green-700 hover:bg-green-50 focus:ring-green-500 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-900/30"
                   : "border-gray-300 text-gray-700 hover:bg-gray-50 focus:ring-blue-500 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
@@ -327,7 +327,7 @@ function PaperDetailPage() {
             </button>
             <button
               onClick={() => setShowDeleteConfirm(true)}
-              className="w-full rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/30"
+              className="w-full rounded-md border border-red-300 px-4 py-2 text-sm font-normal text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/30"
             >
               Delete Paper
             </button>
@@ -336,7 +336,7 @@ function PaperDetailPage() {
           {/* Share Link */}
           {paper.isPublic && paper.shareSlug && (
             <div className="rounded-lg border border-green-200 bg-green-50 p-4 dark:border-green-800 dark:bg-green-950">
-              <h3 className="mb-2 text-sm font-semibold text-green-900 dark:text-green-100">
+              <h3 className="mb-2 text-sm font-normal text-green-900 dark:text-green-100">
                 Share Link
               </h3>
               <div className="flex items-center gap-2">
@@ -364,7 +364,7 @@ function PaperDetailPage() {
           {/* Tracked File Info */}
           {paper.trackedFile && (
             <div className="rounded-lg border bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-              <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-gray-100">
+              <h3 className="mb-3 text-sm font-normal text-gray-900 dark:text-gray-100">
                 Source
               </h3>
               <dl className="space-y-2 text-sm">
@@ -389,7 +389,7 @@ function PaperDetailPage() {
             <div className="rounded-lg border bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
               <button
                 onClick={() => setShowVersionHistory(!showVersionHistory)}
-                className="flex w-full items-center justify-between text-sm font-semibold text-gray-900 dark:text-gray-100"
+                className="flex w-full items-center justify-between text-sm font-normal text-gray-900 dark:text-gray-100"
               >
                 <span>Version History ({versions.length})</span>
                 <svg
@@ -407,7 +407,7 @@ function PaperDetailPage() {
                   <div className="rounded border border-green-200 bg-green-50 p-2 dark:border-green-800 dark:bg-green-950">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center rounded bg-green-600 px-1.5 py-0.5 text-xs font-medium text-white">
+                        <span className="inline-flex items-center rounded bg-green-600 px-1.5 py-0.5 text-xs font-normal text-white">
                           Current
                         </span>
                         <span className="font-mono text-xs text-gray-700 dark:text-gray-300">

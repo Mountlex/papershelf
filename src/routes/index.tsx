@@ -399,7 +399,7 @@ function GalleryPage() {
       />
 
       <div className="mb-8 flex items-center justify-between">
-        <h1 className="font-serif text-2xl font-semibold text-gray-900 dark:text-gray-100">Your Papers</h1>
+        <h1 className="font-serif text-2xl font-normal text-gray-900 dark:text-gray-100">Your Papers</h1>
         <div className="flex items-center gap-3">
           <div className="relative">
             <input
@@ -436,7 +436,7 @@ function GalleryPage() {
             <button
               onClick={handleCheckAll}
               disabled={isSyncing || !repositories || repositories.length === 0}
-              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
               title="Check all repositories for new commits"
               aria-label={isSyncing ? "Checking repositories" : "Check all repositories"}
             >
@@ -469,7 +469,7 @@ function GalleryPage() {
           <button
             onClick={handleUploadClick}
             disabled={isUploading}
-            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-normal text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
             aria-label={isUploading ? "Uploading PDF" : "Upload PDF"}
           >
             {isUploading ? (
@@ -515,7 +515,7 @@ function GalleryPage() {
               />
             </svg>
           </div>
-          <h3 className="mb-1 text-lg font-medium text-gray-900 dark:text-gray-100">
+          <h3 className="mb-1 text-lg font-normal text-gray-900 dark:text-gray-100">
             No papers yet
           </h3>
           <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
@@ -525,7 +525,7 @@ function GalleryPage() {
             <button
               onClick={handleUploadClick}
               disabled={isUploading}
-              className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-normal text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -534,7 +534,7 @@ function GalleryPage() {
             </button>
             <Link
               to="/repositories"
-              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               Add Repository
             </Link>
@@ -558,7 +558,7 @@ function GalleryPage() {
               />
             </svg>
           </div>
-          <h3 className="mb-1 text-lg font-medium text-gray-900 dark:text-gray-100">
+          <h3 className="mb-1 text-lg font-normal text-gray-900 dark:text-gray-100">
             No matching papers
           </h3>
           <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
@@ -566,7 +566,7 @@ function GalleryPage() {
           </p>
           <button
             onClick={clearFilters}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -638,11 +638,11 @@ function GalleryPage() {
                       onBlur={handleSaveTitle}
                       onKeyDown={handleKeyDown}
                       onClick={(e) => e.preventDefault()}
-                      className="flex-1 truncate rounded border border-blue-400 px-1 py-0.5 text-sm font-medium text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-800 dark:text-gray-100"
+                      className="flex-1 truncate rounded border border-blue-400 px-1 py-0.5 text-sm font-normal text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-800 dark:text-gray-100"
                     />
                   ) : (
                     <>
-                      <h3 className="font-serif flex-1 truncate font-medium text-gray-900 group-hover:text-blue-600 dark:text-gray-100 dark:group-hover:text-blue-400">
+                      <h3 className="font-serif flex-1 truncate font-normal text-gray-900 group-hover:text-blue-600 dark:text-gray-100 dark:group-hover:text-blue-400">
                         {paper.title}
                       </h3>
                       <button
