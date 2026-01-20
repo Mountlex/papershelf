@@ -1,0 +1,13 @@
+/*
+  X-Content-Type-Options: nosniff
+
+# HTML pages should not be cached at edge to prevent stale chunk references
+/*.html
+  Cache-Control: no-cache
+
+/
+  Cache-Control: no-cache
+
+# JS and CSS assets have content hashes, cache forever
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

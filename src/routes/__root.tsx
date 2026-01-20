@@ -93,7 +93,7 @@ function RootComponent() {
     <RootDocument>
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
         <header className="sticky top-0 z-50 w-full border-b border-gray-100 bg-white/98 backdrop-blur-sm dark:border-gray-800 dark:bg-gray-900/98">
-          <div className="container mx-auto flex h-14 items-center px-4">
+          <div className="container mx-auto flex h-14 items-center px-4 md:px-6">
             <Link to="/" className="flex items-center space-x-2">
               <span className="font-serif text-3xl font-normal tracking-tight text-gray-900 dark:text-gray-100">Carrel</span>
             </Link>
@@ -184,7 +184,7 @@ function RootComponent() {
             </nav>
           </div>
         </header>
-        <main className="container mx-auto px-4 py-8">
+        <main className="container mx-auto px-4 py-8 md:px-6">
           {linkError && (
             <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-950">
               <p className="text-sm font-normal text-red-800 dark:text-red-200">Failed to link accounts</p>
