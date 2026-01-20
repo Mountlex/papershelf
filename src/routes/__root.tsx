@@ -18,7 +18,17 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Carrel" },
     ],
-    links: [{ rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
+    links: [
+      { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
+      // Preconnect to Google Fonts for faster font loading
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
+      // Load fonts via link instead of CSS @import (non-blocking)
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap",
+      },
+    ],
   }),
   component: RootComponent,
 });
