@@ -198,10 +198,16 @@ function GalleryPage() {
     // Apply sorting
     result.sort((a, b) => {
       switch (sortBy) {
-        case "recent":
-          return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
-        case "least-recent":
-          return (a.updatedAt ?? 0) - (b.updatedAt ?? 0);
+        case "recent": {
+          const aTime = a.lastAffectedCommitTime ?? a.updatedAt ?? 0;
+          const bTime = b.lastAffectedCommitTime ?? b.updatedAt ?? 0;
+          return bTime - aTime;
+        }
+        case "least-recent": {
+          const aTime = a.lastAffectedCommitTime ?? a.updatedAt ?? 0;
+          const bTime = b.lastAffectedCommitTime ?? b.updatedAt ?? 0;
+          return aTime - bTime;
+        }
         case "a-z":
           return a.title.localeCompare(b.title);
         case "repository": {
@@ -214,7 +220,9 @@ function GalleryPage() {
             if (!repoB) return -1;
             return repoA.localeCompare(repoB);
           }
-          return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+          const aTime = a.lastAffectedCommitTime ?? a.updatedAt ?? 0;
+          const bTime = b.lastAffectedCommitTime ?? b.updatedAt ?? 0;
+          return bTime - aTime;
         }
         default:
           return 0;
