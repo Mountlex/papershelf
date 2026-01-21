@@ -137,6 +137,15 @@ export default defineSchema({
       hash: v.string(),
     }))),
 
+    // Last commit that actually affected this paper's dependencies
+    lastAffectedCommitHash: v.optional(v.string()),
+    lastAffectedCommitTime: v.optional(v.number()),
+    lastAffectedCommitMessage: v.optional(v.string()),
+
+    // Commit used to build the current PDF
+    builtFromCommitHash: v.optional(v.string()),
+    builtFromCommitTime: v.optional(v.number()),
+
     // Whether this paper needs recompilation (computed during quick sync)
     needsSync: v.optional(v.boolean()),
     // Timestamp when needsSync was set to true (for detecting stale flags)

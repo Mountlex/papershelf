@@ -223,12 +223,6 @@ function PaperDetailPage() {
                   )}
                 </dd>
               </div>
-              <div className="flex justify-between">
-                <dt className="text-gray-500 dark:text-gray-400">Last updated</dt>
-                <dd className="text-gray-900 dark:text-gray-100">
-                  {new Date(paper.updatedAt).toLocaleDateString()}
-                </dd>
-              </div>
               {paper.pageCount && (
                 <div className="flex justify-between">
                   <dt className="text-gray-500 dark:text-gray-400">Pages</dt>
@@ -237,17 +231,71 @@ function PaperDetailPage() {
               )}
               {paper.fileSize && (
                 <div className="flex justify-between">
-                  <dt className="text-gray-500 dark:text-gray-400">Size</dt>
+                  <dt className="text-gray-500 dark:text-gray-400">PDF size</dt>
                   <dd className="text-gray-900 dark:text-gray-100">
                     {(paper.fileSize / 1024 / 1024).toFixed(2)} MB
                   </dd>
                 </div>
               )}
-              {paper.cachedCommitHash && (
-                <div className="flex justify-between">
-                  <dt className="text-gray-500 dark:text-gray-400">Commit</dt>
-                  <dd className="font-mono text-xs text-gray-900 dark:text-gray-100">
-                    {paper.cachedCommitHash.slice(0, 7)}
+              {/* Show separate repo/paper commits only when we have dependency tracking */}
+              {paper.repository?.lastCommitHash && paper.cachedDependencies && paper.cachedDependencies.length > 0 ? (
+                <>
+                  <div className="flex justify-between items-center">
+                    <dt className="text-gray-500 dark:text-gray-400">Latest repo commit</dt>
+                    <dd className="flex items-center gap-2">
+                      <span className="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">
+                        {paper.repository.lastCommitHash.slice(0, 7)}
+                      </span>
+                      {paper.repository?.lastCommitTime && (
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          {new Date(paper.repository.lastCommitTime).toLocaleString()}
+                        </span>
+                      )}
+                    </dd>
+                  </div>
+                  {paper.lastAffectedCommitHash && (
+                    <div className="flex justify-between items-center">
+                      <dt className="text-gray-500 dark:text-gray-400">Latest paper commit</dt>
+                      <dd className="flex items-center gap-2">
+                        <span className="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">
+                          {paper.lastAffectedCommitHash.slice(0, 7)}
+                        </span>
+                        {paper.lastAffectedCommitTime && (
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            {new Date(paper.lastAffectedCommitTime).toLocaleString()}
+                          </span>
+                        )}
+                      </dd>
+                    </div>
+                  )}
+                </>
+              ) : paper.repository?.lastCommitHash && (
+                <div className="flex justify-between items-center">
+                  <dt className="text-gray-500 dark:text-gray-400">Latest commit</dt>
+                  <dd className="flex items-center gap-2">
+                    <span className="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">
+                      {paper.repository.lastCommitHash.slice(0, 7)}
+                    </span>
+                    {paper.repository?.lastCommitTime && (
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        {new Date(paper.repository.lastCommitTime).toLocaleString()}
+                      </span>
+                    )}
+                  </dd>
+                </div>
+              )}
+              {paper.builtFromCommitHash && (
+                <div className="flex justify-between items-center">
+                  <dt className="text-gray-500 dark:text-gray-400">Current PDF commit</dt>
+                  <dd className="flex items-center gap-2">
+                    <span className="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">
+                      {paper.builtFromCommitHash.slice(0, 7)}
+                    </span>
+                    {paper.builtFromCommitTime && (
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        {new Date(paper.builtFromCommitTime).toLocaleString()}
+                      </span>
+                    )}
                   </dd>
                 </div>
               )}
@@ -401,6 +449,23 @@ function PaperDetailPage() {
                     {paper.trackedFile.pdfSourceType}
                   </dd>
                 </div>
+                {paper.cachedDependencies && paper.cachedDependencies.length > 0 && (() => {
+                  const filteredDeps = paper.cachedDependencies.filter(dep => dep.path !== paper.trackedFile?.filePath);
+                  return filteredDeps.length > 0 ? (
+                    <div className="pt-2 border-t border-gray-100 dark:border-gray-800">
+                      <dt className="text-gray-500 dark:text-gray-400 mb-2">Dependencies ({filteredDeps.length})</dt>
+                      <dd className="max-h-32 overflow-y-auto">
+                        <ul className="space-y-0.5">
+                          {filteredDeps.map((dep) => (
+                            <li key={dep.path} className="font-mono text-xs text-gray-600 dark:text-gray-400 truncate" title={dep.path}>
+                              {dep.path}
+                            </li>
+                          ))}
+                        </ul>
+                      </dd>
+                    </div>
+                  ) : null;
+                })()}
               </dl>
             </div>
           )}

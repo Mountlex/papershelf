@@ -206,7 +206,7 @@ export const compileLatexInternal = internalAction({
           console.log(`Full archive fetched ${files.length} files for ${provider}`);
 
           if (files.length > 0) {
-            await updateProgress(`Compiling LaTeX (${files.length} files)...`);
+            await updateProgress("Compiling LaTeX...");
 
             // Send directly to compile - no iterative deps needed
             pdfResponse = await fetchWithRetry(`${latexServiceUrl}/compile`, {
@@ -223,40 +223,29 @@ export const compileLatexInternal = internalAction({
             if (pdfResponse.ok) {
               console.log(`Full archive compile succeeded with ${files.length} files`);
 
-              // Get actual dependencies by calling /deps (parses .fls file for actually-used files)
-              // This avoids marking unused files as dependencies
-              await updateProgress("Detecting dependencies...");
-              try {
-                const depsResponse = await fetchWithRetry(`${latexServiceUrl}/deps`, {
-                  method: "POST",
-                  headers: getLatexServiceHeaders(),
-                  body: JSON.stringify({
-                    resources: files,
-                    target: args.filePath,
-                    compiler: "pdflatex",
-                  }),
-                  timeout: 60000,
-                });
-
-                if (depsResponse.ok) {
-                  const depsResult = await depsResponse.json();
-                  if (depsResult.dependencies && depsResult.dependencies.length > 0) {
-                    finalDependencies = depsResult.dependencies;
-                    console.log(`Detected ${finalDependencies.length} actual dependencies`);
-                  }
+              // Get dependencies from X-Dependencies header (set by /compile)
+              const depsHeader = pdfResponse.headers.get("X-Dependencies");
+              if (depsHeader) {
+                try {
+                  const parsed = JSON.parse(depsHeader) as string[];
+                  // Deduplicate
+                  finalDependencies = [...new Set(parsed)];
+                  console.log(`Detected ${finalDependencies.length} dependencies`);
+                } catch {
+                  console.log("Failed to parse X-Dependencies header");
                 }
-              } catch (error) {
-                // If deps detection fails, fall back to all files
-                console.log(`Deps detection failed, using all files: ${error}`);
-                finalDependencies = files.map(f => f.path);
               }
 
-              // If no dependencies detected, use all files as fallback
+              // Fallback if no dependencies in header
               if (finalDependencies.length === 0) {
-                finalDependencies = files.map(f => f.path);
+                const sourceExtensions = [".tex", ".sty", ".cls", ".bst", ".bib", ".bbx", ".cbx", ".lbx", ".dbx", ".def", ".cfg", ".fd"];
+                finalDependencies = files
+                  .map(f => f.path)
+                  .filter(p => sourceExtensions.some(ext => p.endsWith(ext)));
+                console.log(`Using ${finalDependencies.length} source files as dependencies (fallback)`);
               }
 
-              // Skip to PDF storage (jump past provider-specific code)
+              // Store PDF
               await updateProgress("Storing PDF...");
               const pdfBuffer = await pdfResponse.arrayBuffer();
 
@@ -431,7 +420,7 @@ export const compileLatexInternal = internalAction({
         }
 
         console.log(`Fetching ${filesToFetch.size} files from Overleaf: ${Array.from(filesToFetch).slice(0, 10).join(", ")}${filesToFetch.size > 10 ? "..." : ""}`);
-        await updateProgress(`Fetching ${filesToFetch.size} missing files...`);
+        await updateProgress("Fetching missing files...");
 
         // Fetch the missing files using selective-archive with specific paths
         const fetchResponse = await fetchWithRetry(`${latexServiceUrl}/git/selective-archive`, {
@@ -455,7 +444,7 @@ export const compileLatexInternal = internalAction({
         const newFiles = fetchData.files as Array<{ path: string; content: string; encoding?: string }>;
 
         console.log(`Successfully fetched ${newFiles.length} files from Overleaf`);
-        await updateProgress(`Fetched ${newFiles.length} files`);
+        await updateProgress("Fetched files");
 
         if (newFiles.length === 0) {
           console.log("Could not fetch any missing files - stopping");
@@ -475,7 +464,7 @@ export const compileLatexInternal = internalAction({
       }
 
       console.log(`\nCompiling Overleaf project with ${allResources.size} total files`);
-      await updateProgress(`Compiling LaTeX (${allResources.size} files)...`);
+      await updateProgress("Compiling LaTeX...");
 
       // Final compile with all resolved dependencies
       pdfResponse = await fetchWithRetry(`${latexServiceUrl}/compile`, {
@@ -644,7 +633,7 @@ export const compileLatexInternal = internalAction({
         }
 
         console.log(`Fetching ${filesToFetch.size} files: ${Array.from(filesToFetch).join(", ")}`);
-        await updateProgress(`Fetching ${filesToFetch.size} missing files...`);
+        await updateProgress("Fetching missing files...");
 
         // Fetch the missing files
         const fetchPromises = Array.from(filesToFetch).map((p) =>
@@ -654,7 +643,7 @@ export const compileLatexInternal = internalAction({
         const newFiles = fetched.filter((f): f is NonNullable<typeof f> => f !== null);
 
         console.log(`Successfully fetched ${newFiles.length} files`);
-        await updateProgress(`Fetched ${newFiles.length} files`);
+        await updateProgress("Fetched files");
 
         if (newFiles.length === 0) {
           console.log("Could not fetch any missing files - stopping");
@@ -674,7 +663,7 @@ export const compileLatexInternal = internalAction({
       }
 
       console.log(`\nCompiling with ${allResources.size} total files`);
-      await updateProgress(`Compiling LaTeX (${allResources.size} files)...`);
+      await updateProgress("Compiling LaTeX...");
 
       // Final compile with all resolved dependencies
       // Use retry for server errors (5xx) but not for client errors (4xx)

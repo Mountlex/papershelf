@@ -116,8 +116,12 @@ export const list = query({
       })
     );
 
-    // Sort by updatedAt descending
-    return enrichedPapers.sort((a, b) => b.updatedAt - a.updatedAt);
+    // Sort by last affected time (when dependencies changed), falling back to updatedAt
+    return enrichedPapers.sort((a, b) => {
+      const aTime = a.lastAffectedCommitTime ?? a.updatedAt;
+      const bTime = b.lastAffectedCommitTime ?? b.updatedAt;
+      return bTime - aTime;
+    });
   },
 });
 
@@ -142,7 +146,12 @@ export const listPublic = query({
       })
     );
 
-    return enrichedPapers.sort((a, b) => b.updatedAt - a.updatedAt);
+    // Sort by last affected time (when dependencies changed), falling back to updatedAt
+    return enrichedPapers.sort((a, b) => {
+      const aTime = a.lastAffectedCommitTime ?? a.updatedAt;
+      const bTime = b.lastAffectedCommitTime ?? b.updatedAt;
+      return bTime - aTime;
+    });
   },
 });
 

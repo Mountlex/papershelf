@@ -166,8 +166,13 @@ function buildAuthenticatedUrl(gitUrl, auth) {
   return url.toString();
 }
 
-// Dependency detection endpoint
+// DEPRECATED: Use /compile instead, which returns dependencies in X-Dependencies header.
+// This endpoint runs a separate compilation just to detect dependencies, which is wasteful.
+// Kept for backwards compatibility.
 app.post("/deps", rateLimit, async (req, res) => {
+  res.setHeader("Deprecation", "true");
+  res.setHeader("X-Deprecation-Notice", "Use /compile endpoint instead - dependencies are returned in X-Dependencies header");
+
   const jobId = uuidv4();
   const workDir = `/tmp/latex-deps-${jobId}`;
 
@@ -236,19 +241,45 @@ app.post("/deps", rateLimit, async (req, res) => {
       const flsContent = await fs.readFile(flsPath, "utf-8");
       const lines = flsContent.split("\n");
 
+      // Get the PWD from the .fls file (more reliable than workDir)
+      let flsPwd = workDir;
+      for (const line of lines) {
+        if (line.startsWith("PWD ")) {
+          flsPwd = line.substring(4).trim();
+          break;
+        }
+      }
+      req.log.info(`FLS file found, PWD: ${flsPwd}, workDir: ${workDir}`);
+
       for (const line of lines) {
         if (line.startsWith("INPUT ")) {
           const inputPath = line.substring(6).trim();
-          if (inputPath.startsWith(workDir)) {
-            const relativePath = inputPath.substring(workDir.length + 1);
-            if (!relativePath.match(/\.(aux|log|fls|fdb_latexmk|out|toc|lof|lot|bbl|blg|bcf|run\.xml)$/)) {
+          // Check against both the FLS PWD and workDir (handle path variations)
+          let relativePath = null;
+          if (inputPath.startsWith(flsPwd + "/")) {
+            relativePath = inputPath.substring(flsPwd.length + 1);
+          } else if (inputPath.startsWith(workDir + "/")) {
+            relativePath = inputPath.substring(workDir.length + 1);
+          } else if (inputPath.startsWith("./")) {
+            // Relative path starting with ./
+            relativePath = inputPath.substring(2);
+          } else if (!inputPath.startsWith("/")) {
+            // Pure relative path (no leading /)
+            relativePath = inputPath;
+          }
+
+          if (relativePath && !relativePath.match(/\.(aux|log|fls|fdb_latexmk|out|toc|lof|lot|bbl|blg|bcf|run\.xml)$/)) {
+            // Only include if this file was in the provided resources
+            const isProvided = resources.some(r => r.path === relativePath || r.path.endsWith("/" + relativePath));
+            if (isProvided) {
               deps.add(relativePath);
             }
           }
         }
       }
-    } catch {
-      // .fls file might not exist if compilation failed early
+      req.log.info(`Parsed ${deps.size} dependencies from .fls file`);
+    } catch (err) {
+      req.log.warn(`Could not read .fls file at ${flsPath}: ${err.message}`);
     }
 
     // Parse log file for missing files
@@ -427,7 +458,7 @@ app.post("/compile", rateLimit, async (req, res) => {
       await fs.writeFile(filePath, parseResult.content);
     }
 
-    // Run latexmk
+    // Run latexmk with -recorder to track dependencies
     const targetPath = path.join(workDir, target);
     const targetDir = path.dirname(targetPath);
     const targetName = path.basename(target, ".tex");
@@ -439,6 +470,7 @@ app.post("/compile", rateLimit, async (req, res) => {
     const result = await runLatexmk(compilerFlag, targetPath, {
       cwd: targetDir,
       timeout: 180000, // 3 minutes
+      recorder: true,  // Generate .fls file for dependency tracking
       logger: req.log,
     });
 
@@ -463,10 +495,93 @@ app.post("/compile", rateLimit, async (req, res) => {
       });
     }
 
-    // Read and return PDF
+    // Parse .fls file for dependencies
+    const flsPath = path.join(targetDir, `${targetName}.fls`);
+    const deps = new Set();
+    try {
+      const flsContent = await fs.readFile(flsPath, "utf-8");
+      const lines = flsContent.split("\n");
+
+      let flsPwd = workDir;
+      for (const line of lines) {
+        if (line.startsWith("PWD ")) {
+          flsPwd = line.substring(4).trim();
+          break;
+        }
+      }
+
+      for (const line of lines) {
+        if (line.startsWith("INPUT ")) {
+          const inputPath = line.substring(6).trim();
+          let relativePath = null;
+          if (inputPath.startsWith(flsPwd + "/")) {
+            relativePath = inputPath.substring(flsPwd.length + 1);
+          } else if (inputPath.startsWith(workDir + "/")) {
+            relativePath = inputPath.substring(workDir.length + 1);
+          } else if (inputPath.startsWith("./")) {
+            relativePath = inputPath.substring(2);
+          } else if (!inputPath.startsWith("/")) {
+            relativePath = inputPath;
+          }
+
+          if (relativePath && !relativePath.match(/\.(aux|log|fls|fdb_latexmk|out|toc|lof|lot|bbl|blg|bcf|run\.xml)$/)) {
+            const isProvided = resources.some(r => r.path === relativePath || r.path.endsWith("/" + relativePath));
+            if (isProvided) {
+              deps.add(relativePath);
+            }
+          }
+        }
+      }
+    } catch {
+      // .fls file might not exist
+    }
+
+    // Check for .bib files used (from .aux or .bcf files, since bibtex/biber processes them separately)
+    const auxPath = path.join(targetDir, `${targetName}.aux`);
+    try {
+      const auxContent = await fs.readFile(auxPath, "utf-8");
+      const bibdataMatches = auxContent.matchAll(/\\bibdata\{([^}]+)\}/g);
+      for (const match of bibdataMatches) {
+        const bibFiles = match[1].split(",").map(f => f.trim());
+        for (const bibFile of bibFiles) {
+          const bibWithExt = bibFile.endsWith(".bib") ? bibFile : `${bibFile}.bib`;
+          const isProvided = resources.some(r => r.path === bibWithExt || r.path.endsWith("/" + bibWithExt));
+          if (isProvided) {
+            deps.add(bibWithExt);
+          }
+        }
+      }
+    } catch {
+      // No aux file
+    }
+
+    // Also check .bcf file for biblatex
+    const bcfPath = path.join(targetDir, `${targetName}.bcf`);
+    try {
+      const bcfContent = await fs.readFile(bcfPath, "utf-8");
+      const datasourcePattern = /<bcf:datasource[^>]*>([^<]+)<\/bcf:datasource>/g;
+      let dsMatch;
+      while ((dsMatch = datasourcePattern.exec(bcfContent)) !== null) {
+        if (dsMatch[1]) {
+          const bibFile = dsMatch[1];
+          const bibWithExt = bibFile.endsWith(".bib") ? bibFile : `${bibFile}.bib`;
+          const isProvided = resources.some(r => r.path === bibWithExt || r.path.endsWith("/" + bibWithExt));
+          if (isProvided) {
+            deps.add(bibWithExt);
+          }
+        }
+      }
+    } catch {
+      // No bcf file
+    }
+
+    // Read and return PDF with dependencies in header
     const pdfBuffer = await fs.readFile(pdfPath);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Length", pdfBuffer.length);
+    if (deps.size > 0) {
+      res.setHeader("X-Dependencies", JSON.stringify(Array.from(deps)));
+    }
     res.send(pdfBuffer);
   }, req.log);
 });

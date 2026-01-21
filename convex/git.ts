@@ -794,6 +794,85 @@ export const fetchLatestCommitInternal = internalAction({
   },
 });
 
+// Fetch list of files changed between two commits
+export const fetchChangedFilesInternal = internalAction({
+  args: {
+    gitUrl: v.string(),
+    baseCommit: v.string(),
+    headCommit: v.string(),
+  },
+  handler: async (ctx, args): Promise<string[]> => {
+    const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
+    const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
+
+    // Overleaf doesn't support compare API - return empty to trigger full check
+    if (provider === "overleaf") {
+      return [];
+    }
+
+    const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
+    if (!parsed) {
+      return [];
+    }
+
+    try {
+      if (parsed.provider === "github") {
+        const token = await getGitHubToken(ctx);
+        const headers: Record<string, string> = {
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Carrel",
+        };
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+
+        const response = await fetchWithTimeout(
+          `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/compare/${args.baseCommit}...${args.headCommit}`,
+          { headers }
+        );
+
+        if (!response.ok) {
+          console.log(`GitHub compare API failed: ${response.status}`);
+          return [];
+        }
+
+        const data = await response.json();
+        return (data.files || []).map((f: { filename: string }) => f.filename);
+      } else {
+        // GitLab (both gitlab.com and self-hosted)
+        const isSelfHosted = parsed.provider === "selfhosted-gitlab";
+        const matchingInstance = isSelfHosted
+          ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
+          : null;
+
+        const baseUrl = isSelfHosted ? matchingInstance?.url : "https://gitlab.com";
+        const token = isSelfHosted ? matchingInstance?.token : await getGitLabToken(ctx);
+
+        if (!baseUrl) return [];
+
+        const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
+        const headers = getGitLabHeaders(token);
+
+        const response = await fetchWithTimeout(
+          `${baseUrl}/api/v4/projects/${projectId}/repository/compare?from=${args.baseCommit}&to=${args.headCommit}`,
+          { headers }
+        );
+
+        if (!response.ok) {
+          console.log(`GitLab compare API failed: ${response.status}`);
+          return [];
+        }
+
+        const data = await response.json();
+        return (data.diffs || []).map((d: { new_path: string }) => d.new_path);
+      }
+    } catch (error) {
+      console.log(`Failed to fetch changed files: ${error}`);
+      return [];
+    }
+  },
+});
+
 // Internal action wrapper for fetchFileContent
 export const fetchFileContentInternal = internalAction({
   args: {

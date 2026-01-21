@@ -396,7 +396,19 @@ export const refreshRepository = action({
         return { updated: false, commitHash: latestCommit.sha, superseded: true };
       }
 
-      // New commit detected - compute needsSync for each paper
+      // New commit detected - fetch changed files to efficiently check which papers are affected
+      let changedFiles: string[] = [];
+      if (repository.lastCommitHash) {
+        changedFiles = await ctx.runAction(internal.git.fetchChangedFilesInternal, {
+          gitUrl: repository.gitUrl,
+          baseCommit: repository.lastCommitHash,
+          headCommit: latestCommit.sha,
+        });
+        console.log(`Found ${changedFiles.length} changed files between commits`);
+      }
+      const changedFilesSet = new Set(changedFiles);
+
+      // Process each paper
       for (const paper of papers) {
         // Skip papers without tracked files
         if (!paper.trackedFileId) continue;
@@ -416,20 +428,65 @@ export const refreshRepository = action({
           continue;
         }
 
-        // For committed PDF source type, check if the PDF file's blob hash changed
-        if (trackedFile && trackedFile.pdfSourceType === "committed" && paper.cachedPdfBlobHash) {
-          try {
-            // Check if the PDF file itself has changed by comparing blob hashes
-            const currentHashes = await ctx.runAction(internal.git.fetchFileHashBatchInternal, {
-              gitUrl: repository.gitUrl,
-              filePaths: [trackedFile.filePath],
-              branch: repository.defaultBranch,
+        // For committed PDF source type, check if the PDF file changed
+        if (trackedFile && trackedFile.pdfSourceType === "committed") {
+          // If we have changed files list, use it for quick check
+          if (changedFiles.length > 0 && !changedFilesSet.has(trackedFile.filePath)) {
+            // PDF file not in changed list - just update commit hash
+            console.log(`Committed PDF not in changed files for paper ${paper._id}`);
+            await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
+              id: paper._id,
+              cachedCommitHash: latestCommit.sha,
+              repositoryId: args.repositoryId,
+              attemptId,
             });
-            const currentPdfHash = currentHashes[trackedFile.filePath];
+            continue;
+          }
 
-            if (currentPdfHash && currentPdfHash === paper.cachedPdfBlobHash) {
-              // PDF file unchanged - just update commit hash, skip re-download
-              console.log(`Committed PDF unchanged for paper ${paper._id}, skipping re-download`);
+          // Fall back to blob hash check if no changed files list or file is in list
+          if (paper.cachedPdfBlobHash) {
+            try {
+              const currentHashes = await ctx.runAction(internal.git.fetchFileHashBatchInternal, {
+                gitUrl: repository.gitUrl,
+                filePaths: [trackedFile.filePath],
+                branch: repository.defaultBranch,
+              });
+              const currentPdfHash = currentHashes[trackedFile.filePath];
+
+              if (currentPdfHash && currentPdfHash === paper.cachedPdfBlobHash) {
+                console.log(`Committed PDF unchanged for paper ${paper._id}, skipping re-download`);
+                await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
+                  id: paper._id,
+                  cachedCommitHash: latestCommit.sha,
+                  repositoryId: args.repositoryId,
+                  attemptId,
+                });
+                continue;
+              }
+            } catch (error) {
+              console.log(`Could not check PDF hash for paper ${paper._id}: ${error}`);
+            }
+          }
+
+          // PDF needs re-download
+          await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
+            id: paper._id,
+            needsSync: true,
+            repositoryId: args.repositoryId,
+            attemptId,
+          });
+          continue;
+        }
+
+        // For compile source type, check if any dependency file changed
+        if (trackedFile && trackedFile.pdfSourceType === "compile") {
+          // If we have changed files list (GitHub/GitLab), do quick intersection check
+          if (changedFiles.length > 0 && paper.cachedDependencies && paper.cachedDependencies.length > 0) {
+            const hasChangedDependency = paper.cachedDependencies.some(dep => changedFilesSet.has(dep.path));
+
+            if (!hasChangedDependency) {
+              // No dependencies changed - just update commit hash
+              console.log(`No dependencies changed for paper ${paper._id}`);
               await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
                 id: paper._id,
                 cachedCommitHash: latestCommit.sha,
@@ -438,16 +495,60 @@ export const refreshRepository = action({
               });
               continue;
             }
-          } catch (error) {
-            // If hash check fails, fall through to needsSync=true
-            console.log(`Could not check PDF hash for paper ${paper._id}: ${error}`);
+
+            // At least one dependency changed - mark for rebuild and update lastAffectedCommit
+            console.log(`Dependencies changed for paper ${paper._id}`);
+            await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
+              id: paper._id,
+              needsSync: true,
+              repositoryId: args.repositoryId,
+              attemptId,
+              lastAffectedCommitHash: latestCommit.sha,
+              lastAffectedCommitTime: commitTime,
+              lastAffectedCommitMessage: latestCommit.message,
+            });
+            continue;
           }
+
+          // No changed files list (Overleaf) but we have cached deps - use hash-based check
+          if (changedFiles.length === 0 && paper.cachedDependencies && paper.cachedDependencies.length > 0 && paper.pdfFileId) {
+            const dependenciesChanged = await checkDependenciesChanged(
+              ctx,
+              repository.gitUrl,
+              repository.defaultBranch,
+              paper.cachedDependencies
+            );
+
+            if (!dependenciesChanged) {
+              // No dependencies changed - just update commit hash
+              console.log(`Dependencies unchanged (hash check) for paper ${paper._id}`);
+              await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
+                id: paper._id,
+                cachedCommitHash: latestCommit.sha,
+                repositoryId: args.repositoryId,
+                attemptId,
+              });
+              continue;
+            }
+
+            // Dependencies changed - mark for rebuild and update lastAffectedCommit
+            console.log(`Dependencies changed (hash check) for paper ${paper._id}`);
+            await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
+              id: paper._id,
+              needsSync: true,
+              repositoryId: args.repositoryId,
+              attemptId,
+              lastAffectedCommitHash: latestCommit.sha,
+              lastAffectedCommitTime: commitTime,
+              lastAffectedCommitMessage: latestCommit.message,
+            });
+            continue;
+          }
+
+          // No cached deps yet - needs initial build
         }
 
-        // For all source types: mark needsSync=true when commit changes
-        // Note: buildPaper will do its own dependency check for compile papers
-        // to skip unnecessary recompilation. We always mark needsSync here so the
-        // user can see "Needs sync" in the UI and trigger a build when ready.
+        // Mark paper as needing sync (no dependency info available yet)
         await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
           id: paper._id,
           needsSync: true,
@@ -484,68 +585,6 @@ export const refreshRepository = action({
   },
 });
 
-// Update paper with PDF info
-export const updatePaperPdf = internalMutation({
-  args: {
-    id: v.id("papers"),
-    pdfFileId: v.id("_storage"),
-    cachedCommitHash: v.string(),
-    fileSize: v.number(),
-    cachedDependencies: v.optional(v.array(v.object({
-      path: v.string(),
-      hash: v.string(),
-    }))),
-    // For committed PDFs: store the blob hash to detect changes
-    cachedPdfBlobHash: v.optional(v.string()),
-    repositoryId: v.optional(v.id("repositories")),
-    attemptId: v.optional(v.string()),
-  },
-  handler: async (ctx, args): Promise<{ success: boolean; reason?: string }> => {
-    // If attemptId and repositoryId are provided, validate first
-    if (args.attemptId && args.repositoryId) {
-      const repo = await ctx.db.get(args.repositoryId);
-      if (repo && repo.currentSyncAttemptId !== args.attemptId) {
-        console.log(`Sync attempt ${args.attemptId} superseded, skipping paper PDF update`);
-        return { success: false, reason: "superseded" };
-      }
-    }
-
-    // Get current paper to create version history entry
-    const paper = await ctx.db.get(args.id);
-    if (paper?.pdfFileId && paper?.cachedCommitHash) {
-      // Create a version entry for the current (soon to be previous) PDF
-      await ctx.db.insert("paperVersions", {
-        paperId: args.id,
-        commitHash: paper.cachedCommitHash,
-        versionCreatedAt: paper.updatedAt || Date.now(),
-        pdfFileId: paper.pdfFileId,
-        thumbnailFileId: paper.thumbnailFileId,
-        fileSize: paper.fileSize,
-        pageCount: paper.pageCount,
-      });
-
-      // Schedule cleanup of old versions (keep last 5 non-pinned + all pinned)
-      await ctx.scheduler.runAfter(0, internal.papers.cleanupOldVersions, {
-        paperId: args.id,
-        keepCount: 5,
-      });
-    }
-
-    await ctx.db.patch(args.id, {
-      pdfFileId: args.pdfFileId,
-      cachedCommitHash: args.cachedCommitHash,
-      fileSize: args.fileSize,
-      cachedDependencies: args.cachedDependencies,
-      cachedPdfBlobHash: args.cachedPdfBlobHash, // Store PDF blob hash for committed PDFs
-      needsSync: false, // Just synced successfully
-      needsSyncSetAt: undefined, // Clear the timestamp when sync completes
-      lastSyncError: undefined, // Clear any previous error on success
-      updatedAt: Date.now(),
-    });
-    return { success: true };
-  },
-});
-
 // Update paper with PDF info using paper-level build lock
 export const updatePaperPdfWithBuildLock = internalMutation({
   args: {
@@ -559,6 +598,11 @@ export const updatePaperPdfWithBuildLock = internalMutation({
     }))),
     cachedPdfBlobHash: v.optional(v.string()),
     attemptId: v.optional(v.string()),
+    lastAffectedCommitHash: v.optional(v.string()),
+    lastAffectedCommitTime: v.optional(v.number()),
+    lastAffectedCommitMessage: v.optional(v.string()),
+    builtFromCommitHash: v.optional(v.string()),
+    builtFromCommitTime: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<{ success: boolean; reason?: string }> => {
     // If attemptId is provided, validate against paper's build attempt
@@ -591,7 +635,7 @@ export const updatePaperPdfWithBuildLock = internalMutation({
       });
     }
 
-    await ctx.db.patch(args.id, {
+    const patchData: Record<string, unknown> = {
       pdfFileId: args.pdfFileId,
       cachedCommitHash: args.cachedCommitHash,
       fileSize: args.fileSize,
@@ -602,7 +646,28 @@ export const updatePaperPdfWithBuildLock = internalMutation({
       lastSyncError: undefined,
       buildStatus: "idle", // Clear build status on success
       updatedAt: Date.now(),
-    });
+    };
+
+    // Only update lastAffectedCommit fields if provided (when dependencies actually changed)
+    if (args.lastAffectedCommitHash) {
+      patchData.lastAffectedCommitHash = args.lastAffectedCommitHash;
+    }
+    if (args.lastAffectedCommitTime) {
+      patchData.lastAffectedCommitTime = args.lastAffectedCommitTime;
+    }
+    if (args.lastAffectedCommitMessage) {
+      patchData.lastAffectedCommitMessage = args.lastAffectedCommitMessage;
+    }
+
+    // Update builtFromCommit fields (the commit used to build this PDF)
+    if (args.builtFromCommitHash) {
+      patchData.builtFromCommitHash = args.builtFromCommitHash;
+    }
+    if (args.builtFromCommitTime) {
+      patchData.builtFromCommitTime = args.builtFromCommitTime;
+    }
+
+    await ctx.db.patch(args.id, patchData);
     return { success: true };
   },
 });
@@ -688,6 +753,9 @@ export const updatePaperNeedsSync = internalMutation({
     needsSync: v.boolean(),
     repositoryId: v.optional(v.id("repositories")),
     attemptId: v.optional(v.string()),
+    lastAffectedCommitHash: v.optional(v.string()),
+    lastAffectedCommitTime: v.optional(v.number()),
+    lastAffectedCommitMessage: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // If attemptId and repositoryId are provided, validate first to prevent stale updates
@@ -698,11 +766,25 @@ export const updatePaperNeedsSync = internalMutation({
         return;
       }
     }
-    await ctx.db.patch(args.id, {
+
+    const patchData: Record<string, unknown> = {
       needsSync: args.needsSync,
       // Track when needsSync was set to true (for detecting stale flags)
       needsSyncSetAt: args.needsSync ? Date.now() : undefined,
-    });
+    };
+
+    // Update lastAffectedCommit info if provided
+    if (args.lastAffectedCommitHash) {
+      patchData.lastAffectedCommitHash = args.lastAffectedCommitHash;
+    }
+    if (args.lastAffectedCommitTime) {
+      patchData.lastAffectedCommitTime = args.lastAffectedCommitTime;
+    }
+    if (args.lastAffectedCommitMessage) {
+      patchData.lastAffectedCommitMessage = args.lastAffectedCommitMessage;
+    }
+
+    await ctx.db.patch(args.id, patchData);
   },
 });
 
@@ -872,6 +954,11 @@ export const buildPaper = action({
         }
       }
 
+      // Compute commit time for last affected tracking
+      const commitTime = latestCommit.unchanged
+        ? Date.now() // Shouldn't happen since we only reach here if something changed
+        : new Date(latestCommit.date).getTime();
+
       // Update paper with new PDF using paper-level lock validation (also clears lastSyncError and buildStatus)
       const updateResult = await ctx.runMutation(internal.sync.updatePaperPdfWithBuildLock, {
         id: args.paperId,
@@ -881,6 +968,11 @@ export const buildPaper = action({
         cachedDependencies: dependencies,
         cachedPdfBlobHash: pdfBlobHash,
         attemptId,
+        lastAffectedCommitHash: latestCommit.sha,
+        lastAffectedCommitTime: commitTime,
+        lastAffectedCommitMessage: latestCommit.message,
+        builtFromCommitHash: latestCommit.sha,
+        builtFromCommitTime: commitTime,
       });
 
       if (!updateResult.success) {
@@ -919,6 +1011,3 @@ export const buildPaper = action({
   },
 });
 
-// Backwards-compatible aliases for the renamed functions
-export const syncRepository = refreshRepository;
-export const syncPaper = buildPaper;

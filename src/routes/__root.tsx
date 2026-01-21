@@ -9,7 +9,7 @@ import { useUser, checkPendingLink, clearPendingLink, isLinkInProgress } from ".
 import { useTheme } from "../hooks/useTheme";
 import { EmailPasswordForm } from "../components/auth/EmailPasswordForm";
 import { ErrorBoundary } from "../components/ErrorBoundary";
-import { GitHubIcon, GitLabIcon, UserIcon, SignOutIcon, SunIcon, MoonIcon } from "../components/icons";
+import { GitHubIcon, GitLabIcon, UserIcon, SignOutIcon, SunIcon, MoonIcon, SystemIcon } from "../components/icons";
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
@@ -34,7 +34,7 @@ function RootComponent() {
     signInWithGitLab,
     signOut,
   } = useUser();
-  const { theme, resolvedTheme, cycleTheme } = useTheme();
+  const { theme, cycleTheme } = useTheme();
   const linkProviderToAccount = useMutation(api.users.linkProviderToAccount);
   const [isLinking, setIsLinking] = useState(() => isLinkInProgress());
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -124,7 +124,9 @@ function RootComponent() {
                     title={`Theme: ${theme} (click to change)`}
                     aria-label={`Current theme: ${theme}. Click to change theme`}
                   >
-                    {resolvedTheme === "dark" ? (
+                    {theme === "system" ? (
+                      <SystemIcon className="h-5 w-5" aria-hidden="true" />
+                    ) : theme === "dark" ? (
                       <MoonIcon className="h-5 w-5" aria-hidden="true" />
                     ) : (
                       <SunIcon className="h-5 w-5" aria-hidden="true" />
@@ -155,7 +157,9 @@ function RootComponent() {
                     title={`Theme: ${theme} (click to change)`}
                     aria-label={`Current theme: ${theme}. Click to change theme`}
                   >
-                    {resolvedTheme === "dark" ? (
+                    {theme === "system" ? (
+                      <SystemIcon className="h-5 w-5" aria-hidden="true" />
+                    ) : theme === "dark" ? (
                       <MoonIcon className="h-5 w-5" aria-hidden="true" />
                     ) : (
                       <SunIcon className="h-5 w-5" aria-hidden="true" />
