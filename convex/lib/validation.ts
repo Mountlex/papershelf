@@ -90,34 +90,3 @@ export function validateFilePath(filePath: string):
 
   return { valid: true, normalized };
 }
-
-/**
- * Validates a pattern string (for artifactPattern or releasePattern).
- * Prevents path traversal attacks in patterns.
- * @param pattern - The pattern string to validate
- * @returns Object with valid flag or error message
- */
-export function validatePattern(pattern: string):
-  | { valid: true }
-  | { valid: false; error: string } {
-  // Empty/undefined patterns are valid (optional field)
-  if (!pattern || pattern.trim() === "") {
-    return { valid: true };
-  }
-
-  // Reject absolute paths
-  if (pattern.startsWith("/") || /^[a-zA-Z]:/.test(pattern)) {
-    return { valid: false, error: "Absolute paths are not allowed in patterns" };
-  }
-
-  // Reject patterns with directory traversal
-  const normalized = pattern.replace(/\\/g, "/");
-  const segments = normalized.split("/");
-  for (const segment of segments) {
-    if (segment === "..") {
-      return { valid: false, error: "Path traversal (..) is not allowed in patterns" };
-    }
-  }
-
-  return { valid: true };
-}

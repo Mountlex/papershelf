@@ -5,10 +5,8 @@ import { internal } from "./_generated/api";
 import { auth } from "./auth";
 import {
   parseOverleafUrl,
-  parseRepoUrl,
   getProviderFromUrl,
 } from "./lib/gitProviders";
-import { fetchTexFilesOnly, fetchSingleFile } from "./lib/fileFetching";
 import {
   getGitHubToken,
   getGitLabToken,
@@ -48,7 +46,7 @@ async function getAuthForProvider(
     const creds = userId
       ? await getOverleafCredentialsByUserId(ctx, userId)
       : await getOverleafCredentials(ctx);
-    return creds ? { username: creds.email, password: creds.token } : undefined;
+    return creds ?? undefined;
   }
   if (provider === "github") {
     const token = userId
@@ -70,33 +68,8 @@ async function getAuthForProvider(
   return undefined;
 }
 
-// Normalize a path and ensure it stays within the repository root
-// Returns null if the path would escape the root
-function normalizePath(basePath: string, relativePath: string): string | null {
-  // Combine the paths
-  const combined = basePath ? `${basePath}/${relativePath}` : relativePath;
-
-  // Split into segments and resolve . and ..
-  const segments: string[] = [];
-  for (const segment of combined.split("/")) {
-    if (segment === "" || segment === ".") {
-      continue;
-    } else if (segment === "..") {
-      if (segments.length === 0) {
-        // Would escape the root
-        return null;
-      }
-      segments.pop();
-    } else {
-      segments.push(segment);
-    }
-  }
-
-  return segments.join("/");
-}
-
 // Helper to fetch blob hashes for dependencies
-// Uses batch fetch to optimize Overleaf (single clone instead of one per file)
+// Uses batch fetch to optimize (single clone instead of one per file)
 async function fetchDependencyHashes(
   ctx: ActionCtx,
   gitUrl: string,
@@ -134,7 +107,7 @@ async function fetchDependencyHashes(
   }
 }
 
-// Compile LaTeX file using LaTeX.Online API
+// Compile LaTeX file using LaTeX service
 export const compileLatex = action({
   args: {
     gitUrl: v.string(),
@@ -171,575 +144,93 @@ export const compileLatexInternal = internalAction({
       }
     };
 
+    // Get the LaTeX service URL from environment
+    const latexServiceUrl = process.env.LATEX_SERVICE_URL;
+    if (!latexServiceUrl) {
+      throw new Error("LATEX_SERVICE_URL not configured. Required for LaTeX compilation.");
+    }
+
     // Get all self-hosted GitLab instances - use userId if provided (mobile)
     const selfHostedInstances = args.userId
       ? await getAllSelfHostedGitLabInstancesByUserId(ctx, args.userId)
       : await getAllSelfHostedGitLabInstances(ctx);
     const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
 
-    // Get the LaTeX service URL from environment
-    const latexServiceUrl = process.env.LATEX_SERVICE_URL;
+    // Get authentication for the provider
+    const auth = await getAuthForProvider(ctx, provider, args.gitUrl, selfHostedInstances, args.userId);
 
-    // Determine the directory of the target file (for resolving relative paths)
-    const dirPath = args.filePath.includes("/")
-      ? args.filePath.substring(0, args.filePath.lastIndexOf("/"))
-      : "";
-
-    let pdfResponse: Response;
-    // Track dependencies for file-level change detection
-    let finalDependencies: string[] = [];
-
-    // Try comprehensive selective archive first (works for all providers via git clone)
-    // This fetches all LaTeX-related files upfront, avoiding iterative dependency resolution
-    if (latexServiceUrl) {
-      const auth = await getAuthForProvider(ctx, provider, args.gitUrl, selfHostedInstances, args.userId);
-
-      // For Overleaf, convert project URL to git URL
-      let archiveGitUrl = args.gitUrl;
-      if (provider === "overleaf") {
-        const overleafParsed = parseOverleafUrl(args.gitUrl);
-        if (overleafParsed) {
-          archiveGitUrl = overleafParsed.gitUrl;
-        }
-      }
-
-      try {
-        await updateProgress("Fetching all LaTeX files...");
-
-        const archiveResponse = await fetchWithRetry(`${latexServiceUrl}/git/selective-archive`, {
-          method: "POST",
-          headers: getLatexServiceHeaders(),
-          body: JSON.stringify({
-            gitUrl: archiveGitUrl,
-            branch: args.branch,
-            auth,
-            extensions: LATEX_EXTENSIONS,
-          }),
-          timeout: 120000,
-        });
-
-        if (archiveResponse.ok) {
-          const { files } = await archiveResponse.json() as { files: Array<{ path: string; content: string; encoding?: string }> };
-          console.log(`Full archive fetched ${files.length} files for ${provider}`);
-
-          if (files.length > 0) {
-            await updateProgress("Compiling LaTeX...");
-
-            // Send directly to compile - no iterative deps needed
-            pdfResponse = await fetchWithRetry(`${latexServiceUrl}/compile`, {
-              method: "POST",
-              headers: getLatexServiceHeaders(),
-              body: JSON.stringify({
-                resources: files,
-                target: args.filePath,
-                compiler: "pdflatex",
-              }),
-              timeout: DEFAULT_LATEX_SERVICE_TIMEOUT,
-            }, 2);
-
-            if (pdfResponse.ok) {
-              console.log(`Full archive compile succeeded with ${files.length} files`);
-
-              // Get dependencies from X-Dependencies header (set by /compile)
-              const depsHeader = pdfResponse.headers.get("X-Dependencies");
-              if (depsHeader) {
-                try {
-                  const parsed = JSON.parse(depsHeader) as string[];
-                  // Deduplicate
-                  finalDependencies = [...new Set(parsed)];
-                  console.log(`Detected ${finalDependencies.length} dependencies`);
-                } catch {
-                  console.log("Failed to parse X-Dependencies header");
-                }
-              }
-
-              // Fallback if no dependencies in header
-              if (finalDependencies.length === 0) {
-                const sourceExtensions = [".tex", ".sty", ".cls", ".bst", ".bib", ".bbx", ".cbx", ".lbx", ".dbx", ".def", ".cfg", ".fd"];
-                finalDependencies = files
-                  .map(f => f.path)
-                  .filter(p => sourceExtensions.some(ext => p.endsWith(ext)));
-                console.log(`Using ${finalDependencies.length} source files as dependencies (fallback)`);
-              }
-
-              // Store PDF
-              await updateProgress("Storing PDF...");
-              const pdfBuffer = await pdfResponse.arrayBuffer();
-
-              // Store PDF directly in Convex storage
-              const blob = new Blob([pdfBuffer], { type: "application/pdf" });
-              const storageId = await ctx.storage.store(blob);
-
-              // Fetch blob hashes for dependencies
-              let dependencyHashes: DependencyHash[] = [];
-              if (finalDependencies.length > 0) {
-                await updateProgress("Caching dependency info...");
-                dependencyHashes = await fetchDependencyHashes(
-                  ctx,
-                  args.gitUrl,
-                  args.branch,
-                  finalDependencies,
-                  args.userId
-                );
-                console.log(`Cached ${dependencyHashes.length} dependency hashes`);
-              }
-
-              await updateProgress(null);
-              return {
-                storageId,
-                size: pdfBuffer.byteLength,
-                dependencies: dependencyHashes,
-              };
-            }
-            // Compile failed - fall through to iterative approach
-            console.log("Full archive compile failed, falling back to iterative approach");
-          }
-        } else if (archiveResponse.status === 413) {
-          console.log("Repository too large for full archive, using iterative approach");
-        } else {
-          console.log(`Full archive failed with status ${archiveResponse.status}, falling back to iterative`);
-        }
-      } catch (error) {
-        console.log("Full archive attempt failed, falling back to iterative:", error);
-      }
-    }
-
-    // Fall through to existing provider-specific iterative code
-
-    // Handle Overleaf projects - use iterative dependency resolution like GitHub/GitLab
+    // For Overleaf, convert project URL to git URL
+    let archiveGitUrl = args.gitUrl;
     if (provider === "overleaf") {
       const overleafParsed = parseOverleafUrl(args.gitUrl);
-      if (!overleafParsed) {
-        throw new Error(`Invalid Overleaf URL: "${args.gitUrl}". Expected format: https://git.overleaf.com/<project_id> or https://www.overleaf.com/project/<project_id>`);
-      }
-
-      if (!latexServiceUrl) {
-        throw new Error("LATEX_SERVICE_URL not configured. Required for Overleaf support.");
-      }
-
-      const credentials = args.userId
-        ? await getOverleafCredentialsByUserId(ctx, args.userId)
-        : await getOverleafCredentials(ctx);
-      if (!credentials) {
-        throw new Error("Overleaf credentials not configured.");
-      }
-
-      await updateProgress("Fetching .tex files from Overleaf...");
-
-      // Step 1: Fetch common LaTeX source files including bibliography
-      const initialExtensions = [".tex", ".sty", ".cls", ".bst", ".bib"];
-      const initialResponse = await fetchWithRetry(`${latexServiceUrl}/git/selective-archive`, {
-        method: "POST",
-        headers: getLatexServiceHeaders(),
-        body: JSON.stringify({
-          gitUrl: overleafParsed.gitUrl,
-          branch: args.branch,
-          auth: credentials,
-          extensions: initialExtensions,
-        }),
-        timeout: 120000,
-      });
-
-      if (!initialResponse.ok) {
-        await updateProgress(null);
-        const error = await initialResponse.text();
-        throw new Error(`Failed to fetch Overleaf project files: ${error}`);
-      }
-
-      const initialData = await initialResponse.json();
-      const initialFiles = initialData.files as Array<{ path: string; content: string; encoding?: string }>;
-
-      if (initialFiles.length === 0) {
-        throw new Error("No .tex files found in Overleaf project");
-      }
-
-      console.log(`Fetched ${initialFiles.length} initial files from Overleaf (${initialExtensions.join(", ")})`);
-
-      // Build resources map
-      const allResources: Map<string, { path: string; content: string; encoding?: string }> = new Map();
-      for (const f of initialFiles) {
-        allResources.set(f.path, { path: f.path, content: f.content, encoding: f.encoding });
-      }
-
-      // Track files we've already tried to fetch (to avoid infinite loops)
-      const attemptedFetches = new Set<string>(initialFiles.map(f => f.path));
-
-      // Iteratively resolve dependencies (max 5 iterations to prevent infinite loops)
-      const MAX_ITERATIONS = 5;
-      for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-        console.log(`\nOverleaf dependency resolution iteration ${iteration + 1}`);
-        await updateProgress(`Detecting dependencies (pass ${iteration + 1})...`);
-
-        // Send current resources to /deps
-        const depsResponse = await fetchWithRetry(`${latexServiceUrl}/deps`, {
-          method: "POST",
-          headers: getLatexServiceHeaders(),
-          body: JSON.stringify({
-            resources: Array.from(allResources.values()),
-            target: args.filePath,
-            compiler: "pdflatex",
-          }),
-          timeout: 60000,
-        });
-
-        if (!depsResponse.ok) {
-          const errorText = await depsResponse.text();
-          throw new Error(`Dependency detection failed: ${errorText}`);
-        }
-
-        const depsResult = await depsResponse.json();
-        console.log("Dependencies detected:", depsResult.dependencies?.length || 0);
-        console.log("Missing files:", depsResult.missingFiles);
-
-        // Store the dependencies from this iteration
-        if (depsResult.dependencies && depsResult.dependencies.length > 0) {
-          finalDependencies = depsResult.dependencies;
-        }
-
-        // If no missing files, we're done with dependency resolution
-        if (!depsResult.missingFiles || depsResult.missingFiles.length === 0) {
-          console.log("No missing files - dependency resolution complete");
-          break;
-        }
-
-        // Collect files we need to fetch
-        const filesToFetch = new Set<string>();
-
-        for (const missing of depsResult.missingFiles) {
-          // Build and normalize full path (handles .. references)
-          const fullPath = normalizePath(dirPath, missing);
-
-          // Skip if path would escape repository root
-          if (fullPath === null) {
-            console.log(`Skipping path that escapes repo root: ${missing}`);
-            continue;
-          }
-
-          // Skip if already attempted
-          if (attemptedFetches.has(fullPath)) continue;
-
-          filesToFetch.add(fullPath);
-          attemptedFetches.add(fullPath);
-
-          // Also try with common extensions if no extension
-          if (!missing.includes(".")) {
-            const extensions = [".bbx", ".cbx", ".bib", ".sty", ".cls", ".bst", ".png", ".jpg", ".pdf", ".eps"];
-            for (const ext of extensions) {
-              const withExt = fullPath + ext;
-              if (!attemptedFetches.has(withExt)) {
-                filesToFetch.add(withExt);
-                attemptedFetches.add(withExt);
-              }
-            }
-          }
-        }
-
-        if (filesToFetch.size === 0) {
-          console.log("No new files to fetch - stopping");
-          break;
-        }
-
-        console.log(`Fetching ${filesToFetch.size} files from Overleaf: ${Array.from(filesToFetch).slice(0, 10).join(", ")}${filesToFetch.size > 10 ? "..." : ""}`);
-        await updateProgress("Fetching missing files...");
-
-        // Fetch the missing files using selective-archive with specific paths
-        const fetchResponse = await fetchWithRetry(`${latexServiceUrl}/git/selective-archive`, {
-          method: "POST",
-          headers: getLatexServiceHeaders(),
-          body: JSON.stringify({
-            gitUrl: overleafParsed.gitUrl,
-            branch: args.branch,
-            auth: credentials,
-            paths: Array.from(filesToFetch),
-          }),
-          timeout: 120000,
-        });
-
-        if (!fetchResponse.ok) {
-          console.log("Failed to fetch missing files, continuing with what we have");
-          break;
-        }
-
-        const fetchData = await fetchResponse.json();
-        const newFiles = fetchData.files as Array<{ path: string; content: string; encoding?: string }>;
-
-        console.log(`Successfully fetched ${newFiles.length} files from Overleaf`);
-        await updateProgress("Fetched files");
-
-        if (newFiles.length === 0) {
-          console.log("Could not fetch any missing files - stopping");
-          break;
-        }
-
-        // Add new files to resources
-        for (const f of newFiles) {
-          if (!allResources.has(f.path)) {
-            allResources.set(f.path, {
-              path: f.path,
-              content: f.content,
-              encoding: f.encoding,
-            });
-          }
-        }
-      }
-
-      console.log(`\nCompiling Overleaf project with ${allResources.size} total files`);
-      await updateProgress("Compiling LaTeX...");
-
-      // Final compile with all resolved dependencies
-      pdfResponse = await fetchWithRetry(`${latexServiceUrl}/compile`, {
-        method: "POST",
-        headers: getLatexServiceHeaders(),
-        body: JSON.stringify({
-          resources: Array.from(allResources.values()),
-          target: args.filePath,
-          compiler: "pdflatex",
-        }),
-        timeout: DEFAULT_LATEX_SERVICE_TIMEOUT,
-      }, 2);
-    } else {
-      // GitHub/GitLab handling (both gitlab.com and self-hosted)
-      const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
-      if (!parsed) {
-        throw new Error("Invalid repository URL. Expected GitHub, GitLab, or Overleaf URL.");
-      }
-
-      console.log(`[compileLatexInternal] Parsed URL: provider=${parsed.provider}, owner=${parsed.owner}, repo=${parsed.repo}, matchedInstanceUrl=${parsed.matchedInstanceUrl || "N/A"}`);
-
-      // Get the appropriate token based on provider
-      const isSelfHosted = parsed.provider === "selfhosted-gitlab";
-
-      // Find the matching self-hosted instance if applicable
-      const matchingInstance = isSelfHosted
-        ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
-        : null;
-
-      if (isSelfHosted && !matchingInstance) {
-        throw new Error(
-          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
-          `Available instances: ${selfHostedInstances.map(i => i.url).join(", ") || "none"}. ` +
-          `The instance may have been deleted. Please re-add the repository.`
-        );
-      }
-
-      const token = parsed.provider === "github"
-        ? (args.userId ? await getGitHubTokenByUserId(ctx, args.userId) : await getGitHubToken(ctx))
-        : isSelfHosted
-          ? matchingInstance?.token
-          : (args.userId ? await getGitLabTokenByUserId(ctx, args.userId) : await getGitLabToken(ctx));
-
-      console.log(`[compileLatexInternal] Token available: ${!!token}, isSelfHosted: ${isSelfHosted}`);
-
-      // For self-hosted GitLab, we need the base URL for API calls
-      const gitlabBaseUrl = isSelfHosted ? matchingInstance?.url || "" : "https://gitlab.com";
-      // Normalize provider for helper functions (selfhosted-gitlab uses same API as gitlab)
-      // Type assertion needed because TypeScript doesn't narrow parsed.provider when isSelfHosted is false
-      const effectiveProvider: "github" | "gitlab" = isSelfHosted ? "gitlab" : (parsed.provider as "github" | "gitlab");
-
-    if (latexServiceUrl) {
-      // Iterative dependency resolution: keep finding deps until no new missing files
-      await updateProgress("Fetching .tex files from repository...");
-
-      // Step 1: Fetch all .tex files from the directory
-      const texFiles = await fetchTexFilesOnly(
-        parsed.owner,
-        parsed.repo,
-        args.branch,
-        dirPath,
-        token || "",
-        effectiveProvider,
-        isSelfHosted ? gitlabBaseUrl : undefined
-      );
-
-      if (texFiles.length === 0) {
-        throw new Error(
-          "No .tex files found in directory. " +
-          "This may happen if: (1) the directory has no .tex files, " +
-          "(2) authentication is required but not configured, or " +
-          "(3) the repository returned an error page instead of file content."
-        );
-      }
-
-      const bibFiles = texFiles.filter(f => f.path.endsWith(".bib"));
-      const actualTexFiles = texFiles.filter(f => f.path.endsWith(".tex"));
-      console.log(`Found ${actualTexFiles.length} .tex files: ${actualTexFiles.map(f => f.path).join(", ")}`);
-      console.log(`Found ${bibFiles.length} .bib files: ${bibFiles.map(f => f.path).join(", ")}`);
-
-      // Track all resources we have (relative paths)
-      const allResources: Map<string, { path: string; content: string; encoding?: string }> = new Map();
-
-      // Add .tex files - keep full paths to preserve directory structure
-      // This allows relative references like ../file.sty to work correctly
-      for (const f of texFiles) {
-        allResources.set(f.path, { path: f.path, content: f.content });
-      }
-
-      // Track files we've already tried to fetch (to avoid infinite loops)
-      const attemptedFetches = new Set<string>();
-
-      // Iteratively resolve dependencies (max 5 iterations to prevent infinite loops)
-      const MAX_ITERATIONS = 5;
-      for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-        console.log(`\nDependency resolution iteration ${iteration + 1}`);
-        await updateProgress(`Detecting dependencies (pass ${iteration + 1})...`);
-
-        // Send current resources to /deps (with retry for transient failures)
-        const depsResponse = await fetchWithRetry(`${latexServiceUrl}/deps`, {
-          method: "POST",
-          headers: getLatexServiceHeaders(),
-          body: JSON.stringify({
-            resources: Array.from(allResources.values()),
-            target: args.filePath,
-            compiler: "pdflatex",
-          }),
-          timeout: 60000, // 1 minute for deps detection
-        });
-
-        if (!depsResponse.ok) {
-          const errorText = await depsResponse.text();
-          throw new Error(`Dependency detection failed: ${errorText}`);
-        }
-
-        const depsResult = await depsResponse.json();
-        console.log("Dependencies detected:", depsResult.dependencies?.length || 0);
-        console.log("Missing files:", depsResult.missingFiles);
-
-        // Store the dependencies from this iteration
-        if (depsResult.dependencies && depsResult.dependencies.length > 0) {
-          finalDependencies = depsResult.dependencies;
-        }
-
-        // If no missing files, we're done with dependency resolution
-        if (!depsResult.missingFiles || depsResult.missingFiles.length === 0) {
-          console.log("No missing files - dependency resolution complete");
-          break;
-        }
-
-        // Collect files we need to fetch
-        const filesToFetch = new Set<string>();
-
-        for (const missing of depsResult.missingFiles) {
-          // Build and normalize full path (handles .. references)
-          const fullPath = normalizePath(dirPath, missing);
-
-          // Skip if path would escape repository root
-          if (fullPath === null) {
-            console.log(`Skipping path that escapes repo root: ${missing}`);
-            continue;
-          }
-
-          // Skip if already attempted
-          if (attemptedFetches.has(fullPath)) continue;
-
-          filesToFetch.add(fullPath);
-          attemptedFetches.add(fullPath);
-
-          // Also try with common extensions if no extension
-          if (!missing.includes(".")) {
-            const extensions = [".bbx", ".cbx", ".bib", ".sty", ".cls", ".bst"];
-            for (const ext of extensions) {
-              const withExt = fullPath + ext;
-              if (!attemptedFetches.has(withExt)) {
-                filesToFetch.add(withExt);
-                attemptedFetches.add(withExt);
-              }
-            }
-          }
-        }
-
-        if (filesToFetch.size === 0) {
-          console.log("No new files to fetch - stopping");
-          break;
-        }
-
-        console.log(`Fetching ${filesToFetch.size} files: ${Array.from(filesToFetch).join(", ")}`);
-        await updateProgress("Fetching missing files...");
-
-        // Fetch the missing files
-        const fetchPromises = Array.from(filesToFetch).map((p) =>
-          fetchSingleFile(parsed.owner, parsed.repo, args.branch, p, token || "", effectiveProvider, isSelfHosted ? gitlabBaseUrl : undefined)
-        );
-        const fetched = await Promise.all(fetchPromises);
-        const newFiles = fetched.filter((f): f is NonNullable<typeof f> => f !== null);
-
-        console.log(`Successfully fetched ${newFiles.length} files`);
-        await updateProgress("Fetched files");
-
-        if (newFiles.length === 0) {
-          console.log("Could not fetch any missing files - stopping");
-          break;
-        }
-
-        // Add new files to resources - keep full paths to preserve directory structure
-        for (const f of newFiles) {
-          if (!allResources.has(f.path)) {
-            allResources.set(f.path, {
-              path: f.path,
-              content: f.content,
-              encoding: f.encoding,
-            });
-          }
-        }
-      }
-
-      console.log(`\nCompiling with ${allResources.size} total files`);
-      await updateProgress("Compiling LaTeX...");
-
-      // Final compile with all resolved dependencies
-      // Use retry for server errors (5xx) but not for client errors (4xx)
-      pdfResponse = await fetchWithRetry(`${latexServiceUrl}/compile`, {
-        method: "POST",
-        headers: getLatexServiceHeaders(),
-        body: JSON.stringify({
-          resources: Array.from(allResources.values()),
-          target: args.filePath,
-          compiler: "pdflatex",
-        }),
-        timeout: DEFAULT_LATEX_SERVICE_TIMEOUT,
-      }, 2); // Max 2 retries for compile
-    } else {
-      // Fallback to LaTeX.Online for public repos
-      let repoCheckUrl: string;
-      if (parsed.provider === "github") {
-        repoCheckUrl = `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`;
-      } else {
-        const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
-        repoCheckUrl = `https://gitlab.com/api/v4/projects/${projectId}`;
-      }
-
-      const repoCheckResponse = await fetch(repoCheckUrl, {
-        headers: {
-          "User-Agent": "Carrel",
-        },
-      });
-
-      let isPublicRepo = false;
-      if (repoCheckResponse.ok) {
-        if (parsed.provider === "gitlab") {
-          const repoData = await repoCheckResponse.json();
-          isPublicRepo = repoData.visibility === "public";
-        } else {
-          isPublicRepo = true;
-        }
-      }
-
-      if (isPublicRepo) {
-        const repoUrl = parsed.provider === "github"
-          ? `https://github.com/${parsed.owner}/${parsed.repo}`
-          : `https://gitlab.com/${parsed.owner}/${parsed.repo}`;
-        const compileUrl = `https://latexonline.cc/compile?git=${encodeURIComponent(repoUrl)}&target=${encodeURIComponent(args.filePath)}&branch=${encodeURIComponent(args.branch)}`;
-        pdfResponse = await fetch(compileUrl);
-      } else {
-        throw new Error(
-          "Private repo compilation requires LATEX_SERVICE_URL to be configured. " +
-          "See latex-service/README.md for setup instructions."
-        );
+      if (overleafParsed) {
+        archiveGitUrl = overleafParsed.gitUrl;
       }
     }
-    } // Close GitHub/GitLab else block
+
+    // Fetch all LaTeX-related files via selective archive
+    await updateProgress("Fetching all LaTeX files...");
+
+    const archiveResponse = await fetchWithRetry(`${latexServiceUrl}/git/selective-archive`, {
+      method: "POST",
+      headers: getLatexServiceHeaders(),
+      body: JSON.stringify({
+        gitUrl: archiveGitUrl,
+        branch: args.branch,
+        auth,
+        extensions: LATEX_EXTENSIONS,
+      }),
+      timeout: 120000,
+    });
+
+    if (!archiveResponse.ok) {
+      await updateProgress(null);
+      let errorMessage = "Failed to fetch repository files";
+      try {
+        const responseText = await archiveResponse.text();
+        if (responseText.trim().startsWith("<!DOCTYPE") || responseText.trim().startsWith("<html")) {
+          errorMessage = `Failed to fetch repository files (HTTP ${archiveResponse.status}). ` +
+            "This usually indicates an authentication error or service issue.";
+        } else {
+          try {
+            const errorData = JSON.parse(responseText);
+            errorMessage = errorData.error || errorMessage;
+          } catch {
+            errorMessage = responseText.length > 500
+              ? `Failed to fetch repository files: ${responseText.substring(0, 500)}...`
+              : `Failed to fetch repository files: ${responseText}`;
+          }
+        }
+      } catch {
+        errorMessage = `Failed to fetch repository files (HTTP ${archiveResponse.status})`;
+      }
+      throw new Error(errorMessage);
+    }
+
+    const { files } = await archiveResponse.json() as { files: Array<{ path: string; content: string; encoding?: string }> };
+    console.log(`Fetched ${files.length} files for ${provider}`);
+
+    if (files.length === 0) {
+      await updateProgress(null);
+      throw new Error("No LaTeX files found in repository.");
+    }
+
+    // Compile
+    await updateProgress("Compiling LaTeX...");
+
+    const pdfResponse = await fetchWithRetry(`${latexServiceUrl}/compile`, {
+      method: "POST",
+      headers: getLatexServiceHeaders(),
+      body: JSON.stringify({
+        resources: files,
+        target: args.filePath,
+        compiler: "pdflatex",
+      }),
+      timeout: DEFAULT_LATEX_SERVICE_TIMEOUT,
+    }, 2);
 
     if (!pdfResponse.ok) {
-      await updateProgress(null); // Clear progress on error
+      await updateProgress(null);
       let errorMessage = "LaTeX compilation failed";
       try {
         const responseText = await pdfResponse.text();
@@ -769,10 +260,34 @@ export const compileLatexInternal = internalAction({
       throw new Error(errorMessage);
     }
 
+    console.log(`Compile succeeded with ${files.length} files`);
+
+    // Get dependencies from X-Dependencies header (parsed from .fls file by latex-service)
+    let finalDependencies: string[] = [];
+    const depsHeader = pdfResponse.headers.get("X-Dependencies");
+    if (depsHeader) {
+      try {
+        const parsed = JSON.parse(depsHeader) as string[];
+        finalDependencies = [...new Set(parsed)];
+        console.log(`Detected ${finalDependencies.length} dependencies from .fls`);
+      } catch {
+        console.log("Failed to parse X-Dependencies header");
+      }
+    }
+
+    // Fallback if no dependencies in header - use all source files
+    if (finalDependencies.length === 0) {
+      const sourceExtensions = [".tex", ".sty", ".cls", ".bst", ".bib", ".bbx", ".cbx", ".lbx", ".dbx", ".def", ".cfg", ".fd"];
+      finalDependencies = files
+        .map(f => f.path)
+        .filter(p => sourceExtensions.some(ext => p.endsWith(ext)));
+      console.log(`Using ${finalDependencies.length} source files as dependencies (fallback)`);
+    }
+
+    // Store PDF
     await updateProgress("Storing PDF...");
     const pdfBuffer = await pdfResponse.arrayBuffer();
 
-    // Store PDF directly in Convex storage (avoids array size limits)
     const blob = new Blob([pdfBuffer], { type: "application/pdf" });
     const storageId = await ctx.storage.store(blob);
 
@@ -790,7 +305,7 @@ export const compileLatexInternal = internalAction({
       console.log(`Cached ${dependencyHashes.length} dependency hashes`);
     }
 
-    await updateProgress(null); // Clear progress on success
+    await updateProgress(null);
 
     return {
       storageId,

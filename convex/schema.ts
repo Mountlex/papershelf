@@ -77,12 +77,8 @@ export default defineSchema({
     fileType: v.union(v.literal("tex"), v.literal("pdf")),
     pdfSourceType: v.union(
       v.literal("committed"),
-      v.literal("artifact"),
-      v.literal("release"),
       v.literal("compile")
     ),
-    artifactPattern: v.optional(v.string()),
-    releasePattern: v.optional(v.string()),
     isActive: v.boolean(),
   }).index("by_repository", ["repositoryId"]),
 

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { auth } from "./auth";
-import { validateFilePath, validatePattern } from "./lib/validation";
+import { validateFilePath } from "./lib/validation";
 import { parseRepoUrl } from "./lib/gitProviders";
 
 // List all repositories for a user (with sync status)
@@ -298,12 +298,8 @@ export const addTrackedFile = mutation({
     fileType: v.union(v.literal("tex"), v.literal("pdf")),
     pdfSourceType: v.union(
       v.literal("committed"),
-      v.literal("artifact"),
-      v.literal("release"),
       v.literal("compile")
     ),
-    artifactPattern: v.optional(v.string()),
-    releasePattern: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // Authorization check: verify the caller owns this repository
@@ -322,27 +318,11 @@ export const addTrackedFile = mutation({
       throw new Error(filePathValidation.error);
     }
 
-    // Validate patterns if provided
-    if (args.artifactPattern) {
-      const artifactValidation = validatePattern(args.artifactPattern);
-      if (!artifactValidation.valid) {
-        throw new Error(artifactValidation.error);
-      }
-    }
-    if (args.releasePattern) {
-      const releaseValidation = validatePattern(args.releasePattern);
-      if (!releaseValidation.valid) {
-        throw new Error(releaseValidation.error);
-      }
-    }
-
     const trackedFileId = await ctx.db.insert("trackedFiles", {
       repositoryId: args.repositoryId,
       filePath: filePathValidation.normalized, // Use normalized path
       fileType: args.fileType,
       pdfSourceType: args.pdfSourceType,
-      artifactPattern: args.artifactPattern,
-      releasePattern: args.releasePattern,
       isActive: true,
     });
 

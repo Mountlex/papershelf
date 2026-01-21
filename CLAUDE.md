@@ -58,7 +58,7 @@ Push a version tag (e.g., `git tag v1.0.0 && git push origin v1.0.0`) to trigger
 - `git.ts` - Git operations across providers
 - `latex.ts` - LaTeX compilation via external service
 - `lib/gitProviders.ts` - URL parsing for GitHub/GitLab/Overleaf
-- `lib/fileFetching.ts` - Authenticated file fetching from Git providers
+- `lib/http.ts` - HTTP utilities, retry logic, and timeout handling
 
 ## Frontend Organization (`src/`)
 

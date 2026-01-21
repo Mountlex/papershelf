@@ -98,19 +98,6 @@ curl -X POST https://your-service/compile \
   --output output.pdf
 ```
 
-### POST /compile/upload
-
-Compile from file uploads:
-
-```bash
-curl -X POST https://your-service/compile/upload \
-  -F "files=@main.tex" \
-  -F "files=@references.bib" \
-  -F "target=main.tex" \
-  -F "compiler=pdflatex" \
-  --output output.pdf
-```
-
 ### GET /health
 
 Health check endpoint.

@@ -6,8 +6,6 @@ const LIMITS = {
   MAX_RESOURCES: 100,
   MAX_RESOURCE_SIZE: 10 * 1024 * 1024, // 10MB per resource
   MAX_TOTAL_SIZE: 50 * 1024 * 1024, // 50MB total
-  MAX_FILE_UPLOAD_SIZE: 10 * 1024 * 1024, // 10MB per file
-  MAX_FILES: 50,
   MAX_OUTPUT_SIZE: 10 * 1024 * 1024, // 10MB - generous for verbose LaTeX logs
   MAX_THUMBNAIL_WIDTH: 4000,
   MIN_THUMBNAIL_WIDTH: 1,

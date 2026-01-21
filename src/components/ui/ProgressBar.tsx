@@ -36,7 +36,7 @@ export function ProgressBar({
         aria-label={label || `Progress: ${current} of ${total}`}
       >
         <div
-          className="h-full rounded-full bg-blue-600 transition-all duration-300 ease-out"
+          className="h-full rounded-full bg-primary-400 transition-all duration-300 ease-out"
           style={{ width: `${percentage}%` }}
         />
       </div>

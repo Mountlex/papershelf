@@ -613,8 +613,6 @@ export const addTrackedFile = mutation({
     title: v.string(),
     pdfSourceType: v.union(
       v.literal("committed"),
-      v.literal("artifact"),
-      v.literal("release"),
       v.literal("compile")
     ),
   },
