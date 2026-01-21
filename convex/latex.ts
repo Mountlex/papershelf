@@ -22,6 +22,42 @@ import {
   type DependencyHash,
 } from "./lib/http";
 
+// Comprehensive LaTeX extensions for full archive fetch
+const LATEX_EXTENSIONS = [
+  ".tex", ".sty", ".cls", ".bst", ".bib",      // Core LaTeX
+  ".bbx", ".cbx", ".lbx", ".dbx",              // Biblatex
+  ".def", ".cfg", ".fd", ".dtx", ".ins",       // Package/font definitions
+  ".png", ".jpg", ".jpeg", ".pdf", ".eps", ".svg", ".gif",  // Images
+  ".tikz", ".pgf",                              // TikZ
+];
+
+// Helper to get authentication for any git provider
+async function getAuthForProvider(
+  ctx: ActionCtx,
+  provider: string,
+  gitUrl: string,
+  selfHostedInstances: Array<{ url: string; token: string }>
+): Promise<{ username: string; password: string } | undefined> {
+  if (provider === "overleaf") {
+    const creds = await getOverleafCredentials(ctx);
+    return creds ? { username: creds.email, password: creds.token } : undefined;
+  }
+  if (provider === "github") {
+    const token = await getGitHubToken(ctx);
+    return token ? { username: "x-access-token", password: token } : undefined;
+  }
+  if (provider === "gitlab") {
+    const token = await getGitLabToken(ctx);
+    return token ? { username: "oauth2", password: token } : undefined;
+  }
+  if (provider === "selfhosted-gitlab") {
+    // Find the matching instance by URL
+    const matching = selfHostedInstances.find(i => gitUrl.startsWith(i.url));
+    return matching ? { username: "oauth2", password: matching.token } : undefined;
+  }
+  return undefined;
+}
+
 // Normalize a path and ensure it stays within the repository root
 // Returns null if the path would escape the root
 function normalizePath(basePath: string, relativePath: string): string | null {
@@ -135,6 +171,102 @@ export const compileLatexInternal = internalAction({
     let pdfResponse: Response;
     // Track dependencies for file-level change detection
     let finalDependencies: string[] = [];
+
+    // Try comprehensive selective archive first (works for all providers via git clone)
+    // This fetches all LaTeX-related files upfront, avoiding iterative dependency resolution
+    if (latexServiceUrl) {
+      const auth = await getAuthForProvider(ctx, provider, args.gitUrl, selfHostedInstances);
+
+      // For Overleaf, convert project URL to git URL
+      let archiveGitUrl = args.gitUrl;
+      if (provider === "overleaf") {
+        const overleafParsed = parseOverleafUrl(args.gitUrl);
+        if (overleafParsed) {
+          archiveGitUrl = overleafParsed.gitUrl;
+        }
+      }
+
+      try {
+        await updateProgress("Fetching all LaTeX files...");
+
+        const archiveResponse = await fetchWithRetry(`${latexServiceUrl}/git/selective-archive`, {
+          method: "POST",
+          headers: getLatexServiceHeaders(),
+          body: JSON.stringify({
+            gitUrl: archiveGitUrl,
+            branch: args.branch,
+            auth,
+            extensions: LATEX_EXTENSIONS,
+          }),
+          timeout: 120000,
+        });
+
+        if (archiveResponse.ok) {
+          const { files } = await archiveResponse.json() as { files: Array<{ path: string; content: string; encoding?: string }> };
+          console.log(`Full archive fetched ${files.length} files for ${provider}`);
+
+          if (files.length > 0) {
+            await updateProgress(`Compiling LaTeX (${files.length} files)...`);
+
+            // Send directly to compile - no iterative deps needed
+            pdfResponse = await fetchWithRetry(`${latexServiceUrl}/compile`, {
+              method: "POST",
+              headers: getLatexServiceHeaders(),
+              body: JSON.stringify({
+                resources: files,
+                target: args.filePath,
+                compiler: "pdflatex",
+              }),
+              timeout: DEFAULT_LATEX_SERVICE_TIMEOUT,
+            }, 2);
+
+            if (pdfResponse.ok) {
+              // Success! Extract dependencies from file list
+              finalDependencies = files.map(f => f.path);
+              console.log(`Full archive compile succeeded with ${files.length} files`);
+
+              // Skip to PDF storage (jump past provider-specific code)
+              await updateProgress("Storing PDF...");
+              const pdfBuffer = await pdfResponse.arrayBuffer();
+
+              // Store PDF directly in Convex storage
+              const blob = new Blob([pdfBuffer], { type: "application/pdf" });
+              const storageId = await ctx.storage.store(blob);
+
+              // Fetch blob hashes for dependencies
+              let dependencyHashes: DependencyHash[] = [];
+              if (finalDependencies.length > 0) {
+                await updateProgress("Caching dependency info...");
+                dependencyHashes = await fetchDependencyHashes(
+                  ctx,
+                  args.gitUrl,
+                  args.branch,
+                  finalDependencies
+                );
+                console.log(`Cached ${dependencyHashes.length} dependency hashes`);
+              }
+
+              await updateProgress(null);
+              return {
+                storageId,
+                size: pdfBuffer.byteLength,
+                dependencies: dependencyHashes,
+              };
+            }
+            // Compile failed - fall through to iterative approach
+            console.log("Full archive compile failed, falling back to iterative approach");
+          }
+        } else if (archiveResponse.status === 413) {
+          console.log("Repository too large for full archive, using iterative approach");
+        } else {
+          console.log(`Full archive failed with status ${archiveResponse.status}, falling back to iterative`);
+        }
+      } catch (error) {
+        console.log("Full archive attempt failed, falling back to iterative:", error);
+      }
+    }
+
+    // Fall through to existing provider-specific iterative code
 
     // Handle Overleaf projects - use iterative dependency resolution like GitHub/GitLab
     if (provider === "overleaf") {

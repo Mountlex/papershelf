@@ -444,39 +444,10 @@ export const refreshRepository = action({
           }
         }
 
-        // For non-compile source types (without cached hash), always need sync when commit changes
-        if (!trackedFile || trackedFile.pdfSourceType !== "compile") {
-          await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
-            id: paper._id,
-            needsSync: true,
-            repositoryId: args.repositoryId,
-            attemptId,
-          });
-          continue;
-        }
-
-        // For compile source type with cached dependencies, check if any changed
-        if (paper.cachedDependencies && paper.cachedDependencies.length > 0) {
-          const dependenciesChanged = await checkDependenciesChanged(
-            ctx,
-            repository.gitUrl,
-            repository.defaultBranch,
-            paper.cachedDependencies
-          );
-
-          if (!dependenciesChanged) {
-            // Dependencies unchanged - update commit hash without recompilation
-            await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
-              id: paper._id,
-              cachedCommitHash: latestCommit.sha,
-              repositoryId: args.repositoryId,
-              attemptId,
-            });
-            continue;
-          }
-        }
-
-        // Dependencies changed or no cached dependencies - needs sync
+        // For all source types: mark needsSync=true when commit changes
+        // Note: buildPaper will do its own dependency check for compile papers
+        // to skip unnecessary recompilation. We always mark needsSync here so the
+        // user can see "Needs sync" in the UI and trigger a build when ready.
         await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
           id: paper._id,
           needsSync: true,

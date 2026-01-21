@@ -812,7 +812,7 @@ app.post("/git/archive", rateLimit, async (req, res) => {
       return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
     }
 
-    // Recursively read all files with depth limit
+    // Recursively read all files with depth limit and size/count tracking
     const files = [];
     const binaryExtensions = new Set([
       ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif",
@@ -820,7 +820,14 @@ app.post("/git/archive", rateLimit, async (req, res) => {
     ]);
     const MAX_DEPTH = 20; // Prevent stack overflow on deeply nested repos
 
+    // Track totals for repository limits
+    let totalSize = 0;
+    let fileCount = 0;
+    let limitExceeded = null; // Will hold error info if limits exceeded
+
     async function readDir(dirPath, relativePath = "", depth = 0) {
+      if (limitExceeded) return; // Stop if limits already exceeded
+
       if (depth > MAX_DEPTH) {
         req.log.warn(`Max directory depth (${MAX_DEPTH}) exceeded at ${relativePath}`);
         return;
@@ -829,6 +836,7 @@ app.post("/git/archive", rateLimit, async (req, res) => {
       const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
       for (const entry of entries) {
+        if (limitExceeded) return; // Stop if limits exceeded
         if (entry.name === ".git") continue;
 
         const fullPath = path.join(dirPath, entry.name);
@@ -845,6 +853,28 @@ app.post("/git/archive", rateLimit, async (req, res) => {
             if (content.length > LIMITS.MAX_RESOURCE_SIZE) {
               req.log.info(`Skipping large file: ${relPath} (${content.length} bytes)`);
               continue;
+            }
+
+            // Check repository size limit
+            totalSize += content.length;
+            if (totalSize > LIMITS.MAX_REPO_SIZE) {
+              limitExceeded = {
+                error: "Repository content too large",
+                totalSize,
+                limit: LIMITS.MAX_REPO_SIZE,
+              };
+              return;
+            }
+
+            // Check repository file count limit
+            fileCount++;
+            if (fileCount > LIMITS.MAX_REPO_FILES) {
+              limitExceeded = {
+                error: "Too many files in repository",
+                fileCount,
+                limit: LIMITS.MAX_REPO_FILES,
+              };
+              return;
             }
 
             if (binaryExtensions.has(ext)) {
@@ -867,6 +897,11 @@ app.post("/git/archive", rateLimit, async (req, res) => {
     }
 
     await readDir(workDir);
+
+    // Return 413 if limits were exceeded
+    if (limitExceeded) {
+      return res.status(413).json(limitExceeded);
+    }
 
     res.json({ files });
   }, req.log);
@@ -916,6 +951,11 @@ app.post("/git/selective-archive", rateLimit, async (req, res) => {
     ]);
     const MAX_DEPTH = 20;
 
+    // Track totals for repository limits
+    let totalSize = 0;
+    let fileCount = 0;
+    let limitExceeded = null; // Will hold error info if limits exceeded
+
     // Normalize extensions to lowercase with leading dot
     const normalizedExtensions = extensions
       ? new Set(extensions.map(ext => ext.startsWith(".") ? ext.toLowerCase() : `.${ext.toLowerCase()}`))
@@ -927,6 +967,8 @@ app.post("/git/selective-archive", rateLimit, async (req, res) => {
       : null;
 
     async function readDir(dirPath, relativePath = "", depth = 0) {
+      if (limitExceeded) return; // Stop if limits already exceeded
+
       if (depth > MAX_DEPTH) {
         req.log.warn(`Max directory depth (${MAX_DEPTH}) exceeded at ${relativePath}`);
         return;
@@ -935,6 +977,7 @@ app.post("/git/selective-archive", rateLimit, async (req, res) => {
       const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
       for (const entry of entries) {
+        if (limitExceeded) return; // Stop if limits exceeded
         if (entry.name === ".git") continue;
 
         const fullPath = path.join(dirPath, entry.name);
@@ -962,6 +1005,28 @@ app.post("/git/selective-archive", rateLimit, async (req, res) => {
               continue;
             }
 
+            // Check repository size limit
+            totalSize += content.length;
+            if (totalSize > LIMITS.MAX_REPO_SIZE) {
+              limitExceeded = {
+                error: "Repository content too large",
+                totalSize,
+                limit: LIMITS.MAX_REPO_SIZE,
+              };
+              return;
+            }
+
+            // Check repository file count limit
+            fileCount++;
+            if (fileCount > LIMITS.MAX_REPO_FILES) {
+              limitExceeded = {
+                error: "Too many files in repository",
+                fileCount,
+                limit: LIMITS.MAX_REPO_FILES,
+              };
+              return;
+            }
+
             if (binaryExtensions.has(ext)) {
               files.push({
                 path: relPath,
@@ -982,6 +1047,11 @@ app.post("/git/selective-archive", rateLimit, async (req, res) => {
     }
 
     await readDir(workDir);
+
+    // Return 413 if limits were exceeded
+    if (limitExceeded) {
+      return res.status(413).json(limitExceeded);
+    }
 
     // Report which requested paths were not found (useful for debugging)
     const foundPaths = new Set(files.map(f => f.path));
