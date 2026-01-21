@@ -1,7 +1,7 @@
 import { createRootRouteWithContext, Link, Outlet, Scripts, HeadContent } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { QueryClient } from "@tanstack/react-query";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect } from "react";
 import "../index.css";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
