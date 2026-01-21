@@ -93,7 +93,7 @@ function GalleryPage() {
   // Search, sort, and filter state
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
-  const [sortBy, setSortBy] = useState<"newest" | "oldest" | "a-z" | "repository">("newest");
+  const [sortBy, setSortBy] = useState<"recent" | "least-recent" | "a-z" | "repository">("recent");
 
   // Toast state using hook
   const { toast, showError, showToast, clearToast } = useToast();
@@ -198,10 +198,10 @@ function GalleryPage() {
     // Apply sorting
     result.sort((a, b) => {
       switch (sortBy) {
-        case "newest":
-          return (b._creationTime ?? 0) - (a._creationTime ?? 0);
-        case "oldest":
-          return (a._creationTime ?? 0) - (b._creationTime ?? 0);
+        case "recent":
+          return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+        case "least-recent":
+          return (a.updatedAt ?? 0) - (b.updatedAt ?? 0);
         case "a-z":
           return a.title.localeCompare(b.title);
         case "repository": {
@@ -214,7 +214,7 @@ function GalleryPage() {
             if (!repoB) return -1;
             return repoA.localeCompare(repoB);
           }
-          return (b._creationTime ?? 0) - (a._creationTime ?? 0);
+          return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
         }
         default:
           return 0;
@@ -468,8 +468,8 @@ function GalleryPage() {
             onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
             className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
           >
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
+            <option value="recent">Recent</option>
+            <option value="least-recent">Least recent</option>
             <option value="a-z">A-Z</option>
             <option value="repository">By repository</option>
           </select>
