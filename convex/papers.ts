@@ -681,9 +681,10 @@ export const listTrackedFiles = query({
     const trackedFiles = await ctx.db
       .query("trackedFiles")
       .withIndex("by_repository", (q) => q.eq("repositoryId", args.repositoryId))
+      .filter((q) => q.eq(q.field("isActive"), true))
       .collect();
 
-    // Get associated papers
+    // Get associated papers and filter out orphaned tracked files
     const filesWithPapers = await Promise.all(
       trackedFiles.map(async (file) => {
         const paper = await ctx.db
@@ -694,7 +695,8 @@ export const listTrackedFiles = query({
       })
     );
 
-    return filesWithPapers;
+    // Only return tracked files that have an associated paper
+    return filesWithPapers.filter((f) => f.paper !== null);
   },
 });
 
@@ -756,6 +758,7 @@ export const uploadPdf = mutation({
     userId: v.id("users"),
     title: v.string(),
     pdfStorageId: v.id("_storage"),
+    thumbnailStorageId: v.optional(v.id("_storage")),
     fileSize: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -774,6 +777,7 @@ export const uploadPdf = mutation({
       userId: args.userId,
       title: args.title,
       pdfFileId: args.pdfStorageId,
+      thumbnailFileId: args.thumbnailStorageId,
       fileSize: args.fileSize,
       isPublic: false,
       updatedAt: Date.now(),
@@ -854,6 +858,11 @@ export const deletePaper = mutation({
     }
     if (paper.thumbnailFileId) {
       await ctx.storage.delete(paper.thumbnailFileId);
+    }
+
+    // Delete associated tracked file if it exists
+    if (paper.trackedFileId) {
+      await ctx.db.delete(paper.trackedFileId);
     }
 
     await ctx.db.delete(args.id);

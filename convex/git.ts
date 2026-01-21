@@ -1035,6 +1035,147 @@ export const fetchFileContentInternal = internalAction({
   },
 });
 
+// Internal action to fetch a file and store it directly to Convex storage
+// This avoids the return value size limit by not returning the file content
+export const fetchAndStoreFileInternal = internalAction({
+  args: {
+    gitUrl: v.string(),
+    filePath: v.string(),
+    branch: v.string(),
+    userId: v.optional(v.id("users")),
+    contentType: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<{ storageId: Id<"_storage">; size: number }> => {
+    const contentType = args.contentType ?? "application/octet-stream";
+
+    // Get all self-hosted GitLab instances to check if URL matches any
+    const selfHostedInstances = args.userId
+      ? await getAllSelfHostedGitLabInstancesByUserId(ctx, args.userId)
+      : await getAllSelfHostedGitLabInstances(ctx);
+    const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
+
+    let arrayBuffer: ArrayBuffer;
+
+    // Handle Overleaf projects
+    if (provider === "overleaf") {
+      const overleafParsed = parseOverleafUrl(args.gitUrl);
+      if (!overleafParsed) {
+        throw new Error(`Invalid Overleaf URL: "${args.gitUrl}". Expected format: https://git.overleaf.com/<project_id> or https://www.overleaf.com/project/<project_id>`);
+      }
+
+      const credentials = args.userId
+        ? await getOverleafCredentialsByUserId(ctx, args.userId)
+        : await getOverleafCredentials(ctx);
+      if (!credentials) {
+        throw new Error("Overleaf credentials not configured.");
+      }
+
+      const latexServiceUrl = process.env.LATEX_SERVICE_URL;
+      if (!latexServiceUrl) {
+        throw new Error("LATEX_SERVICE_URL not configured. Required for Overleaf support.");
+      }
+
+      const response = await fetchWithTimeout(`${latexServiceUrl}/git/file`, {
+        method: "POST",
+        headers: getLatexServiceHeaders(),
+        body: JSON.stringify({
+          gitUrl: overleafParsed.gitUrl,
+          filePath: args.filePath,
+          branch: args.branch,
+          auth: credentials,
+        }),
+        timeout: 60000,
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Failed to fetch file from Overleaf: ${error}`);
+      }
+
+      const data = await response.json();
+      if (data.encoding === "base64") {
+        const binaryString = atob(data.content);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        arrayBuffer = bytes.buffer;
+      } else {
+        const encoder = new TextEncoder();
+        arrayBuffer = encoder.encode(data.content).buffer;
+      }
+    } else {
+      // GitHub or GitLab
+      const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
+      if (!parsed) {
+        throw new Error("Invalid repository URL. Expected GitHub, GitLab, or Overleaf URL.");
+      }
+
+      const isSelfHosted = parsed.provider === "selfhosted-gitlab";
+      const matchingInstance = isSelfHosted
+        ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
+        : null;
+
+      if (isSelfHosted && !matchingInstance) {
+        throw new Error(
+          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
+          `The instance may have been deleted. Please re-add the repository.`
+        );
+      }
+
+      const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
+      let token: string | null;
+      if (parsed.provider === "github") {
+        token = args.userId
+          ? await getGitHubTokenByUserId(ctx, args.userId)
+          : await getGitHubToken(ctx);
+      } else if (isSelfHosted) {
+        token = matchingInstance!.token;
+      } else {
+        token = args.userId
+          ? await getGitLabTokenByUserId(ctx, args.userId)
+          : await getGitLabToken(ctx);
+      }
+
+      let rawUrl: string;
+      const headers: Record<string, string> = {
+        "User-Agent": "Carrel",
+      };
+
+      if (parsed.provider === "github") {
+        rawUrl = `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${args.branch}/${args.filePath}`;
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+      } else {
+        const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
+        const encodedFilePath = encodeURIComponent(args.filePath);
+        rawUrl = `${baseUrl}/api/v4/projects/${projectId}/repository/files/${encodedFilePath}/raw?ref=${args.branch}`;
+        if (token) {
+          headers["PRIVATE-TOKEN"] = token;
+        }
+      }
+
+      const response = await fetchWithTimeout(rawUrl, { headers });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch file: ${response.statusText}`);
+      }
+
+      arrayBuffer = await response.arrayBuffer();
+    }
+
+    // Store directly to Convex storage
+    const blob = new Blob([arrayBuffer], { type: contentType });
+    const storageId = await ctx.storage.store(blob);
+
+    return {
+      storageId,
+      size: arrayBuffer.byteLength,
+    };
+  },
+});
+
 // Internal action to fetch file hashes in batch (for multiple files at once)
 // Optimizes Overleaf by cloning once for all files instead of once per file
 export const fetchFileHashBatchInternal = internalAction({

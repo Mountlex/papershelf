@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import type { RepoFile, SelectedFile } from "./types";
 import type { Id } from "../../../convex/_generated/dataModel";
 
@@ -12,6 +12,16 @@ interface ConfigureRepositoryModalProps {
   onClose: () => void;
   onAddFiles: (files: SelectedFile[]) => Promise<void>;
   listRepositoryFiles: (args: { gitUrl: string; path: string; branch: string }) => Promise<RepoFile[]>;
+  trackedFilePaths?: string[];
+}
+
+// Normalize path for comparison (matches backend validation.ts logic)
+function normalizePath(path: string): string {
+  return path
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((seg) => seg !== "" && seg !== ".")
+    .join("/");
 }
 
 export function ConfigureRepositoryModal({
@@ -19,7 +29,14 @@ export function ConfigureRepositoryModal({
   onClose,
   onAddFiles,
   listRepositoryFiles,
+  trackedFilePaths = [],
 }: ConfigureRepositoryModalProps) {
+  // Normalize tracked paths once for efficient comparison
+  const normalizedTrackedPaths = useMemo(
+    () => trackedFilePaths.map(normalizePath),
+    [trackedFilePaths]
+  );
+
   const [currentPath, setCurrentPath] = useState("");
   const [repoFiles, setRepoFiles] = useState<RepoFile[] | null>(null);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
@@ -152,6 +169,7 @@ export function ConfigureRepositoryModal({
                       key={file.path}
                       file={file}
                       isSelected={selectedFiles.some((f) => f.path === file.path)}
+                      isAlreadyTracked={normalizedTrackedPaths.includes(normalizePath(file.path))}
                       onNavigate={navigateToFolder}
                       onToggle={toggleFileSelection}
                     />
@@ -233,15 +251,19 @@ export function ConfigureRepositoryModal({
 function FileItem({
   file,
   isSelected,
+  isAlreadyTracked,
   onNavigate,
   onToggle,
 }: {
   file: RepoFile;
   isSelected: boolean;
+  isAlreadyTracked: boolean;
   onNavigate: (path: string) => void;
   onToggle: (file: { path: string; name: string }) => void;
 }) {
-  const isTexOrPdf = file.name.endsWith(".tex") || file.name.endsWith(".pdf");
+  const lowerName = file.name.toLowerCase();
+  const isTexOrPdf = lowerName.endsWith(".tex") || lowerName.endsWith(".pdf");
+  const isSelectable = isTexOrPdf && !isAlreadyTracked;
 
   if (file.type === "dir") {
     return (
@@ -259,17 +281,19 @@ function FileItem({
 
   return (
     <button
-      onClick={() => isTexOrPdf && onToggle(file)}
-      disabled={!isTexOrPdf}
+      onClick={() => isSelectable && onToggle(file)}
+      disabled={!isSelectable}
       className={`flex w-full items-center gap-2 rounded p-2 text-left text-sm ${
-        isTexOrPdf
-          ? isSelected
-            ? "bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-300"
-            : "hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
-          : "cursor-not-allowed text-gray-400 dark:text-gray-500"
+        isAlreadyTracked
+          ? "cursor-not-allowed bg-gray-50 text-gray-500 dark:bg-gray-800/50 dark:text-gray-400"
+          : isTexOrPdf
+            ? isSelected
+              ? "bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-300"
+              : "hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+            : "cursor-not-allowed text-gray-400 dark:text-gray-500"
       }`}
     >
-      {isTexOrPdf && (
+      {isTexOrPdf && !isAlreadyTracked && (
         <input
           type="checkbox"
           checked={isSelected}
@@ -277,14 +301,22 @@ function FileItem({
           className="h-4 w-4 rounded border-gray-300 text-blue-600 dark:border-gray-600 dark:bg-gray-700"
         />
       )}
+      {isAlreadyTracked && (
+        <svg className="h-4 w-4 text-green-500 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+        </svg>
+      )}
       <svg className={`h-4 w-4 ${isTexOrPdf ? "text-gray-500 dark:text-gray-400" : "text-gray-300 dark:text-gray-600"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
       </svg>
       <span>{file.name}</span>
-      {file.name.endsWith(".tex") && (
+      {isAlreadyTracked && (
+        <span className="ml-auto rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-400">Added</span>
+      )}
+      {!isAlreadyTracked && lowerName.endsWith(".tex") && (
         <span className="ml-auto rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-700 dark:bg-green-900/30 dark:text-green-400">LaTeX</span>
       )}
-      {file.name.endsWith(".pdf") && (
+      {!isAlreadyTracked && lowerName.endsWith(".pdf") && (
         <span className="ml-auto rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700 dark:bg-red-900/30 dark:text-red-400">PDF</span>
       )}
     </button>

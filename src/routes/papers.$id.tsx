@@ -206,13 +206,15 @@ function PaperDetailPage() {
                         label={paper.trackedFile?.pdfSourceType === "compile" ? "Compilation failed" : "Fetch failed"}
                         title={buildError || paper.lastSyncError || undefined}
                       />
-                      <button
-                        onClick={handleBuild}
-                        disabled={isBuilding}
-                        className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                      >
-                        Retry
-                      </button>
+                      {paper.repository && (
+                        <button
+                          onClick={handleBuild}
+                          disabled={isBuilding}
+                          className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                        >
+                          Retry
+                        </button>
+                      )}
                     </>
                   ) : !paper.repository ? (
                     <StatusBadge status="info" label="Uploaded" />
@@ -307,45 +309,50 @@ function PaperDetailPage() {
             <CompilationLog error={paper.lastSyncError} />
           )}
 
-          <div className="flex flex-col gap-2">
-            <button
-              onClick={() => {
-                const isUpToDate = !!(paper.pdfUrl && !paper.needsSync);
-                const isCompile = paper.trackedFile?.pdfSourceType === "compile";
-                handleBuild(!!(isUpToDate && isCompile));
-              }}
-              disabled={isBuilding}
-              className="w-full rounded-md border border-primary-200 bg-primary-50 px-4 py-2 text-sm font-normal text-gray-900 dark:text-gray-100 hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
-            >
-              {isBuilding ? (
-                <span className="flex items-center justify-center">
-                  <svg className="mr-2 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  {paper.trackedFile?.pdfSourceType === "compile" ? "Compiling..." : "Fetching..."}
-                </span>
-              ) : (
-                (() => {
+          {/* Only show refresh/build controls for repository-linked papers */}
+          {paper.repository && (
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => {
+                  const isUpToDate = !!(paper.pdfUrl && !paper.needsSync);
                   const isCompile = paper.trackedFile?.pdfSourceType === "compile";
-                  const isUpToDate = paper.pdfUrl && !paper.needsSync;
-                  if (!paper.pdfUrl) return isCompile ? "Compile LaTeX" : "Fetch PDF";
-                  if (isUpToDate && isCompile) return "Force Recompile";
-                  return "Refresh PDF";
-                })()
+                  handleBuild(!!(isUpToDate && isCompile));
+                }}
+                disabled={isBuilding}
+                className="w-full rounded-md border border-primary-200 bg-primary-50 px-4 py-2 text-sm font-normal text-gray-900 dark:text-gray-100 hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+              >
+                {isBuilding ? (
+                  <span className="flex items-center justify-center">
+                    <svg className="mr-2 h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    {paper.trackedFile?.pdfSourceType === "compile" ? "Compiling..." : "Fetching..."}
+                  </span>
+                ) : (
+                  (() => {
+                    const isCompile = paper.trackedFile?.pdfSourceType === "compile";
+                    const isUpToDate = paper.pdfUrl && !paper.needsSync;
+                    if (!paper.pdfUrl) return isCompile ? "Compile LaTeX" : "Fetch PDF";
+                    if (isUpToDate && isCompile) return "Force Recompile";
+                    return "Refresh PDF";
+                  })()
+                )}
+              </button>
+              {/* Compilation Progress */}
+              <BuildProgress
+                status={paper.buildStatus}
+                progress={paper.compilationProgress}
+                isCompile={paper.trackedFile?.pdfSourceType === "compile"}
+              />
+              {buildError && (
+                <CompilationLog error={buildError} />
               )}
-            </button>
-            {/* Compilation Progress */}
-            <BuildProgress
-              status={paper.buildStatus}
-              progress={paper.compilationProgress}
-              isCompile={paper.trackedFile?.pdfSourceType === "compile"}
-            />
-            {buildError && (
-              <CompilationLog error={buildError} />
-            )}
-            {/* Compact icon button bar */}
-            <div className="flex items-center justify-center gap-2">
+            </div>
+          )}
+
+          {/* Compact icon button bar - shown for all papers */}
+          <div className="flex items-center justify-center gap-2">
               {paper.pdfUrl && (
                 <a
                   href={paper.pdfUrl}
@@ -400,7 +407,6 @@ function PaperDetailPage() {
                 </svg>
               </button>
             </div>
-          </div>
 
           {/* Share Link */}
           {paper.isPublic && paper.shareSlug && (

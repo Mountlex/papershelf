@@ -145,7 +145,7 @@ export const generateThumbnail = internalAction({
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
           pdfBase64,
-          width: 400,
+          width: 800,
           format: "png",
         }),
         timeout: THUMBNAIL_TIMEOUT,

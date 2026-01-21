@@ -232,56 +232,65 @@ export const remove = mutation({
       throw new Error("Unauthorized");
     }
 
-    // Delete tracked files
+    // Helper to delete a paper and all its associated data
+    const deletePaperAndAssociatedData = async (paper: {
+      _id: typeof args.id;
+      pdfFileId?: string;
+      thumbnailFileId?: string;
+    }) => {
+      // Delete version history and their storage files
+      const versions = await ctx.db
+        .query("paperVersions")
+        .withIndex("by_paper", (q) => q.eq("paperId", paper._id))
+        .collect();
+
+      for (const version of versions) {
+        if (version.pdfFileId) {
+          await ctx.storage.delete(version.pdfFileId);
+        }
+        if (version.thumbnailFileId) {
+          await ctx.storage.delete(version.thumbnailFileId);
+        }
+        await ctx.db.delete(version._id);
+      }
+
+      // Delete compilation jobs
+      const jobs = await ctx.db
+        .query("compilationJobs")
+        .withIndex("by_paper", (q) => q.eq("paperId", paper._id))
+        .collect();
+      for (const job of jobs) {
+        await ctx.db.delete(job._id);
+      }
+
+      // Delete paper's storage files
+      if (paper.pdfFileId) {
+        await ctx.storage.delete(paper.pdfFileId as Id<"_storage">);
+      }
+      if (paper.thumbnailFileId) {
+        await ctx.storage.delete(paper.thumbnailFileId as Id<"_storage">);
+      }
+
+      await ctx.db.delete(paper._id);
+    };
+
+    // Delete all papers associated with this repository (by repositoryId index)
+    const papers = await ctx.db
+      .query("papers")
+      .withIndex("by_repository", (q) => q.eq("repositoryId", args.id))
+      .collect();
+
+    for (const paper of papers) {
+      await deletePaperAndAssociatedData(paper);
+    }
+
+    // Delete all tracked files for this repository
     const trackedFiles = await ctx.db
       .query("trackedFiles")
       .withIndex("by_repository", (q) => q.eq("repositoryId", args.id))
       .collect();
 
     for (const file of trackedFiles) {
-      // Delete papers associated with tracked files
-      const papers = await ctx.db
-        .query("papers")
-        .withIndex("by_tracked_file", (q) => q.eq("trackedFileId", file._id))
-        .collect();
-
-      for (const paper of papers) {
-        // Delete version history and their storage files
-        const versions = await ctx.db
-          .query("paperVersions")
-          .withIndex("by_paper", (q) => q.eq("paperId", paper._id))
-          .collect();
-
-        for (const version of versions) {
-          if (version.pdfFileId) {
-            await ctx.storage.delete(version.pdfFileId);
-          }
-          if (version.thumbnailFileId) {
-            await ctx.storage.delete(version.thumbnailFileId);
-          }
-          await ctx.db.delete(version._id);
-        }
-
-        // Delete compilation jobs
-        const jobs = await ctx.db
-          .query("compilationJobs")
-          .withIndex("by_paper", (q) => q.eq("paperId", paper._id))
-          .collect();
-        for (const job of jobs) {
-          await ctx.db.delete(job._id);
-        }
-
-        // Delete paper's storage files
-        if (paper.pdfFileId) {
-          await ctx.storage.delete(paper.pdfFileId);
-        }
-        if (paper.thumbnailFileId) {
-          await ctx.storage.delete(paper.thumbnailFileId);
-        }
-
-        await ctx.db.delete(paper._id);
-      }
-
       await ctx.db.delete(file._id);
     }
 

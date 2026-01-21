@@ -17,6 +17,32 @@ export const Route = createFileRoute("/repositories")({
   component: RepositoriesPage,
 });
 
+// Wrapper component to fetch tracked files for the configure modal
+function ConfigureRepositoryModalWrapper({
+  repo,
+  onClose,
+  onAddFiles,
+  listRepositoryFiles,
+}: {
+  repo: Repository;
+  onClose: () => void;
+  onAddFiles: (files: SelectedFile[]) => Promise<void>;
+  listRepositoryFiles: (args: { gitUrl: string; path: string; branch: string }) => Promise<{ name: string; path: string; type: "file" | "dir" }[]>;
+}) {
+  const trackedFiles = useQuery(api.papers.listTrackedFiles, { repositoryId: repo._id });
+  const trackedFilePaths = trackedFiles?.map((f) => f.filePath) ?? [];
+
+  return (
+    <ConfigureRepositoryModal
+      repo={repo}
+      onClose={onClose}
+      onAddFiles={onAddFiles}
+      listRepositoryFiles={listRepositoryFiles}
+      trackedFilePaths={trackedFilePaths}
+    />
+  );
+}
+
 function RepositoriesPage() {
   const { user, isLoading: isUserLoading, isAuthenticated } = useUser();
   const repositories = useQuery(
@@ -474,7 +500,7 @@ function RepositoriesPage() {
 
       {/* Configure Repository Modal */}
       {configureRepo && (
-        <ConfigureRepositoryModal
+        <ConfigureRepositoryModalWrapper
           repo={configureRepo}
           onClose={() => setConfigureRepo(null)}
           onAddFiles={handleAddTrackedFiles}

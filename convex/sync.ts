@@ -930,16 +930,15 @@ export const buildPaper = action({
         fileSize = result.size;
         dependencies = result.dependencies;
       } else {
-        // Fetch committed PDF
-        const pdfData = await ctx.runAction(internal.git.fetchFileContentInternal, {
+        // Fetch committed PDF and store directly to Convex storage
+        const result = await ctx.runAction(internal.git.fetchAndStoreFileInternal, {
           gitUrl: repository.gitUrl,
           filePath: trackedFile.filePath,
           branch: repository.defaultBranch,
+          contentType: "application/pdf",
         });
-        // Store PDF in Convex storage
-        const blob = new Blob([new Uint8Array(pdfData.content)], { type: "application/pdf" });
-        storageId = await ctx.storage.store(blob);
-        fileSize = pdfData.size;
+        storageId = result.storageId;
+        fileSize = result.size;
 
         // For committed PDFs, fetch and store the blob hash for future change detection
         try {
@@ -1096,15 +1095,16 @@ export const buildPaperForMobile = internalAction({
         fileSize = result.size;
         dependencies = result.dependencies;
       } else {
-        const pdfData = await ctx.runAction(internal.git.fetchFileContentInternal, {
+        // Fetch committed PDF and store directly to Convex storage
+        const result = await ctx.runAction(internal.git.fetchAndStoreFileInternal, {
           gitUrl: repository.gitUrl,
           filePath: trackedFile.filePath,
           branch: repository.defaultBranch,
           userId, // Pass userId for mobile auth
+          contentType: "application/pdf",
         });
-        const blob = new Blob([new Uint8Array(pdfData.content)], { type: "application/pdf" });
-        storageId = await ctx.storage.store(blob);
-        fileSize = pdfData.size;
+        storageId = result.storageId;
+        fileSize = result.size;
       }
 
       const commitTime = latestCommit.unchanged

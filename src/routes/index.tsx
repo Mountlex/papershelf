@@ -9,6 +9,7 @@ import { Toast, ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../hooks/useToast";
 import { PaperCardSkeletonGrid, LiveRegion } from "../components/ui";
 import { DropZone } from "../components/DropZone";
+import { generateThumbnailFromPdf } from "../lib/thumbnail";
 
 export const Route = createFileRoute("/")({
   component: GalleryPage,
@@ -77,7 +78,6 @@ function GalleryPage() {
   const deletePaper = useMutation(api.papers.deletePaper);
   const generateUploadUrl = useMutation(api.papers.generateUploadUrl);
   const uploadPdf = useMutation(api.papers.uploadPdf);
-  const generateThumbnail = useAction(api.thumbnail.generateThumbnailForPaper);
   const refreshRepository = useAction(api.sync.refreshRepository);
 
   const [editingPaperId, setEditingPaperId] = useState<Id<"papers"> | null>(null);
@@ -199,17 +199,23 @@ function GalleryPage() {
     }
 
     // Apply sorting
+    // For uploaded papers (no repository), use _creationTime (upload date)
+    // For repository papers, use lastAffectedCommitTime (when content changed)
+    const getSortTime = (paper: typeof result[0]) => {
+      if (paper.repository) {
+        return paper.lastAffectedCommitTime ?? paper.updatedAt ?? 0;
+      }
+      // Uploaded paper - use creation time (upload date)
+      return paper._creationTime;
+    };
+
     result.sort((a, b) => {
       switch (sortBy) {
         case "recent": {
-          const aTime = a.lastAffectedCommitTime ?? a.updatedAt ?? 0;
-          const bTime = b.lastAffectedCommitTime ?? b.updatedAt ?? 0;
-          return bTime - aTime;
+          return getSortTime(b) - getSortTime(a);
         }
         case "least-recent": {
-          const aTime = a.lastAffectedCommitTime ?? a.updatedAt ?? 0;
-          const bTime = b.lastAffectedCommitTime ?? b.updatedAt ?? 0;
-          return aTime - bTime;
+          return getSortTime(a) - getSortTime(b);
         }
         case "a-z":
           return a.title.localeCompare(b.title);
@@ -223,9 +229,7 @@ function GalleryPage() {
             if (!repoB) return -1;
             return repoA.localeCompare(repoB);
           }
-          const aTime = a.lastAffectedCommitTime ?? a.updatedAt ?? 0;
-          const bTime = b.lastAffectedCommitTime ?? b.updatedAt ?? 0;
-          return bTime - aTime;
+          return getSortTime(b) - getSortTime(a);
         }
         default:
           return 0;
@@ -254,6 +258,26 @@ function GalleryPage() {
 
       setIsUploading(true);
       try {
+        // Generate thumbnail client-side
+        let thumbnailStorageId: Id<"_storage"> | undefined;
+        try {
+          const { blob: thumbnailBlob } = await generateThumbnailFromPdf(file);
+          const thumbnailUploadUrl = await generateUploadUrl();
+          const thumbnailResponse = await fetch(thumbnailUploadUrl, {
+            method: "POST",
+            headers: { "Content-Type": "image/png" },
+            body: thumbnailBlob,
+          });
+          if (thumbnailResponse.ok) {
+            const { storageId } = await thumbnailResponse.json();
+            thumbnailStorageId = storageId;
+          }
+        } catch (thumbnailError) {
+          console.warn("Client-side thumbnail generation failed:", thumbnailError);
+          // Continue without thumbnail - not critical
+        }
+
+        // Upload PDF
         const uploadUrl = await generateUploadUrl();
         const response = await fetch(uploadUrl, {
           method: "POST",
@@ -267,16 +291,12 @@ function GalleryPage() {
 
         const { storageId } = await response.json();
         const title = file.name.replace(/\.pdf$/i, "");
-        const paperId = await uploadPdf({
+        await uploadPdf({
           userId: user._id,
           title,
           pdfStorageId: storageId,
+          thumbnailStorageId,
           fileSize: file.size,
-        });
-
-        generateThumbnail({ paperId }).catch((error) => {
-          console.error("Thumbnail generation failed:", error);
-          showToast("Thumbnail generation failed - PDF uploaded successfully", "info");
         });
       } catch (error) {
         console.error("Upload failed:", error);
@@ -285,7 +305,7 @@ function GalleryPage() {
         setIsUploading(false);
       }
     },
-    [user, generateUploadUrl, uploadPdf, generateThumbnail, showToast, showError]
+    [user, generateUploadUrl, uploadPdf, showToast, showError]
   );
 
   const clearFilters = () => {
@@ -436,6 +456,25 @@ function GalleryPage() {
 
     setIsUploading(true);
     try {
+      // Generate thumbnail client-side
+      let thumbnailStorageId: Id<"_storage"> | undefined;
+      try {
+        const { blob: thumbnailBlob } = await generateThumbnailFromPdf(file);
+        const thumbnailUploadUrl = await generateUploadUrl();
+        const thumbnailResponse = await fetch(thumbnailUploadUrl, {
+          method: "POST",
+          headers: { "Content-Type": "image/png" },
+          body: thumbnailBlob,
+        });
+        if (thumbnailResponse.ok) {
+          const { storageId } = await thumbnailResponse.json();
+          thumbnailStorageId = storageId;
+        }
+      } catch (thumbnailError) {
+        console.warn("Client-side thumbnail generation failed:", thumbnailError);
+        // Continue without thumbnail - not critical
+      }
+
       // Get upload URL from Convex
       const uploadUrl = await generateUploadUrl();
 
@@ -454,17 +493,12 @@ function GalleryPage() {
 
       // Create the paper with the uploaded PDF
       const title = file.name.replace(/\.pdf$/i, "");
-      const paperId = await uploadPdf({
+      await uploadPdf({
         userId: user._id,
         title,
         pdfStorageId: storageId,
+        thumbnailStorageId,
         fileSize: file.size,
-      });
-
-      // Generate thumbnail in the background (don't block on it, show warning only)
-      generateThumbnail({ paperId }).catch((error) => {
-        console.error("Thumbnail generation failed:", error);
-        showToast("Thumbnail generation failed - PDF uploaded successfully", "info");
       });
     } catch (error) {
       console.error("Upload failed:", error);
@@ -922,7 +956,7 @@ function GalleryPage() {
                       )}
                     </span>
                   ) : (
-                    <span className="text-purple-600">Uploaded</span>
+                    <span className="text-gray-400">Uploaded</span>
                   )}
                   <span className="flex items-center">
                     {paper.isPublic ? (
@@ -942,7 +976,7 @@ function GalleryPage() {
                         </svg>
                         Public
                       </span>
-                    ) : (
+                    ) : paper.repository ? (
                       <span className="flex items-center">
                         <svg
                           className="mr-1 h-3 w-3"
@@ -959,7 +993,7 @@ function GalleryPage() {
                         </svg>
                         Private
                       </span>
-                    )}
+                    ) : null}
                   </span>
                 </div>
               </div>
