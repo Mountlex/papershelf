@@ -236,8 +236,8 @@ function GalleryPage() {
       const file = files[0];
       if (!file || !user) return;
 
-      if (!file.name.endsWith(".pdf")) {
-        showToast("Please drop a PDF file", "error");
+      if (!file.name.toLowerCase().endsWith(".pdf") || file.type !== "application/pdf") {
+        showToast("Please drop a valid PDF file", "error");
         return;
       }
 
@@ -337,21 +337,24 @@ function GalleryPage() {
     if (!repositories || isSyncing) return;
 
     setIsSyncing(true);
-    setSyncProgress({ current: 0, total: repositories.length });
+
+    // Filter repos that aren't already syncing
+    const reposToCheck = repositories.filter((repo) => repo.syncStatus !== "syncing");
+    setSyncProgress({ current: 0, total: reposToCheck.length });
 
     // Quick check all repositories in parallel
     let failedCount = 0;
-    const checkPromises = repositories
-      .filter((repo) => repo.syncStatus !== "syncing")
-      .map(async (repo, index) => {
-        try {
-          await refreshRepository({ repositoryId: repo._id });
-        } catch (err) {
-          console.error(`Quick check failed for ${repo.name}:`, err);
-          failedCount++;
-        }
-        setSyncProgress((prev) => prev ? { ...prev, current: index + 1 } : null);
-      });
+    let completedCount = 0;
+    const checkPromises = reposToCheck.map(async (repo) => {
+      try {
+        await refreshRepository({ repositoryId: repo._id });
+      } catch (err) {
+        console.error(`Quick check failed for ${repo.name}:`, err);
+        failedCount++;
+      }
+      completedCount++;
+      setSyncProgress((prev) => prev ? { ...prev, current: completedCount } : null);
+    });
 
     await Promise.all(checkPromises);
 
@@ -371,8 +374,8 @@ function GalleryPage() {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    if (!file.name.endsWith(".pdf")) {
-      showToast("Please select a PDF file", "error");
+    if (!file.name.toLowerCase().endsWith(".pdf") || file.type !== "application/pdf") {
+      showToast("Please select a valid PDF file", "error");
       return;
     }
 

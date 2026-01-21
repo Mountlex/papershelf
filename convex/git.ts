@@ -31,7 +31,7 @@ export async function getGitHubToken(ctx: ActionCtx): Promise<string | null> {
   const user = await ctx.runQuery(internal.git.getUser, { userId });
   if (!user?.githubAccessToken) return null;
 
-  // Decrypt the token (handles both encrypted and plaintext for migration)
+  // Decrypt the token
   return decryptTokenIfNeeded(user.githubAccessToken);
 }
 
@@ -66,7 +66,7 @@ export async function getGitLabToken(ctx: ActionCtx): Promise<string | null> {
     }
   }
 
-  // Decrypt the token (handles both encrypted and plaintext for migration)
+  // Decrypt the token
   return decryptTokenIfNeeded(user.gitlabAccessToken);
 }
 
@@ -78,7 +78,7 @@ export async function getOverleafCredentials(ctx: ActionCtx): Promise<{ username
 
   const user = await ctx.runQuery(internal.git.getUser, { userId });
   if (user?.overleafEmail && user?.overleafToken) {
-    // Decrypt the token (handles both encrypted and plaintext for migration)
+    // Decrypt the token
     const decryptedToken = await decryptTokenIfNeeded(user.overleafToken);
     if (!decryptedToken) return null;
     // Overleaf requires username "git" and token as password
@@ -95,13 +95,16 @@ export async function getAllSelfHostedGitLabInstances(ctx: ActionCtx): Promise<S
   const instances = await ctx.runQuery(internal.git.getSelfHostedGitLabInstancesInternal, { userId });
   if (!instances) return [];
 
-  // Decrypt tokens for all instances (handles both encrypted and plaintext for migration)
+  // Decrypt tokens for all instances
   const decryptedInstances = await Promise.all(
     instances.map(async (instance) => {
       const decryptedToken = await decryptTokenIfNeeded(instance.token);
+      if (!decryptedToken) {
+        throw new Error(`Failed to decrypt token for GitLab instance: ${instance.name}`);
+      }
       return {
         ...instance,
-        token: decryptedToken || instance.token, // Fallback to original if decryption fails
+        token: decryptedToken,
       };
     })
   );
@@ -116,7 +119,7 @@ export async function getSelfHostedGitLabCredentialsById(
 ): Promise<{ url: string; token: string } | null> {
   const instance = await ctx.runQuery(internal.git.getSelfHostedGitLabInstanceById, { id: instanceId });
   if (!instance) return null;
-  // Decrypt the token (handles both encrypted and plaintext for migration)
+  // Decrypt the token
   const decryptedToken = await decryptTokenIfNeeded(instance.token);
   if (!decryptedToken) return null;
   return { url: instance.url, token: decryptedToken };

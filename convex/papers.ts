@@ -158,14 +158,30 @@ export const get = query({
     const paper = await ctx.db.get(args.id);
     if (!paper) return null;
 
-    if (paper.userId && paper.userId !== authenticatedUserId) {
-      return null;
+    // Authorization: paper must be owned either directly (userId) or via repository
+    // At least one ownership path must exist and be valid
+    let hasValidOwnership = false;
+
+    // Check direct ownership via userId
+    if (paper.userId) {
+      if (paper.userId !== authenticatedUserId) {
+        return null; // userId is set but doesn't match - deny access
+      }
+      hasValidOwnership = true;
     }
+
+    // Check ownership via repository
     if (paper.repositoryId) {
       const repository = await ctx.db.get(paper.repositoryId);
       if (!repository || repository.userId !== authenticatedUserId) {
-        return null;
+        return null; // repository doesn't exist or doesn't belong to user - deny access
       }
+      hasValidOwnership = true;
+    }
+
+    // If neither userId nor repositoryId is set, deny access (orphaned paper)
+    if (!hasValidOwnership) {
+      return null;
     }
 
     const repository = paper.repositoryId
@@ -257,15 +273,25 @@ export const update = mutation({
     if (!paper) {
       throw new Error("Paper not found");
     }
-    // Paper is owned directly (userId) or via repository
-    if (paper.userId && paper.userId !== authenticatedUserId) {
-      throw new Error("Unauthorized");
+    // Authorization: paper must be owned either directly (userId) or via repository
+    // At least one ownership path must exist and be valid
+    let hasValidOwnership = false;
+
+    if (paper.userId) {
+      if (paper.userId !== authenticatedUserId) {
+        throw new Error("Unauthorized");
+      }
+      hasValidOwnership = true;
     }
     if (paper.repositoryId) {
       const repository = await ctx.db.get(paper.repositoryId);
       if (!repository || repository.userId !== authenticatedUserId) {
         throw new Error("Unauthorized");
       }
+      hasValidOwnership = true;
+    }
+    if (!hasValidOwnership) {
+      throw new Error("Unauthorized");
     }
 
     const { id, ...updates } = args;
@@ -302,15 +328,24 @@ export const togglePublic = mutation({
     const paper = await ctx.db.get(args.id);
     if (!paper) throw new Error("Paper not found");
 
-    // Paper is owned directly (userId) or via repository
-    if (paper.userId && paper.userId !== authenticatedUserId) {
-      throw new Error("Unauthorized");
+    // Authorization: paper must be owned either directly (userId) or via repository
+    let hasValidOwnership = false;
+
+    if (paper.userId) {
+      if (paper.userId !== authenticatedUserId) {
+        throw new Error("Unauthorized");
+      }
+      hasValidOwnership = true;
     }
     if (paper.repositoryId) {
       const repository = await ctx.db.get(paper.repositoryId);
       if (!repository || repository.userId !== authenticatedUserId) {
         throw new Error("Unauthorized");
       }
+      hasValidOwnership = true;
+    }
+    if (!hasValidOwnership) {
+      throw new Error("Unauthorized");
     }
 
     const isPublic = !paper.isPublic;
@@ -541,15 +576,24 @@ export const deletePaper = mutation({
     const paper = await ctx.db.get(args.id);
     if (!paper) throw new Error("Paper not found");
 
-    // Paper is owned directly (userId) or via repository
-    if (paper.userId && paper.userId !== authenticatedUserId) {
-      throw new Error("Unauthorized");
+    // Authorization: paper must be owned either directly (userId) or via repository
+    let hasValidOwnership = false;
+
+    if (paper.userId) {
+      if (paper.userId !== authenticatedUserId) {
+        throw new Error("Unauthorized");
+      }
+      hasValidOwnership = true;
     }
     if (paper.repositoryId) {
       const repository = await ctx.db.get(paper.repositoryId);
       if (!repository || repository.userId !== authenticatedUserId) {
         throw new Error("Unauthorized");
       }
+      hasValidOwnership = true;
+    }
+    if (!hasValidOwnership) {
+      throw new Error("Unauthorized");
     }
 
     // Delete version history and their stored files
@@ -610,15 +654,24 @@ export const listVersions = query({
     const paper = await ctx.db.get(args.paperId);
     if (!paper) return [];
 
-    // Check ownership
-    if (paper.userId && paper.userId !== authenticatedUserId) {
-      return [];
+    // Authorization: paper must be owned either directly (userId) or via repository
+    let hasValidOwnership = false;
+
+    if (paper.userId) {
+      if (paper.userId !== authenticatedUserId) {
+        return [];
+      }
+      hasValidOwnership = true;
     }
     if (paper.repositoryId) {
       const repository = await ctx.db.get(paper.repositoryId);
       if (!repository || repository.userId !== authenticatedUserId) {
         return [];
       }
+      hasValidOwnership = true;
+    }
+    if (!hasValidOwnership) {
+      return [];
     }
 
     // Get all versions for this paper
@@ -663,15 +716,24 @@ export const getVersion = query({
     const paper = await ctx.db.get(args.paperId);
     if (!paper) return null;
 
-    // Check ownership
-    if (paper.userId && paper.userId !== authenticatedUserId) {
-      return null;
+    // Authorization: paper must be owned either directly (userId) or via repository
+    let hasValidOwnership = false;
+
+    if (paper.userId) {
+      if (paper.userId !== authenticatedUserId) {
+        return null;
+      }
+      hasValidOwnership = true;
     }
     if (paper.repositoryId) {
       const repository = await ctx.db.get(paper.repositoryId);
       if (!repository || repository.userId !== authenticatedUserId) {
         return null;
       }
+      hasValidOwnership = true;
+    }
+    if (!hasValidOwnership) {
+      return null;
     }
 
     const version = await ctx.db.get(args.versionId);
@@ -710,15 +772,24 @@ export const deleteOldVersions = mutation({
     const paper = await ctx.db.get(args.paperId);
     if (!paper) throw new Error("Paper not found");
 
-    // Check ownership
-    if (paper.userId && paper.userId !== authenticatedUserId) {
-      throw new Error("Unauthorized");
+    // Authorization: paper must be owned either directly (userId) or via repository
+    let hasValidOwnership = false;
+
+    if (paper.userId) {
+      if (paper.userId !== authenticatedUserId) {
+        throw new Error("Unauthorized");
+      }
+      hasValidOwnership = true;
     }
     if (paper.repositoryId) {
       const repository = await ctx.db.get(paper.repositoryId);
       if (!repository || repository.userId !== authenticatedUserId) {
         throw new Error("Unauthorized");
       }
+      hasValidOwnership = true;
+    }
+    if (!hasValidOwnership) {
+      throw new Error("Unauthorized");
     }
 
     // Get all versions sorted by date (newest first)
@@ -774,15 +845,24 @@ export const toggleVersionPinned = mutation({
       throw new Error("Paper not found");
     }
 
-    // Check ownership through paper
-    if (paper.userId && paper.userId !== authenticatedUserId) {
-      throw new Error("Unauthorized");
+    // Authorization: paper must be owned either directly (userId) or via repository
+    let hasValidOwnership = false;
+
+    if (paper.userId) {
+      if (paper.userId !== authenticatedUserId) {
+        throw new Error("Unauthorized");
+      }
+      hasValidOwnership = true;
     }
     if (paper.repositoryId) {
       const repository = await ctx.db.get(paper.repositoryId);
       if (!repository || repository.userId !== authenticatedUserId) {
         throw new Error("Unauthorized");
       }
+      hasValidOwnership = true;
+    }
+    if (!hasValidOwnership) {
+      throw new Error("Unauthorized");
     }
 
     // Toggle pinned status

@@ -391,6 +391,37 @@ function isPrivateOrReservedUrl(urlString: string): boolean {
       return true;
     }
 
+    // Block IPv6 unspecified address
+    if (hostname === "::" || hostname === "[::]") {
+      return true;
+    }
+
+    // Block IPv6 private/reserved ranges
+    // Remove brackets for IPv6 addresses if present
+    const ipv6Hostname = hostname.startsWith("[") && hostname.endsWith("]")
+      ? hostname.slice(1, -1).toLowerCase()
+      : hostname.toLowerCase();
+
+    // fc00::/7 - Unique Local Addresses (fc00:: to fdff::)
+    if (/^f[cd][0-9a-f]{0,2}:/.test(ipv6Hostname)) {
+      return true;
+    }
+
+    // fe80::/10 - Link-Local Addresses (fe80:: to febf::)
+    if (/^fe[89ab][0-9a-f]:/.test(ipv6Hostname) || ipv6Hostname.startsWith("fe80:")) {
+      return true;
+    }
+
+    // ::ffff:0:0/96 - IPv4-mapped IPv6 addresses (could bypass IPv4 checks)
+    if (/^::ffff:/.test(ipv6Hostname)) {
+      return true;
+    }
+
+    // ::1 variations with leading zeros
+    if (/^(0{0,4}:){0,7}0{0,3}1$/.test(ipv6Hostname)) {
+      return true;
+    }
+
     // Block private IPv4 ranges
     // 10.0.0.0/8
     if (/^10\./.test(hostname)) {

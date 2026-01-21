@@ -9,8 +9,7 @@
  *
  * Format: base64(iv):base64(ciphertext+authTag)
  *
- * If TOKEN_ENCRYPTION_KEY is not set, tokens are stored unencrypted.
- * This allows gradual migration and development without breaking auth.
+ * TOKEN_ENCRYPTION_KEY must be set - all tokens are required to be encrypted.
  */
 
 const ENCRYPTION_KEY_ENV = "TOKEN_ENCRYPTION_KEY";
@@ -151,24 +150,26 @@ export function isEncrypted(value: string | undefined | null): boolean {
 
 /**
  * Encrypt a token if it's not already encrypted.
- * Returns the encrypted token, or the original value if:
- * - Already encrypted
- * - Encryption key is not configured (graceful degradation)
+ * Returns the encrypted token.
+ * Throws an error if encryption key is not configured - all tokens must be encrypted.
  */
 export async function encryptTokenIfNeeded(value: string | undefined | null): Promise<string | undefined> {
   if (!value) return undefined;
   if (isEncrypted(value)) return value;
-  // If encryption key is not configured, return unencrypted (graceful degradation)
-  if (!isEncryptionAvailable()) return value;
+  if (!isEncryptionAvailable()) {
+    throw new Error("TOKEN_ENCRYPTION_KEY is not configured. All tokens must be encrypted.");
+  }
   return encryptToken(value);
 }
 
 /**
- * Decrypt a token if it's encrypted, otherwise return as-is.
- * Useful for migration period where some tokens may not yet be encrypted.
+ * Decrypt a token.
+ * Throws an error if the token is not encrypted - all tokens must be encrypted.
  */
 export async function decryptTokenIfNeeded(value: string | undefined | null): Promise<string | null> {
   if (!value) return null;
-  if (!isEncrypted(value)) return value;
+  if (!isEncrypted(value)) {
+    throw new Error("Token is not encrypted. All tokens must be encrypted. Please re-authenticate to encrypt your tokens.");
+  }
   return decryptToken(value);
 }

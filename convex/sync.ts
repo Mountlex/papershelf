@@ -804,7 +804,11 @@ export const buildPaper = action({
 
       // Check if PDF is already cached for this commit (skip if force=true)
       if (!args.force && paper.cachedCommitHash === latestCommit.sha && paper.pdfFileId) {
-        // Release lock since nothing to do
+        // Clear needsSync flag since we're up to date, then release lock
+        await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
+          id: args.paperId,
+          cachedCommitHash: latestCommit.sha,
+        });
         await ctx.runMutation(internal.sync.releaseBuildLock, {
           id: args.paperId,
           status: "idle",
