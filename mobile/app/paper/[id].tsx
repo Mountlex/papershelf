@@ -1,17 +1,71 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { View, StyleSheet, Text, ActivityIndicator, Pressable, Alert } from "react-native";
 import { useLocalSearchParams, Stack } from "expo-router";
-import { useQuery, useAction } from "convex/react";
-import { api } from "@convex/_generated/api";
-import { Id } from "@convex/_generated/dataModel";
 import { Ionicons } from "@expo/vector-icons";
 import { PdfViewer } from "@/components/PdfViewer";
+import { getAccessToken, CONVEX_SITE_URL } from "@/lib/getAccessToken";
+
+interface Paper {
+  _id: string;
+  title: string;
+  authors?: string[];
+  pdfUrl?: string | null;
+  buildStatus?: string;
+  compilationProgress?: string;
+  lastSyncError?: string;
+  trackedFile?: { pdfSourceType?: string } | null;
+}
 
 export default function PaperScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const paper = useQuery(api.papers.get, { id: id as Id<"papers"> });
-  const buildPaper = useAction(api.sync.buildPaper);
+  const [paper, setPaper] = useState<Paper | null | undefined>(undefined);
   const [isBuilding, setIsBuilding] = useState(false);
+
+  const fetchPaper = useCallback(async () => {
+    if (!id) return;
+
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        setPaper(null);
+        return;
+      }
+
+      const response = await fetch(`${CONVEX_SITE_URL}/api/mobile/paper?id=${id}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        setPaper(null);
+        return;
+      }
+
+      const data = await response.json();
+      setPaper(data);
+    } catch (err) {
+      console.error("Error fetching paper:", err);
+      setPaper(null);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (id) {
+      fetchPaper();
+    }
+  }, [id, fetchPaper]);
+
+  // Separate effect for polling during build
+  useEffect(() => {
+    if (!paper?.buildStatus || (paper.buildStatus !== "building" && !isBuilding)) {
+      return;
+    }
+
+    const interval = setInterval(fetchPaper, 2000);
+    return () => clearInterval(interval);
+  }, [paper?.buildStatus, isBuilding, fetchPaper]);
 
   const pdfSource = paper?.pdfUrl ?? null;
   const canCompile = paper?.trackedFile?.pdfSourceType === "compile";
@@ -22,7 +76,28 @@ export default function PaperScreen() {
 
     try {
       setIsBuilding(true);
-      await buildPaper({ paperId: paper._id, force: true });
+      const token = await getAccessToken();
+      if (!token) {
+        Alert.alert("Error", "Not authenticated");
+        return;
+      }
+
+      const response = await fetch(`${CONVEX_SITE_URL}/api/mobile/paper/build`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ paperId: paper._id, force: true }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        Alert.alert("Build Failed", data.error || "Failed to recompile paper");
+      } else {
+        // Refresh paper data
+        await fetchPaper();
+      }
     } catch (error) {
       Alert.alert(
         "Build Failed",

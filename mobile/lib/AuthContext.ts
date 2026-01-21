@@ -17,8 +17,6 @@ export interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   accessToken: string | null;
-  loginWithGitHub: () => void;
-  loginWithGitLab: () => void;
   loginWithEmail: () => void;
   logout: () => Promise<void>;
   refreshAccessToken: () => Promise<string | null>;

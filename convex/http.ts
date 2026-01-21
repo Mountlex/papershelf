@@ -137,6 +137,7 @@ http.route({
       // Create JWT access token
       const accessToken = await createJwt(
         {
+          iss: "carrel-mobile",
           sub: user._id,
           email: identity.email,
           name: identity.name,
@@ -228,6 +229,7 @@ http.route({
 
       const accessToken = await createJwt(
         {
+          iss: "carrel-mobile",
           sub: user._id,
           email: user.email,
           name: user.name,
@@ -299,6 +301,153 @@ http.route({
       console.error("Token revocation error:", error);
       return jsonResponse(
         { error: "Internal server error" },
+        500,
+        origin
+      );
+    }
+  }),
+});
+
+// Helper to verify mobile JWT and get user ID
+async function verifyMobileAuth(
+  ctx: { runQuery: (query: typeof internal.mobileAuth.getJwtSecret, args: Record<string, never>) => Promise<string> },
+  request: Request
+): Promise<{ userId: string; email: string; name?: string } | null> {
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return null;
+  }
+
+  const accessToken = authHeader.substring(7);
+  const jwtSecret = await ctx.runQuery(internal.mobileAuth.getJwtSecret, {});
+  const payload = await verifyJwt(accessToken, jwtSecret);
+
+  if (!payload) {
+    return null;
+  }
+
+  return {
+    userId: payload.sub as string,
+    email: payload.email as string,
+    name: payload.name as string | undefined,
+  };
+}
+
+// GET /api/mobile/papers - List papers for authenticated mobile user
+http.route({
+  path: "/api/mobile/papers",
+  method: "OPTIONS",
+  handler: httpAction(async (_, request) => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request.headers.get("Origin")),
+    });
+  }),
+});
+
+http.route({
+  path: "/api/mobile/papers",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+
+    const user = await verifyMobileAuth(ctx, request);
+    if (!user) {
+      return jsonResponse({ error: "Unauthorized" }, 401, origin);
+    }
+
+    // Fetch papers for this user using internal query
+    const papers = await ctx.runQuery(internal.papers.listForMobile, {
+      userId: user.userId,
+    });
+
+    return jsonResponse(papers, 200, origin);
+  }),
+});
+
+// GET /api/mobile/papers/:id - Get a single paper
+http.route({
+  path: "/api/mobile/paper",
+  method: "OPTIONS",
+  handler: httpAction(async (_, request) => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request.headers.get("Origin")),
+    });
+  }),
+});
+
+http.route({
+  path: "/api/mobile/paper",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+
+    const user = await verifyMobileAuth(ctx, request);
+    if (!user) {
+      return jsonResponse({ error: "Unauthorized" }, 401, origin);
+    }
+
+    const url = new URL(request.url);
+    const paperId = url.searchParams.get("id");
+    if (!paperId) {
+      return jsonResponse({ error: "Missing paper ID" }, 400, origin);
+    }
+
+    const paper = await ctx.runQuery(internal.papers.getForMobile, {
+      paperId,
+      userId: user.userId,
+    });
+
+    if (!paper) {
+      return jsonResponse({ error: "Paper not found" }, 404, origin);
+    }
+
+    return jsonResponse(paper, 200, origin);
+  }),
+});
+
+// POST /api/mobile/paper/build - Trigger a paper build
+http.route({
+  path: "/api/mobile/paper/build",
+  method: "OPTIONS",
+  handler: httpAction(async (_, request) => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request.headers.get("Origin")),
+    });
+  }),
+});
+
+http.route({
+  path: "/api/mobile/paper/build",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+
+    const user = await verifyMobileAuth(ctx, request);
+    if (!user) {
+      return jsonResponse({ error: "Unauthorized" }, 401, origin);
+    }
+
+    const body = await request.json();
+    const { paperId, force } = body;
+
+    if (!paperId) {
+      return jsonResponse({ error: "Missing paper ID" }, 400, origin);
+    }
+
+    try {
+      await ctx.runAction(internal.sync.buildPaperForMobile, {
+        paperId,
+        userId: user.userId,
+        force: force ?? false,
+      });
+      return jsonResponse({ success: true }, 200, origin);
+    } catch (error) {
+      console.error("Build error:", error);
+      return jsonResponse(
+        { error: error instanceof Error ? error.message : "Build failed" },
         500,
         origin
       );

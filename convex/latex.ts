@@ -14,7 +14,12 @@ import {
   getGitLabToken,
   getOverleafCredentials,
   getAllSelfHostedGitLabInstances,
+  getGitHubTokenByUserId,
+  getGitLabTokenByUserId,
+  getOverleafCredentialsByUserId,
+  getAllSelfHostedGitLabInstancesByUserId,
 } from "./git";
+import type { Id } from "./_generated/dataModel";
 import {
   fetchWithRetry,
   getLatexServiceHeaders,
@@ -36,18 +41,25 @@ async function getAuthForProvider(
   ctx: ActionCtx,
   provider: string,
   gitUrl: string,
-  selfHostedInstances: Array<{ url: string; token: string }>
+  selfHostedInstances: Array<{ url: string; token: string }>,
+  userId?: Id<"users">
 ): Promise<{ username: string; password: string } | undefined> {
   if (provider === "overleaf") {
-    const creds = await getOverleafCredentials(ctx);
+    const creds = userId
+      ? await getOverleafCredentialsByUserId(ctx, userId)
+      : await getOverleafCredentials(ctx);
     return creds ? { username: creds.email, password: creds.token } : undefined;
   }
   if (provider === "github") {
-    const token = await getGitHubToken(ctx);
+    const token = userId
+      ? await getGitHubTokenByUserId(ctx, userId)
+      : await getGitHubToken(ctx);
     return token ? { username: "x-access-token", password: token } : undefined;
   }
   if (provider === "gitlab") {
-    const token = await getGitLabToken(ctx);
+    const token = userId
+      ? await getGitLabTokenByUserId(ctx, userId)
+      : await getGitLabToken(ctx);
     return token ? { username: "oauth2", password: token } : undefined;
   }
   if (provider === "selfhosted-gitlab") {
@@ -89,7 +101,8 @@ async function fetchDependencyHashes(
   ctx: ActionCtx,
   gitUrl: string,
   branch: string,
-  dependencies: string[]
+  dependencies: string[],
+  userId?: Id<"users">
 ): Promise<DependencyHash[]> {
   if (dependencies.length === 0) {
     return [];
@@ -101,6 +114,7 @@ async function fetchDependencyHashes(
       gitUrl,
       filePaths: dependencies,
       branch,
+      userId,
     });
 
     // Convert to array format, filtering out files that couldn't be hashed
@@ -144,6 +158,7 @@ export const compileLatexInternal = internalAction({
     filePath: v.string(),
     branch: v.string(),
     paperId: v.optional(v.id("papers")),
+    userId: v.optional(v.id("users")), // Optional userId for mobile auth
   },
   handler: async (ctx, args) => {
     // Helper to update progress in UI
@@ -156,8 +171,10 @@ export const compileLatexInternal = internalAction({
       }
     };
 
-    // Get all self-hosted GitLab instances to check if URL matches any
-    const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
+    // Get all self-hosted GitLab instances - use userId if provided (mobile)
+    const selfHostedInstances = args.userId
+      ? await getAllSelfHostedGitLabInstancesByUserId(ctx, args.userId)
+      : await getAllSelfHostedGitLabInstances(ctx);
     const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
 
     // Get the LaTeX service URL from environment
@@ -175,7 +192,7 @@ export const compileLatexInternal = internalAction({
     // Try comprehensive selective archive first (works for all providers via git clone)
     // This fetches all LaTeX-related files upfront, avoiding iterative dependency resolution
     if (latexServiceUrl) {
-      const auth = await getAuthForProvider(ctx, provider, args.gitUrl, selfHostedInstances);
+      const auth = await getAuthForProvider(ctx, provider, args.gitUrl, selfHostedInstances, args.userId);
 
       // For Overleaf, convert project URL to git URL
       let archiveGitUrl = args.gitUrl;
@@ -261,7 +278,8 @@ export const compileLatexInternal = internalAction({
                   ctx,
                   args.gitUrl,
                   args.branch,
-                  finalDependencies
+                  finalDependencies,
+                  args.userId
                 );
                 console.log(`Cached ${dependencyHashes.length} dependency hashes`);
               }
@@ -299,7 +317,9 @@ export const compileLatexInternal = internalAction({
         throw new Error("LATEX_SERVICE_URL not configured. Required for Overleaf support.");
       }
 
-      const credentials = await getOverleafCredentials(ctx);
+      const credentials = args.userId
+        ? await getOverleafCredentialsByUserId(ctx, args.userId)
+        : await getOverleafCredentials(ctx);
       if (!credentials) {
         throw new Error("Overleaf credentials not configured.");
       }
@@ -503,10 +523,10 @@ export const compileLatexInternal = internalAction({
       }
 
       const token = parsed.provider === "github"
-        ? await getGitHubToken(ctx)
+        ? (args.userId ? await getGitHubTokenByUserId(ctx, args.userId) : await getGitHubToken(ctx))
         : isSelfHosted
           ? matchingInstance?.token
-          : await getGitLabToken(ctx);
+          : (args.userId ? await getGitLabTokenByUserId(ctx, args.userId) : await getGitLabToken(ctx));
 
       console.log(`[compileLatexInternal] Token available: ${!!token}, isSelfHosted: ${isSelfHosted}`);
 
@@ -764,7 +784,8 @@ export const compileLatexInternal = internalAction({
         ctx,
         args.gitUrl,
         args.branch,
-        finalDependencies
+        finalDependencies,
+        args.userId
       );
       console.log(`Cached ${dependencyHashes.length} dependency hashes`);
     }

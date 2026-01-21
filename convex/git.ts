@@ -26,12 +26,13 @@ const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 export async function getGitHubToken(ctx: ActionCtx): Promise<string | null> {
   const userId = await auth.getUserId(ctx);
   if (!userId) return null;
+  return getGitHubTokenByUserId(ctx, userId);
+}
 
-  // Get the user record which contains the GitHub access token
+// Helper to get GitHub token by userId (for mobile auth)
+export async function getGitHubTokenByUserId(ctx: ActionCtx, userId: Id<"users">): Promise<string | null> {
   const user = await ctx.runQuery(internal.git.getUser, { userId });
   if (!user?.githubAccessToken) return null;
-
-  // Decrypt the token
   return decryptTokenIfNeeded(user.githubAccessToken);
 }
 
@@ -39,7 +40,11 @@ export async function getGitHubToken(ctx: ActionCtx): Promise<string | null> {
 export async function getGitLabToken(ctx: ActionCtx): Promise<string | null> {
   const userId = await auth.getUserId(ctx);
   if (!userId) return null;
+  return getGitLabTokenByUserId(ctx, userId);
+}
 
+// Helper to get GitLab token by userId (for mobile auth)
+export async function getGitLabTokenByUserId(ctx: ActionCtx, userId: Id<"users">): Promise<string | null> {
   const user = await ctx.runQuery(internal.git.getUser, { userId });
   if (!user?.gitlabAccessToken) return null;
 
@@ -76,13 +81,15 @@ export async function getGitLabToken(ctx: ActionCtx): Promise<string | null> {
 export async function getOverleafCredentials(ctx: ActionCtx): Promise<{ username: string; password: string } | null> {
   const userId = await auth.getUserId(ctx);
   if (!userId) return null;
+  return getOverleafCredentialsByUserId(ctx, userId);
+}
 
+// Helper to get Overleaf credentials by userId (for mobile auth)
+export async function getOverleafCredentialsByUserId(ctx: ActionCtx, userId: Id<"users">): Promise<{ username: string; password: string } | null> {
   const user = await ctx.runQuery(internal.git.getUser, { userId });
   if (user?.overleafEmail && user?.overleafToken) {
-    // Decrypt the token
     const decryptedToken = await decryptTokenIfNeeded(user.overleafToken);
     if (!decryptedToken) return null;
-    // Overleaf requires username "git" and token as password
     return { username: "git", password: decryptedToken };
   }
   return null;
@@ -92,7 +99,11 @@ export async function getOverleafCredentials(ctx: ActionCtx): Promise<{ username
 export async function getAllSelfHostedGitLabInstances(ctx: ActionCtx): Promise<SelfHostedGitLabInstance[]> {
   const userId = await auth.getUserId(ctx);
   if (!userId) return [];
+  return getAllSelfHostedGitLabInstancesByUserId(ctx, userId);
+}
 
+// Helper to get all self-hosted GitLab instances by userId (for mobile auth)
+export async function getAllSelfHostedGitLabInstancesByUserId(ctx: ActionCtx, userId: Id<"users">): Promise<SelfHostedGitLabInstance[]> {
   const instances = await ctx.runQuery(internal.git.getSelfHostedGitLabInstancesInternal, { userId });
   if (!instances) return [];
 
@@ -650,10 +661,13 @@ export const fetchLatestCommitInternal = internalAction({
     gitUrl: v.string(),
     branch: v.string(),
     knownSha: v.optional(v.string()),
+    userId: v.optional(v.id("users")), // Optional userId for mobile auth
   },
   handler: async (ctx, args) => {
-    // Get all self-hosted GitLab instances to check if URL matches any
-    const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
+    // Get all self-hosted GitLab instances - use userId if provided (mobile), otherwise use auth
+    const selfHostedInstances = args.userId
+      ? await getAllSelfHostedGitLabInstancesByUserId(ctx, args.userId)
+      : await getAllSelfHostedGitLabInstances(ctx);
     const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
 
     // Handle Overleaf projects
@@ -663,7 +677,9 @@ export const fetchLatestCommitInternal = internalAction({
         throw new Error(`Invalid Overleaf URL: "${args.gitUrl}". Expected format: https://git.overleaf.com/<project_id> or https://www.overleaf.com/project/<project_id>`);
       }
 
-      const credentials = await getOverleafCredentials(ctx);
+      const credentials = args.userId
+        ? await getOverleafCredentialsByUserId(ctx, args.userId)
+        : await getOverleafCredentials(ctx);
       if (!credentials) {
         throw new Error("Overleaf credentials not configured.");
       }
@@ -714,8 +730,10 @@ export const fetchLatestCommitInternal = internalAction({
     }
 
     if (parsed.provider === "github") {
-      // Get token for private repo access
-      const token = await getGitHubToken(ctx);
+      // Get token for private repo access - use userId if provided (mobile)
+      const token = args.userId
+        ? await getGitHubTokenByUserId(ctx, args.userId)
+        : await getGitHubToken(ctx);
 
       const headers: Record<string, string> = {
         Accept: "application/vnd.github.v3+json",
@@ -760,7 +778,10 @@ export const fetchLatestCommitInternal = internalAction({
       }
 
       const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
-      const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
+      // Use userId if provided (mobile)
+      const token = isSelfHosted
+        ? matchingInstance!.token
+        : (args.userId ? await getGitLabTokenByUserId(ctx, args.userId) : await getGitLabToken(ctx));
       const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
 
       const headers: Record<string, string> = {
@@ -879,10 +900,13 @@ export const fetchFileContentInternal = internalAction({
     gitUrl: v.string(),
     filePath: v.string(),
     branch: v.string(),
+    userId: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
     // Get all self-hosted GitLab instances to check if URL matches any
-    const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
+    const selfHostedInstances = args.userId
+      ? await getAllSelfHostedGitLabInstancesByUserId(ctx, args.userId)
+      : await getAllSelfHostedGitLabInstances(ctx);
     const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
 
     // Handle Overleaf projects
@@ -892,7 +916,9 @@ export const fetchFileContentInternal = internalAction({
         throw new Error(`Invalid Overleaf URL: "${args.gitUrl}". Expected format: https://git.overleaf.com/<project_id> or https://www.overleaf.com/project/<project_id>`);
       }
 
-      const credentials = await getOverleafCredentials(ctx);
+      const credentials = args.userId
+        ? await getOverleafCredentialsByUserId(ctx, args.userId)
+        : await getOverleafCredentials(ctx);
       if (!credentials) {
         throw new Error("Overleaf credentials not configured.");
       }
@@ -962,11 +988,18 @@ export const fetchFileContentInternal = internalAction({
     }
 
     const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
-    const token = parsed.provider === "github"
-      ? await getGitHubToken(ctx)
-      : isSelfHosted
-        ? matchingInstance!.token
+    let token: string | null;
+    if (parsed.provider === "github") {
+      token = args.userId
+        ? await getGitHubTokenByUserId(ctx, args.userId)
+        : await getGitHubToken(ctx);
+    } else if (isSelfHosted) {
+      token = matchingInstance!.token;
+    } else {
+      token = args.userId
+        ? await getGitLabTokenByUserId(ctx, args.userId)
         : await getGitLabToken(ctx);
+    }
 
     let rawUrl: string;
     const headers: Record<string, string> = {
@@ -1009,6 +1042,7 @@ export const fetchFileHashBatchInternal = internalAction({
     gitUrl: v.string(),
     filePaths: v.array(v.string()),
     branch: v.string(),
+    userId: v.optional(v.id("users")),
   },
   handler: async (ctx, args): Promise<Record<string, string | null>> => {
     if (args.filePaths.length === 0) {
@@ -1016,7 +1050,9 @@ export const fetchFileHashBatchInternal = internalAction({
     }
 
     // Get all self-hosted GitLab instances to check if URL matches any
-    const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
+    const selfHostedInstances = args.userId
+      ? await getAllSelfHostedGitLabInstancesByUserId(ctx, args.userId)
+      : await getAllSelfHostedGitLabInstances(ctx);
     const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
 
     // Handle Overleaf projects via latex-service batch endpoint
@@ -1026,7 +1062,9 @@ export const fetchFileHashBatchInternal = internalAction({
         throw new Error(`Invalid Overleaf URL: "${args.gitUrl}"`);
       }
 
-      const credentials = await getOverleafCredentials(ctx);
+      const credentials = args.userId
+        ? await getOverleafCredentialsByUserId(ctx, args.userId)
+        : await getOverleafCredentials(ctx);
       if (!credentials) {
         throw new Error("Overleaf credentials not configured.");
       }
@@ -1068,7 +1106,9 @@ export const fetchFileHashBatchInternal = internalAction({
     const results: Record<string, string | null> = {};
 
     if (parsed.provider === "github") {
-      const token = await getGitHubToken(ctx);
+      const token = args.userId
+        ? await getGitHubTokenByUserId(ctx, args.userId)
+        : await getGitHubToken(ctx);
       const headers: Record<string, string> = {
         Accept: "application/vnd.github.v3+json",
         "User-Agent": "Carrel",
@@ -1118,7 +1158,14 @@ export const fetchFileHashBatchInternal = internalAction({
       }
 
       const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
-      const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
+      let token: string | null;
+      if (isSelfHosted) {
+        token = matchingInstance!.token;
+      } else {
+        token = args.userId
+          ? await getGitLabTokenByUserId(ctx, args.userId)
+          : await getGitLabToken(ctx);
+      }
       const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
 
       const headers: Record<string, string> = {

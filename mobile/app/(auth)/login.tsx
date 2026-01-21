@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/useAuth";
 const iconSource: ImageSourcePropType = require("@/assets/icon.png");
 
 export default function LoginScreen() {
-  const { loginWithGitHub, loginWithGitLab, loginWithEmail, isLoading } = useAuth();
+  const { loginWithEmail, isLoading } = useAuth();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -28,37 +28,11 @@ export default function LoginScreen() {
             styles.primaryButton,
             pressed && styles.buttonPressed,
           ]}
-          onPress={loginWithGitHub}
-          disabled={isLoading}
-        >
-          <Ionicons name="logo-github" size={20} color="white" />
-          <Text style={styles.primaryButtonText}>Continue with GitHub</Text>
-        </Pressable>
-
-        <Pressable
-          style={({ pressed }) => [
-            styles.button,
-            styles.secondaryButton,
-            pressed && styles.buttonPressed,
-          ]}
-          onPress={loginWithGitLab}
-          disabled={isLoading}
-        >
-          <Ionicons name="git-branch" size={20} color="#000" />
-          <Text style={styles.secondaryButtonText}>Continue with GitLab</Text>
-        </Pressable>
-
-        <Pressable
-          style={({ pressed }) => [
-            styles.button,
-            styles.secondaryButton,
-            pressed && styles.buttonPressed,
-          ]}
           onPress={loginWithEmail}
           disabled={isLoading}
         >
-          <Ionicons name="mail-outline" size={20} color="#000" />
-          <Text style={styles.secondaryButtonText}>Continue with Email</Text>
+          <Ionicons name="mail-outline" size={20} color="white" />
+          <Text style={styles.primaryButtonText}>Sign in with Email</Text>
         </Pressable>
       </View>
 
@@ -116,16 +90,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
     color: "#fff",
-  },
-  secondaryButton: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#ddd",
-  },
-  secondaryButtonText: {
-    fontSize: 15,
-    fontWeight: "500",
-    color: "#000",
   },
   terms: {
     marginTop: 32,

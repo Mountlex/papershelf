@@ -1,6 +1,8 @@
 import * as SecureStore from "expo-secure-store";
 
 const CONVEX_URL = process.env.EXPO_PUBLIC_CONVEX_URL!;
+// HTTP routes are served on .convex.site, not .convex.cloud
+const CONVEX_SITE_URL = CONVEX_URL.replace('.convex.cloud', '.convex.site');
 
 // Storage keys
 const ACCESS_TOKEN_KEY = "carrel_access_token";
@@ -25,7 +27,7 @@ export async function getAccessToken(): Promise<string | null> {
       return null;
     }
 
-    const response = await fetch(`${CONVEX_URL}/api/auth/mobile/refresh`, {
+    const response = await fetch(`${CONVEX_SITE_URL}/api/mobile/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken }),
@@ -43,3 +45,6 @@ export async function getAccessToken(): Promise<string | null> {
 
   return storedToken;
 }
+
+// Export the site URL for use in other modules
+export { CONVEX_SITE_URL };

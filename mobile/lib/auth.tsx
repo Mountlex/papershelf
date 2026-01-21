@@ -15,7 +15,6 @@ import { useRouter } from "expo-router";
 const CONVEX_URL = process.env.EXPO_PUBLIC_CONVEX_URL!;
 // HTTP routes are served on .convex.site, not .convex.cloud
 const CONVEX_SITE_URL = CONVEX_URL.replace('.convex.cloud', '.convex.site');
-const WEB_URL = process.env.EXPO_PUBLIC_WEB_URL!;
 
 // Storage keys
 const ACCESS_TOKEN_KEY = "carrel_access_token";
@@ -181,27 +180,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const loginWithProvider = useCallback(
-    (provider: "github" | "gitlab") => {
-      // Navigate to WebView login screen
-      routerRef.current.push({
-        pathname: "/(auth)/webview-login",
-        params: { provider },
-      });
-    },
-    []
-  );
-
-  const loginWithGitHub = useCallback(
-    () => loginWithProvider("github"),
-    [loginWithProvider]
-  );
-
-  const loginWithGitLab = useCallback(
-    () => loginWithProvider("gitlab"),
-    [loginWithProvider]
-  );
-
   const loginWithEmail = useCallback(() => {
     // Navigate to WebView login screen
     routerRef.current.push({
@@ -311,8 +289,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!accessToken,
         isLoading,
         accessToken,
-        loginWithGitHub,
-        loginWithGitLab,
         loginWithEmail,
         logout,
         refreshAccessToken,

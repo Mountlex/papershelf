@@ -1,7 +1,8 @@
 import { v } from "convex/values";
-import { mutation, query, internalMutation } from "./_generated/server";
+import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
 import { auth } from "./auth";
 import { validateFilePath } from "./lib/validation";
+import { Id } from "./_generated/dataModel";
 
 // List all papers for a user (via repositories + direct uploads)
 export const list = query({
@@ -122,6 +123,189 @@ export const list = query({
       const bTime = b.lastAffectedCommitTime ?? b.updatedAt;
       return bTime - aTime;
     });
+  },
+});
+
+// List papers for mobile app (internal, auth handled by HTTP layer)
+export const listForMobile = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = args.userId as Id<"users">;
+
+    // Get user's repositories
+    const repositories = await ctx.db
+      .query("repositories")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+
+    // Get papers for all repositories in parallel
+    const [repoPapersArrays, directUploads] = await Promise.all([
+      Promise.all(
+        repositories.map((repo) =>
+          ctx.db
+            .query("papers")
+            .withIndex("by_repository", (q) => q.eq("repositoryId", repo._id))
+            .collect()
+        )
+      ),
+      // Also get directly uploaded papers (no repository)
+      ctx.db
+        .query("papers")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect(),
+    ]);
+
+    const papers = [...repoPapersArrays.flat(), ...directUploads];
+
+    // Pre-fetch all trackedFiles in a batch
+    const trackedFileIds = [
+      ...new Set(
+        papers.filter((p) => p.trackedFileId).map((p) => p.trackedFileId!)
+      ),
+    ];
+    const trackedFilesArray = await Promise.all(
+      trackedFileIds.map((id) => ctx.db.get(id))
+    );
+    const trackedFileMap = new Map(
+      trackedFilesArray
+        .filter((tf): tf is NonNullable<typeof tf> => tf !== null)
+        .map((tf) => [tf._id, tf])
+    );
+
+    // Create repository lookup map
+    const repositoryMap = new Map(repositories.map((r) => [r._id, r]));
+
+    // Enrich with thumbnail URLs and status
+    const enrichedPapers = await Promise.all(
+      papers.map(async (paper) => {
+        const repository = paper.repositoryId
+          ? repositoryMap.get(paper.repositoryId) ?? null
+          : null;
+        const trackedFile = paper.trackedFileId
+          ? trackedFileMap.get(paper.trackedFileId) ?? null
+          : null;
+        const thumbnailUrl = paper.thumbnailFileId
+          ? await ctx.storage.getUrl(paper.thumbnailFileId)
+          : null;
+        const pdfUrl = paper.pdfFileId
+          ? await ctx.storage.getUrl(paper.pdfFileId)
+          : null;
+
+        // Determine if paper is up-to-date
+        let isUpToDate: boolean | null = null;
+        if (paper.repositoryId && repository) {
+          if (!paper.pdfFileId) {
+            isUpToDate = false;
+          } else if (paper.needsSync === true) {
+            isUpToDate = false;
+          } else if (paper.needsSync === false) {
+            isUpToDate = true;
+          } else if (repository.lastCommitHash) {
+            isUpToDate = paper.cachedCommitHash === repository.lastCommitHash;
+          } else {
+            isUpToDate = false;
+          }
+        }
+
+        return {
+          _id: paper._id,
+          title: paper.title,
+          authors: paper.authors,
+          thumbnailUrl,
+          pdfUrl,
+          isUpToDate,
+          buildStatus: paper.buildStatus,
+          pdfSourceType: trackedFile?.pdfSourceType ?? null,
+          lastAffectedCommitTime: paper.lastAffectedCommitTime,
+          updatedAt: paper.updatedAt,
+        };
+      })
+    );
+
+    // Sort by last affected time
+    return enrichedPapers.sort((a, b) => {
+      const aTime = a.lastAffectedCommitTime ?? a.updatedAt;
+      const bTime = b.lastAffectedCommitTime ?? b.updatedAt;
+      return bTime - aTime;
+    });
+  },
+});
+
+// Get a single paper for mobile app (internal, auth handled by HTTP layer)
+export const getForMobile = internalQuery({
+  args: { paperId: v.string(), userId: v.string() },
+  handler: async (ctx, args) => {
+    const paperId = args.paperId as Id<"papers">;
+    const userId = args.userId as Id<"users">;
+
+    const paper = await ctx.db.get(paperId);
+    if (!paper) return null;
+
+    // Authorization: paper must be owned directly or via repository
+    let hasValidOwnership = false;
+
+    if (paper.userId) {
+      if (paper.userId !== userId) {
+        return null;
+      }
+      hasValidOwnership = true;
+    }
+
+    if (paper.repositoryId) {
+      const repository = await ctx.db.get(paper.repositoryId);
+      if (!repository || repository.userId !== userId) {
+        return null;
+      }
+      hasValidOwnership = true;
+    }
+
+    if (!hasValidOwnership) {
+      return null;
+    }
+
+    const repository = paper.repositoryId
+      ? await ctx.db.get(paper.repositoryId)
+      : null;
+    const trackedFile = paper.trackedFileId
+      ? await ctx.db.get(paper.trackedFileId)
+      : null;
+    const thumbnailUrl = paper.thumbnailFileId
+      ? await ctx.storage.getUrl(paper.thumbnailFileId)
+      : null;
+    const pdfUrl = paper.pdfFileId
+      ? await ctx.storage.getUrl(paper.pdfFileId)
+      : null;
+
+    // Determine if paper is up-to-date
+    let isUpToDate: boolean | null = null;
+    if (paper.repositoryId && repository) {
+      if (!paper.pdfFileId) {
+        isUpToDate = false;
+      } else if (paper.needsSync === true) {
+        isUpToDate = false;
+      } else if (paper.needsSync === false) {
+        isUpToDate = true;
+      } else if (repository.lastCommitHash) {
+        isUpToDate = paper.cachedCommitHash === repository.lastCommitHash;
+      } else {
+        isUpToDate = false;
+      }
+    }
+
+    return {
+      _id: paper._id,
+      title: paper.title,
+      authors: paper.authors,
+      thumbnailUrl,
+      pdfUrl,
+      isUpToDate,
+      buildStatus: paper.buildStatus,
+      compilationProgress: paper.compilationProgress,
+      lastSyncError: paper.lastSyncError,
+      trackedFile: trackedFile
+        ? { pdfSourceType: trackedFile.pdfSourceType }
+        : null,
+    };
   },
 });
 

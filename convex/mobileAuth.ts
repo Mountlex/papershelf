@@ -339,6 +339,7 @@ export const generateMobileTokens = mutation({
     // Create JWT access token (use user fields, fallback to identity)
     const accessToken = await createJwt(
       {
+        iss: "carrel-mobile",
         sub: user._id,
         email: user.email || identity?.email,
         name: user.name || identity?.name,

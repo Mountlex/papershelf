@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { action, mutation, internalMutation, internalQuery } from "./_generated/server";
+import { action, mutation, internalMutation, internalQuery, internalAction } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -1003,6 +1003,148 @@ export const buildPaper = action({
       // Release lock on failure with error status
       await ctx.runMutation(internal.sync.releaseBuildLock, {
         id: args.paperId,
+        status: "error",
+        attemptId,
+      });
+      throw error;
+    }
+  },
+});
+
+// Mobile version of buildPaper (internal, auth handled by HTTP layer)
+export const buildPaperForMobile = internalAction({
+  args: {
+    paperId: v.string(),
+    userId: v.string(),
+    force: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const paperId = args.paperId as Id<"papers">;
+    const userId = args.userId as Id<"users">;
+
+    // Get paper and verify ownership
+    const paper = await ctx.runQuery(internal.git.getPaper, { id: paperId });
+    if (!paper) throw new Error("Paper not found");
+
+    if (!paper.trackedFileId || !paper.repositoryId) {
+      throw new Error("Paper is not linked to a repository");
+    }
+
+    const repository = await ctx.runQuery(internal.git.getRepository, { id: paper.repositoryId });
+    if (!repository) throw new Error("Repository not found");
+    if (repository.userId !== userId) {
+      throw new Error("Unauthorized");
+    }
+
+    const trackedFile = await ctx.runQuery(internal.git.getTrackedFile, { id: paper.trackedFileId });
+    if (!trackedFile) throw new Error("Tracked file not found");
+
+    // Try to acquire build lock
+    const lockResult = await ctx.runMutation(internal.sync.tryAcquireBuildLock, {
+      id: paperId,
+    });
+
+    if (!lockResult.acquired || !lockResult.attemptId) {
+      return { updated: false, skipped: true, reason: "Paper is already building" };
+    }
+
+    const attemptId = lockResult.attemptId;
+
+    // Clear previous build error
+    await ctx.runMutation(internal.sync.updatePaperBuildError, {
+      id: paperId,
+      error: undefined,
+      attemptId,
+    });
+
+    try {
+      // Fetch latest commit - pass userId for mobile auth
+      const latestCommit = await ctx.runAction(internal.git.fetchLatestCommitInternal, {
+        gitUrl: repository.gitUrl,
+        branch: repository.defaultBranch,
+        knownSha: repository.lastCommitHash,
+        userId,
+      });
+
+      // Check if PDF is already cached for this commit (skip if force=true)
+      if (!args.force && paper.cachedCommitHash === latestCommit.sha && paper.pdfFileId) {
+        await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
+          id: paperId,
+          cachedCommitHash: latestCommit.sha,
+        });
+        await ctx.runMutation(internal.sync.releaseBuildLock, {
+          id: paperId,
+          status: "idle",
+          attemptId,
+        });
+        return { updated: false, commitHash: latestCommit.sha };
+      }
+
+      let storageId: string;
+      let fileSize: number;
+      let dependencies: Array<{ path: string; hash: string }> | undefined;
+
+      if (trackedFile.pdfSourceType === "compile") {
+        const result = await ctx.runAction(internal.latex.compileLatexInternal, {
+          gitUrl: repository.gitUrl,
+          filePath: trackedFile.filePath,
+          branch: repository.defaultBranch,
+          paperId: paperId,
+          userId, // Pass userId for mobile auth
+        });
+        storageId = result.storageId;
+        fileSize = result.size;
+        dependencies = result.dependencies;
+      } else {
+        const pdfData = await ctx.runAction(internal.git.fetchFileContentInternal, {
+          gitUrl: repository.gitUrl,
+          filePath: trackedFile.filePath,
+          branch: repository.defaultBranch,
+          userId, // Pass userId for mobile auth
+        });
+        const blob = new Blob([new Uint8Array(pdfData.content)], { type: "application/pdf" });
+        storageId = await ctx.storage.store(blob);
+        fileSize = pdfData.size;
+      }
+
+      const commitTime = latestCommit.unchanged
+        ? Date.now()
+        : new Date(latestCommit.date).getTime();
+
+      await ctx.runMutation(internal.sync.updatePaperPdfWithBuildLock, {
+        id: paperId,
+        pdfFileId: storageId as Id<"_storage">,
+        cachedCommitHash: latestCommit.sha,
+        fileSize,
+        cachedDependencies: dependencies,
+        attemptId,
+        lastAffectedCommitHash: latestCommit.sha,
+        lastAffectedCommitTime: commitTime,
+        lastAffectedCommitMessage: latestCommit.message,
+        builtFromCommitHash: latestCommit.sha,
+        builtFromCommitTime: commitTime,
+      });
+
+      // Generate thumbnail
+      try {
+        await ctx.runAction(internal.thumbnail.generateThumbnail, {
+          pdfFileId: storageId as Id<"_storage">,
+          paperId: paperId,
+        });
+      } catch (error) {
+        console.error("Thumbnail generation failed:", error);
+      }
+
+      return { updated: true, commitHash: latestCommit.sha };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Build failed";
+      await ctx.runMutation(internal.sync.updatePaperBuildError, {
+        id: paperId,
+        error: errorMessage,
+        attemptId,
+      });
+      await ctx.runMutation(internal.sync.releaseBuildLock, {
+        id: paperId,
         status: "error",
         attemptId,
       });
