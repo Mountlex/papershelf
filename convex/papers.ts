@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
 import { auth } from "./auth";
-import { validateFilePath } from "./lib/validation";
+import { validateFilePath, validatePaperFieldsOrThrow, validateTitleOrThrow } from "./lib/validation";
 import { Id } from "./_generated/dataModel";
 import { determineIfUpToDate } from "./lib/paperHelpers";
 import { deletePaperAndAssociatedData } from "./lib/cascadeDelete";
@@ -350,19 +350,7 @@ export const updatePaperForMobile = internalMutation({
     }
 
     // Validate field lengths
-    if (args.title !== undefined && args.title.length > 500) {
-      throw new Error("Title must be 500 characters or less");
-    }
-    if (args.authors !== undefined) {
-      if (args.authors.length > 50) {
-        throw new Error("Maximum 50 authors allowed");
-      }
-      for (const author of args.authors) {
-        if (author.length > 200) {
-          throw new Error("Author names must be 200 characters or less");
-        }
-      }
-    }
+    validatePaperFieldsOrThrow({ title: args.title, authors: args.authors });
 
     const updates: { title?: string; authors?: string[]; updatedAt: number } = {
       updatedAt: Date.now(),
@@ -592,22 +580,7 @@ export const update = mutation({
     }
 
     // Validate field lengths to prevent storage abuse
-    if (args.title !== undefined && args.title.length > 500) {
-      throw new Error("Title must be 500 characters or less");
-    }
-    if (args.abstract !== undefined && args.abstract.length > 10000) {
-      throw new Error("Abstract must be 10,000 characters or less");
-    }
-    if (args.authors !== undefined) {
-      if (args.authors.length > 50) {
-        throw new Error("Maximum 50 authors allowed");
-      }
-      for (const author of args.authors) {
-        if (author.length > 200) {
-          throw new Error("Author names must be 200 characters or less");
-        }
-      }
-    }
+    validatePaperFieldsOrThrow({ title: args.title, abstract: args.abstract, authors: args.authors });
 
     const { id, ...updates } = args;
     const filteredUpdates = Object.fromEntries(
@@ -733,9 +706,7 @@ export const addTrackedFile = mutation({
     }
 
     // Validate title length
-    if (args.title.length > 500) {
-      throw new Error("Title must be 500 characters or less");
-    }
+    validateTitleOrThrow(args.title);
 
     // Validate file path (prevents path traversal attacks)
     const filePathValidation = validateFilePath(args.filePath);
@@ -874,9 +845,7 @@ export const uploadPdf = mutation({
     }
 
     // Validate title length
-    if (args.title.length > 500) {
-      throw new Error("Title must be 500 characters or less");
-    }
+    validateTitleOrThrow(args.title);
 
     const paperId = await ctx.db.insert("papers", {
       userId: args.userId,

@@ -53,6 +53,88 @@ export function validatePasswordOrThrow(password: string, email?: string): void 
  * @param filePath - The file path to validate
  * @returns Object with valid flag and normalized path or error message
  */
+// Paper field validation limits
+export const PAPER_VALIDATION_LIMITS = {
+  title: { maxLength: 500 },
+  abstract: { maxLength: 10000 },
+  authors: { maxCount: 50, maxNameLength: 200 },
+};
+
+// Repository name validation limits
+export const REPOSITORY_VALIDATION_LIMITS = {
+  name: { maxLength: 255 },
+};
+
+/**
+ * Validates a paper title.
+ * @param title - The title to validate
+ * @throws Error if title exceeds maximum length
+ */
+export function validateTitleOrThrow(title: string): void {
+  if (title.length > PAPER_VALIDATION_LIMITS.title.maxLength) {
+    throw new Error(`Title must be ${PAPER_VALIDATION_LIMITS.title.maxLength} characters or less`);
+  }
+}
+
+/**
+ * Validates a paper abstract.
+ * @param abstract - The abstract to validate
+ * @throws Error if abstract exceeds maximum length
+ */
+export function validateAbstractOrThrow(abstract: string): void {
+  if (abstract.length > PAPER_VALIDATION_LIMITS.abstract.maxLength) {
+    throw new Error(`Abstract must be ${PAPER_VALIDATION_LIMITS.abstract.maxLength.toLocaleString()} characters or less`);
+  }
+}
+
+/**
+ * Validates paper authors array.
+ * @param authors - The authors array to validate
+ * @throws Error if authors count or name length exceeds limits
+ */
+export function validateAuthorsOrThrow(authors: string[]): void {
+  if (authors.length > PAPER_VALIDATION_LIMITS.authors.maxCount) {
+    throw new Error(`Maximum ${PAPER_VALIDATION_LIMITS.authors.maxCount} authors allowed`);
+  }
+  for (const author of authors) {
+    if (author.length > PAPER_VALIDATION_LIMITS.authors.maxNameLength) {
+      throw new Error(`Author names must be ${PAPER_VALIDATION_LIMITS.authors.maxNameLength} characters or less`);
+    }
+  }
+}
+
+/**
+ * Validates multiple paper fields at once.
+ * @param fields - Object containing optional title, abstract, and authors
+ * @throws Error if any field fails validation
+ */
+export function validatePaperFieldsOrThrow(fields: {
+  title?: string;
+  abstract?: string;
+  authors?: string[];
+}): void {
+  if (fields.title !== undefined) {
+    validateTitleOrThrow(fields.title);
+  }
+  if (fields.abstract !== undefined) {
+    validateAbstractOrThrow(fields.abstract);
+  }
+  if (fields.authors !== undefined) {
+    validateAuthorsOrThrow(fields.authors);
+  }
+}
+
+/**
+ * Validates a repository name.
+ * @param name - The repository name to validate
+ * @throws Error if name exceeds maximum length
+ */
+export function validateRepositoryNameOrThrow(name: string): void {
+  if (name.length > REPOSITORY_VALIDATION_LIMITS.name.maxLength) {
+    throw new Error(`Repository name must be ${REPOSITORY_VALIDATION_LIMITS.name.maxLength} characters or less`);
+  }
+}
+
 export function validateFilePath(filePath: string):
   | { valid: true; normalized: string }
   | { valid: false; error: string } {

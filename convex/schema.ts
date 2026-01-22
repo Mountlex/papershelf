@@ -230,6 +230,21 @@ export default defineSchema({
   })
     .index("by_email_action", ["email", "action"]),
 
+  // User rate limits for compute-intensive operations
+  userRateLimits: defineTable({
+    userId: v.id("users"),
+    action: v.union(
+      v.literal("refresh_repository"),
+      v.literal("build_paper"),
+      v.literal("refresh_all_repositories")
+    ),
+    attempts: v.number(),
+    windowStart: v.number(),
+    lastAttempt: v.number(),
+    lockedUntil: v.optional(v.number()),
+  })
+    .index("by_user_action", ["userId", "action"]),
+
   // Password change codes for authenticated users
   passwordChangeCodes: defineTable({
     userId: v.id("users"),

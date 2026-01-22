@@ -113,7 +113,7 @@ export function VerificationCodeInput({
           onKeyDown={(e) => handleKeyDown(index, e)}
           onPaste={handlePaste}
           disabled={disabled}
-          className="h-12 w-10 rounded-md border border-gray-300 text-center text-lg font-normal focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 disabled:opacity-50"
+          className="h-12 w-10 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-center text-lg font-normal focus:border-gray-900 dark:focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900 dark:focus:ring-gray-400 disabled:opacity-50"
           maxLength={1}
         />
       ))}

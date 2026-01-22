@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { auth } from "./auth";
-import { validateFilePath } from "./lib/validation";
+import { validateFilePath, validateRepositoryNameOrThrow } from "./lib/validation";
 import { parseRepoUrl } from "./lib/gitProviders";
 import { deletePaperAndAssociatedData } from "./lib/cascadeDelete";
 
@@ -173,9 +173,13 @@ export const add = mutation({
       );
     }
 
+    // Validate repository name length
+    const repoName = args.name || parsed.repo;
+    validateRepositoryNameOrThrow(repoName);
+
     const repositoryId = await ctx.db.insert("repositories", {
       userId: args.userId,
-      name: args.name || parsed.repo,
+      name: repoName,
       gitUrl: args.gitUrl,
       provider: parsed.provider,
       selfHostedGitLabInstanceId: instanceId,
@@ -208,6 +212,11 @@ export const update = mutation({
     const repository = await ctx.db.get(args.id);
     if (!repository || repository.userId !== authenticatedUserId) {
       throw new Error("Unauthorized");
+    }
+
+    // Validate repository name if provided
+    if (args.name !== undefined) {
+      validateRepositoryNameOrThrow(args.name);
     }
 
     const { id, ...updates } = args;

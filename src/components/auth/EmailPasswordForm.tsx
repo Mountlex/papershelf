@@ -250,13 +250,13 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
   if (mode === "verify") {
     return (
       <div className="w-full max-w-sm mx-auto">
-        <h2 className="text-xl font-normal text-gray-900 text-center mb-2">
+        <h2 className="text-xl font-normal text-gray-900 dark:text-gray-100 text-center mb-2">
           Verify your email
         </h2>
-        <p className="text-sm text-gray-600 text-center mb-2">
+        <p className="text-sm text-gray-600 dark:text-gray-400 text-center mb-2">
           We sent a 6-digit verification code to <strong>{email}</strong>
         </p>
-        <p className="text-xs text-gray-500 text-center mb-6">
+        <p className="text-xs text-gray-500 dark:text-gray-500 text-center mb-6">
           The code expires in 15 minutes. Check your spam folder if you don't see it.
         </p>
 
@@ -278,7 +278,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
             type="button"
             onClick={handleResendCode}
             disabled={isLoading}
-            className="text-sm text-gray-600 hover:text-gray-900 underline"
+            className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 underline"
           >
             Resend code
           </button>
@@ -291,7 +291,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
               resetForm();
               setMode("signIn");
             }}
-            className="text-sm text-gray-600 hover:text-gray-900"
+            className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
           >
             Back to sign in
           </button>
@@ -304,16 +304,16 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
   if (mode === "forgotPassword") {
     return (
       <div className="w-full max-w-sm mx-auto">
-        <h2 className="text-xl font-normal text-gray-900 text-center mb-2">
+        <h2 className="text-xl font-normal text-gray-900 dark:text-gray-100 text-center mb-2">
           Reset your password
         </h2>
-        <p className="text-sm text-gray-600 text-center mb-6">
+        <p className="text-sm text-gray-600 dark:text-gray-400 text-center mb-6">
           Enter your email and we'll send you a code to reset your password.
         </p>
 
         <form onSubmit={handleForgotPassword} className="space-y-4">
           <div>
-            <label htmlFor="reset-email" className="block text-sm font-normal text-gray-700">
+            <label htmlFor="reset-email" className="block text-sm font-normal text-gray-700 dark:text-gray-300">
               Email
             </label>
             <input
@@ -322,7 +322,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:border-gray-900 dark:focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900 dark:focus:ring-gray-400 placeholder:text-gray-400 dark:placeholder:text-gray-500"
               placeholder="you@example.com"
             />
           </div>
@@ -334,7 +334,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full rounded-md bg-gray-900 px-4 py-2 text-sm font-normal text-white hover:bg-gray-800 disabled:opacity-50"
+            className="w-full rounded-md bg-gray-900 dark:bg-gray-100 px-4 py-2 text-sm font-normal text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-200 disabled:opacity-50"
           >
             {isLoading ? "Sending..." : "Send reset code"}
           </button>
@@ -347,7 +347,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
               resetForm();
               setMode("signIn");
             }}
-            className="text-sm text-gray-600 hover:text-gray-900"
+            className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
           >
             Back to sign in
           </button>
@@ -360,19 +360,19 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
   if (mode === "resetPassword") {
     return (
       <div className="w-full max-w-sm mx-auto">
-        <h2 className="text-xl font-normal text-gray-900 text-center mb-2">
+        <h2 className="text-xl font-normal text-gray-900 dark:text-gray-100 text-center mb-2">
           Enter reset code
         </h2>
-        <p className="text-sm text-gray-600 text-center mb-2">
+        <p className="text-sm text-gray-600 dark:text-gray-400 text-center mb-2">
           If an account exists for <strong>{email}</strong>, we sent a reset code.
         </p>
-        <p className="text-xs text-gray-500 text-center mb-6">
+        <p className="text-xs text-gray-500 dark:text-gray-500 text-center mb-6">
           The code expires in 15 minutes. Check your spam folder if you don't see it.
         </p>
 
         <form onSubmit={handleResetPassword} className="space-y-4">
           <div>
-            <label htmlFor="reset-code" className="block text-sm font-normal text-gray-700">
+            <label htmlFor="reset-code" className="block text-sm font-normal text-gray-700 dark:text-gray-300">
               Verification code
             </label>
             <input
@@ -381,7 +381,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
               required
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono tracking-widest focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm font-mono tracking-widest focus:border-gray-900 dark:focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900 dark:focus:ring-gray-400 placeholder:text-gray-400 dark:placeholder:text-gray-500"
               placeholder="123456"
             />
             {errors.code && (
@@ -390,7 +390,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
           </div>
 
           <div>
-            <label htmlFor="new-password" className="block text-sm font-normal text-gray-700">
+            <label htmlFor="new-password" className="block text-sm font-normal text-gray-700 dark:text-gray-300">
               New password
             </label>
             <input
@@ -399,7 +399,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               required
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:border-gray-900 dark:focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900 dark:focus:ring-gray-400 placeholder:text-gray-400 dark:placeholder:text-gray-500"
               placeholder="Min 8 chars, 1 uppercase, 1 number"
             />
             {errors.password && (
@@ -414,7 +414,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full rounded-md bg-gray-900 px-4 py-2 text-sm font-normal text-white hover:bg-gray-800 disabled:opacity-50"
+            className="w-full rounded-md bg-gray-900 dark:bg-gray-100 px-4 py-2 text-sm font-normal text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-200 disabled:opacity-50"
           >
             {isLoading ? "Resetting..." : "Reset password"}
           </button>
@@ -425,7 +425,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
             type="button"
             onClick={handleResendCode}
             disabled={isLoading}
-            className="text-sm text-gray-600 hover:text-gray-900 underline"
+            className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 underline"
           >
             Resend code
           </button>
@@ -438,7 +438,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
               resetForm();
               setMode("signIn");
             }}
-            className="text-sm text-gray-600 hover:text-gray-900"
+            className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
           >
             Back to sign in
           </button>
@@ -451,7 +451,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
   return (
     <div className="w-full max-w-sm mx-auto">
       {/* Tabs */}
-      <div className="flex border-b border-gray-200 mb-6">
+      <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6">
         <button
           type="button"
           onClick={() => {
@@ -460,8 +460,8 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
           }}
           className={`flex-1 pb-2 text-sm font-normal border-b-2 transition-colors ${
             mode === "signIn"
-              ? "border-gray-900 text-gray-900"
-              : "border-transparent text-gray-500 hover:text-gray-700"
+              ? "border-gray-900 dark:border-gray-100 text-gray-900 dark:text-gray-100"
+              : "border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
           }`}
         >
           Sign In
@@ -474,8 +474,8 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
           }}
           className={`flex-1 pb-2 text-sm font-normal border-b-2 transition-colors ${
             mode === "signUp"
-              ? "border-gray-900 text-gray-900"
-              : "border-transparent text-gray-500 hover:text-gray-700"
+              ? "border-gray-900 dark:border-gray-100 text-gray-900 dark:text-gray-100"
+              : "border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
           }`}
         >
           Sign Up
@@ -485,25 +485,25 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
       <form onSubmit={mode === "signUp" ? handleSignUp : handleSignIn} className="space-y-4">
         {mode === "signUp" && (
           <div>
-            <label htmlFor="name" className="block text-sm font-normal text-gray-700">
-              Name <span className="text-gray-400">(optional)</span>
+            <label htmlFor="name" className="block text-sm font-normal text-gray-700 dark:text-gray-300">
+              Name <span className="text-gray-400 dark:text-gray-500">(optional)</span>
             </label>
             <input
               id="name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:border-gray-900 dark:focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900 dark:focus:ring-gray-400 placeholder:text-gray-400 dark:placeholder:text-gray-500"
               placeholder="Your name"
             />
             {errors.name && (
-              <p className="mt-1 text-sm text-red-600">{errors.name}</p>
+              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.name}</p>
             )}
           </div>
         )}
 
         <div>
-          <label htmlFor="email" className="block text-sm font-normal text-gray-700">
+          <label htmlFor="email" className="block text-sm font-normal text-gray-700 dark:text-gray-300">
             Email
           </label>
           <input
@@ -512,16 +512,16 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+            className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:border-gray-900 dark:focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900 dark:focus:ring-gray-400 placeholder:text-gray-400 dark:placeholder:text-gray-500"
             placeholder="you@example.com"
           />
           {errors.email && (
-            <p className="mt-1 text-sm text-red-600">{errors.email}</p>
+            <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.email}</p>
           )}
         </div>
 
         <div>
-          <label htmlFor="password" className="block text-sm font-normal text-gray-700">
+          <label htmlFor="password" className="block text-sm font-normal text-gray-700 dark:text-gray-300">
             Password
           </label>
           <input
@@ -530,14 +530,14 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+            className="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:border-gray-900 dark:focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-900 dark:focus:ring-gray-400 placeholder:text-gray-400 dark:placeholder:text-gray-500"
             placeholder="Your password"
           />
           {mode === "signUp" && (
-            <p className="mt-1 text-xs text-gray-500">{PASSWORD_REQUIREMENTS}</p>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{PASSWORD_REQUIREMENTS}</p>
           )}
           {errors.password && (
-            <p className="mt-1 text-sm text-red-600">{errors.password}</p>
+            <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.password}</p>
           )}
         </div>
 
@@ -548,22 +548,22 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
               type="checkbox"
               checked={rememberMe}
               onChange={(e) => setRememberMe(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
+              className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-gray-900 dark:focus:ring-gray-400 bg-white dark:bg-gray-800"
             />
-            <label htmlFor="remember-me" className="ml-2 text-sm text-gray-600" title="Your email will be saved in this browser only">
+            <label htmlFor="remember-me" className="ml-2 text-sm text-gray-600 dark:text-gray-400" title="Your email will be saved in this browser only">
               Remember my email
             </label>
           </div>
         )}
 
         {errors.general && (
-          <p className="text-sm text-red-600">{errors.general}</p>
+          <p className="text-sm text-red-600 dark:text-red-400">{errors.general}</p>
         )}
 
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full rounded-md bg-gray-900 px-4 py-2 text-sm font-normal text-white hover:bg-gray-800 disabled:opacity-50"
+          className="w-full rounded-md bg-gray-900 dark:bg-gray-100 px-4 py-2 text-sm font-normal text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-200 disabled:opacity-50"
         >
           {isLoading
             ? mode === "signUp"
@@ -583,7 +583,7 @@ export function EmailPasswordForm({ onSuccess }: EmailPasswordFormProps = {}) {
               resetForm();
               setMode("forgotPassword");
             }}
-            className="text-sm text-gray-600 hover:text-gray-900 underline"
+            className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 underline"
           >
             Forgot password?
           </button>

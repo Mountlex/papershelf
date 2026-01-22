@@ -6,6 +6,7 @@ import type { Id } from "./_generated/dataModel";
 import { auth } from "./auth";
 import { sleep, type DependencyHash } from "./lib/http";
 import { isFileNotFoundError } from "./lib/providers/types";
+import { checkUserRateLimit } from "./lib/rateLimit";
 
 // Helper function to check if any dependency files have changed
 // Uses batch fetch to optimize Overleaf (single clone instead of one per file)
@@ -187,6 +188,21 @@ export const releaseSyncLock = internalMutation({
   },
 });
 
+// Internal mutation for rate limit checking (actions can't query DB directly)
+export const checkAndRecordRateLimit = internalMutation({
+  args: {
+    userId: v.id("users"),
+    action: v.union(
+      v.literal("refresh_repository"),
+      v.literal("build_paper"),
+      v.literal("refresh_all_repositories")
+    ),
+  },
+  handler: async (ctx, args) => {
+    return await checkUserRateLimit(ctx, args.userId, args.action);
+  },
+});
+
 // Public mutation to reset a stuck sync status (for manual intervention)
 export const resetSyncStatus = mutation({
   args: { repositoryId: v.id("repositories") },
@@ -345,6 +361,15 @@ export const refreshRepository = action({
     const userId = await auth.getUserId(ctx);
     if (!userId) {
       throw new Error("Not authenticated");
+    }
+
+    // Check rate limit for refresh operations
+    const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
+      userId,
+      action: "refresh_repository",
+    });
+    if (!rateLimitResult.allowed) {
+      throw new Error(`Rate limit exceeded. Try again in ${Math.ceil(rateLimitResult.retryAfter! / 1000)} seconds.`);
     }
 
     const repository = await ctx.runQuery(internal.git.getRepository, {
@@ -811,6 +836,15 @@ export const buildPaper = action({
     const userId = await auth.getUserId(ctx);
     if (!userId) {
       throw new Error("Not authenticated");
+    }
+
+    // Check rate limit for build operations
+    const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
+      userId,
+      action: "build_paper",
+    });
+    if (!rateLimitResult.allowed) {
+      throw new Error(`Rate limit exceeded. Try again in ${Math.ceil(rateLimitResult.retryAfter! / 1000)} seconds.`);
     }
 
     // Get paper and related data
