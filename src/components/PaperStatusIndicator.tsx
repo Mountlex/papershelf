@@ -13,6 +13,8 @@ interface PaperStatusIndicatorProps {
   isUpToDate?: boolean | null;
   lastSyncError?: string | null;
   repository: Repository | null;
+  lastAffectedCommitTime?: number;
+  creationTime?: number;
   formatRelativeTime: (timestamp: number | undefined) => string;
 }
 
@@ -23,11 +25,14 @@ export function PaperStatusIndicator({
   isUpToDate,
   lastSyncError,
   repository,
+  lastAffectedCommitTime,
+  creationTime,
   formatRelativeTime,
 }: PaperStatusIndicatorProps) {
   if (!repository) return null;
 
-  const lastTime = repository.lastCommitTime ?? repository.lastSyncedAt;
+  // Use lastAffectedCommitTime (when paper content changed) for display
+  const lastTime = lastAffectedCommitTime ?? creationTime;
 
   // Building status
   if (buildStatus === "building") {

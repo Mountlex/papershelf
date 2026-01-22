@@ -26,6 +26,8 @@ interface Paper {
   lastSyncError?: string | null;
   isPublic?: boolean;
   repository: Repository | null;
+  lastAffectedCommitTime?: number;
+  _creationTime: number;
 }
 
 interface PaperCardProps {
@@ -186,6 +188,8 @@ export function PaperCard({
                 isUpToDate={paper.isUpToDate}
                 lastSyncError={paper.lastSyncError}
                 repository={paper.repository}
+                lastAffectedCommitTime={paper.lastAffectedCommitTime}
+                creationTime={paper._creationTime}
                 formatRelativeTime={formatRelativeTime}
               />
             </span>
