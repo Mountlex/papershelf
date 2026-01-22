@@ -101,11 +101,19 @@ export function getProviderFromUrl(
   return null;
 }
 
+// Type for parsed repository URL result
+export type ParsedRepoUrl = {
+  owner: string;
+  repo: string;
+  provider: "github" | "gitlab" | "selfhosted-gitlab" | "overleaf";
+  matchedInstanceUrl?: string;
+};
+
 // Parse URL based on detected provider
 export function parseRepoUrl(
   url: string,
   selfHostedInstances: Array<{ url: string }> = []
-): { owner: string; repo: string; provider: "github" | "gitlab" | "selfhosted-gitlab" | "overleaf"; matchedInstanceUrl?: string } | null {
+): ParsedRepoUrl | null {
   const provider = getProviderFromUrl(url, selfHostedInstances);
   if (provider === "github") {
     const parsed = parseGitHubUrl(url);

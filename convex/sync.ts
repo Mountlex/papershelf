@@ -5,6 +5,7 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { auth } from "./auth";
 import { sleep, type DependencyHash } from "./lib/http";
+import { isFileNotFoundError } from "./lib/providers/types";
 
 // Helper function to check if any dependency files have changed
 // Uses batch fetch to optimize Overleaf (single clone instead of one per file)
@@ -991,6 +992,26 @@ export const buildPaper = action({
 
       return { updated: true, commitHash: latestCommit.sha };
     } catch (error) {
+      // Check if file was not found (deleted from repository)
+      if (isFileNotFoundError(error)) {
+        const errorMessage = `Source file not found: ${error.filePath}. The file may have been deleted or renamed in the repository.`;
+        await ctx.runMutation(internal.sync.updatePaperBuildError, {
+          id: args.paperId,
+          error: errorMessage,
+          attemptId,
+        });
+
+        // Release lock with error status, but don't throw - paper keeps its last PDF
+        await ctx.runMutation(internal.sync.releaseBuildLock, {
+          id: args.paperId,
+          status: "error",
+          attemptId,
+        });
+
+        console.log(`File not found for paper ${args.paperId}: ${error.filePath}`);
+        return { updated: false, fileNotFound: true, filePath: error.filePath };
+      }
+
       // Store the error on the paper for UI display
       const errorMessage = error instanceof Error ? error.message : "Build failed";
       await ctx.runMutation(internal.sync.updatePaperBuildError, {
@@ -1137,6 +1158,23 @@ export const buildPaperForMobile = internalAction({
 
       return { updated: true, commitHash: latestCommit.sha };
     } catch (error) {
+      // Check if file was not found (deleted from repository)
+      if (isFileNotFoundError(error)) {
+        const errorMessage = `Source file not found: ${error.filePath}. The file may have been deleted or renamed in the repository.`;
+        await ctx.runMutation(internal.sync.updatePaperBuildError, {
+          id: paperId,
+          error: errorMessage,
+          attemptId,
+        });
+        await ctx.runMutation(internal.sync.releaseBuildLock, {
+          id: paperId,
+          status: "error",
+          attemptId,
+        });
+        console.log(`File not found for paper ${paperId}: ${error.filePath}`);
+        return { updated: false, fileNotFound: true, filePath: error.filePath };
+      }
+
       const errorMessage = error instanceof Error ? error.message : "Build failed";
       await ctx.runMutation(internal.sync.updatePaperBuildError, {
         id: paperId,

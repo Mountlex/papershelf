@@ -94,10 +94,14 @@ export function PaperStatusIndicator({
 
   // Error state
   if (lastSyncError) {
+    // Check if the error indicates the source file was deleted
+    const isSourceFileMissing = lastSyncError.includes("Source file not found") ||
+      lastSyncError.includes("File not found in repository");
+
     return (
       <span
         className="flex shrink-0 items-center gap-0.5 text-red-600"
-        title={`${pdfSourceType === "compile" ? "Compilation" : "Sync"} failed: ${lastSyncError}`}
+        title={isSourceFileMissing ? "Source file was deleted from repository" : `${pdfSourceType === "compile" ? "Compilation" : "Sync"} failed: ${lastSyncError}`}
       >
         <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path
@@ -108,7 +112,11 @@ export function PaperStatusIndicator({
           />
         </svg>
         <span className="text-[10px]">
-          {pdfSourceType === "compile" ? "Compilation failed" : "Sync failed"}
+          {isSourceFileMissing
+            ? "File missing"
+            : pdfSourceType === "compile"
+              ? "Compilation failed"
+              : "Sync failed"}
         </span>
       </span>
     );

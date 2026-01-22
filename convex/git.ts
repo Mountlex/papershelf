@@ -4,20 +4,13 @@ import type { ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { auth } from "./auth";
 import type { Id } from "./_generated/dataModel";
-import {
-  parseOverleafUrl,
-  parseRepoUrl,
-  getProviderFromUrl,
-  getGitLabHeaders,
-  type SelfHostedGitLabInstance,
-} from "./lib/gitProviders";
-import {
-  fetchWithTimeout,
-  withTimeout,
-  getLatexServiceHeaders,
-  BATCH_OPERATION_TIMEOUT,
-} from "./lib/http";
+import { type SelfHostedGitLabInstance } from "./lib/gitProviders";
+import { fetchWithTimeout } from "./lib/http";
 import { decryptTokenIfNeeded, encryptTokenIfNeeded } from "./lib/crypto";
+import {
+  getProvider,
+  type TokenGetters,
+} from "./lib/providers";
 
 // Token refresh buffer: refresh 5 minutes before expiry to avoid race conditions
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -147,6 +140,18 @@ export async function getSelfHostedGitLabCredentialsById(
   const decryptedToken = await decryptTokenIfNeeded(instance.token);
   if (!decryptedToken) return null;
   return { url: instance.url, token: decryptedToken };
+}
+
+// Create token getters object for use with provider factory
+function createTokenGetters(): TokenGetters {
+  return {
+    getGitHubToken,
+    getGitHubTokenByUserId,
+    getGitLabToken,
+    getGitLabTokenByUserId,
+    getOverleafCredentials,
+    getOverleafCredentialsByUserId,
+  };
 }
 
 // Get user by ID (to retrieve access token)
@@ -297,86 +302,22 @@ export const fetchRepositoryInfo = action({
     }
     // Get all self-hosted GitLab instances to check if URL matches any
     const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
-    const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
-    if (!parsed) {
-      throw new Error("Invalid repository URL. Expected GitHub or GitLab URL.");
-    }
 
-    if (parsed.provider === "github") {
-      const response = await fetchWithTimeout(
-        `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`,
-        {
-          headers: {
-            Accept: "application/vnd.github.v3+json",
-            "User-Agent": "Carrel",
-          },
-        }
-      );
+    const { provider, owner, repo } = await getProvider(
+      ctx,
+      args.gitUrl,
+      selfHostedInstances,
+      createTokenGetters()
+    );
 
-      if (!response.ok) {
-        throw new Error(`GitHub API error: ${response.statusText}`);
-      }
-
-      const data = await safeJsonParse<{
-        name: string;
-        full_name: string;
-        default_branch: string;
-        description: string;
-        private: boolean;
-      }>(response, "GitHub repository info");
-
-      return {
-        name: data.name,
-        fullName: data.full_name,
-        defaultBranch: data.default_branch,
-        description: data.description,
-        private: data.private,
-      };
-    } else {
-      // GitLab API (both gitlab.com and self-hosted) - project ID is URL-encoded owner/repo
-      const isSelfHosted = parsed.provider === "selfhosted-gitlab";
-      const matchingInstance = isSelfHosted
-        ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
-        : null;
-
-      if (isSelfHosted && !matchingInstance) {
-        throw new Error(
-          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
-          `The instance may have been deleted. Please re-add the repository.`
-        );
-      }
-
-      const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
-      const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
-
-      const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
-      const headers = getGitLabHeaders(token);
-
-      const response = await fetchWithTimeout(
-        `${baseUrl}/api/v4/projects/${projectId}`,
-        { headers }
-      );
-
-      if (!response.ok) {
-        throw new Error(`GitLab API error: ${response.statusText}`);
-      }
-
-      const data = await safeJsonParse<{
-        name: string;
-        path_with_namespace: string;
-        default_branch: string;
-        description: string;
-        visibility: string;
-      }>(response, "GitLab repository info");
-
-      return {
-        name: data.name,
-        fullName: data.path_with_namespace,
-        defaultBranch: data.default_branch,
-        description: data.description,
-        private: data.visibility !== "public",
-      };
-    }
+    const info = await provider.fetchRepositoryInfo(owner, repo);
+    return {
+      name: info.name,
+      fullName: info.fullName,
+      defaultBranch: info.defaultBranch,
+      description: info.description,
+      private: info.isPrivate,
+    };
   },
 });
 
@@ -393,77 +334,20 @@ export const fetchLatestCommit = action({
     }
     // Get all self-hosted GitLab instances to check if URL matches any
     const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
-    const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
-    if (!parsed) {
-      throw new Error("Invalid repository URL. Expected GitHub or GitLab URL.");
-    }
 
-    if (parsed.provider === "github") {
-      const response = await fetchWithTimeout(
-        `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/commits/${args.branch}`,
-        {
-          headers: {
-            Accept: "application/vnd.github.v3+json",
-            "User-Agent": "Carrel",
-          },
-        }
-      );
+    const { provider, owner, repo } = await getProvider(
+      ctx,
+      args.gitUrl,
+      selfHostedInstances,
+      createTokenGetters()
+    );
 
-      if (!response.ok) {
-        throw new Error(`GitHub API error: ${response.statusText}`);
-      }
-
-      const data = await safeJsonParse<{
-        sha: string;
-        commit: { message: string; committer: { date: string } };
-      }>(response, "GitHub commit info");
-
-      return {
-        sha: data.sha,
-        message: data.commit.message,
-        date: data.commit.committer.date,
-      };
-    } else {
-      // GitLab API (both gitlab.com and self-hosted)
-      const isSelfHosted = parsed.provider === "selfhosted-gitlab";
-      const matchingInstance = isSelfHosted
-        ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
-        : null;
-
-      if (isSelfHosted && !matchingInstance) {
-        throw new Error(
-          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
-          `The instance may have been deleted. Please re-add the repository.`
-        );
-      }
-
-      const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
-      const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
-
-      const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
-      const headers = getGitLabHeaders(token);
-
-      const response = await fetchWithTimeout(
-        `${baseUrl}/api/v4/projects/${projectId}/repository/commits/${encodeURIComponent(args.branch)}`,
-        { headers }
-      );
-
-      if (!response.ok) {
-        throw new Error(`GitLab API error: ${response.statusText}`);
-      }
-
-      const data = await safeJsonParse<{
-        id: string;
-        message: string;
-        committed_date: string;
-      }>(response, "GitLab commit info");
-
-      return {
-        sha: data.id,
-        message: data.message,
-        date: data.committed_date,
-      };
-    }
+    const commit = await provider.fetchLatestCommit(owner, repo, args.branch);
+    return {
+      sha: commit.sha,
+      message: commit.message,
+      date: commit.date,
+    };
   },
 });
 
@@ -481,55 +365,15 @@ export const fetchFileContent = action({
     }
     // Get all self-hosted GitLab instances to check if URL matches any
     const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
-    const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
-    if (!parsed) {
-      throw new Error("Invalid repository URL. Expected GitHub or GitLab URL.");
-    }
 
-    let rawUrl: string;
-    const headers: Record<string, string> = {
-      "User-Agent": "Carrel",
-    };
+    const { provider, owner, repo } = await getProvider(
+      ctx,
+      args.gitUrl,
+      selfHostedInstances,
+      createTokenGetters()
+    );
 
-    if (parsed.provider === "github") {
-      rawUrl = `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${args.branch}/${args.filePath}`;
-      const token = await getGitHubToken(ctx);
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-    } else {
-      // GitLab raw file URL (both gitlab.com and self-hosted)
-      const isSelfHosted = parsed.provider === "selfhosted-gitlab";
-      const matchingInstance = isSelfHosted
-        ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
-        : null;
-
-      if (isSelfHosted && !matchingInstance) {
-        throw new Error(
-          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
-          `The instance may have been deleted. Please re-add the repository.`
-        );
-      }
-
-      const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
-      const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
-
-      // Use GitLab API endpoint for raw file content (works with PRIVATE-TOKEN)
-      const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
-      const encodedFilePath = encodeURIComponent(args.filePath);
-      rawUrl = `${baseUrl}/api/v4/projects/${projectId}/repository/files/${encodedFilePath}/raw?ref=${args.branch}`;
-      if (token) {
-        headers["PRIVATE-TOKEN"] = token;
-      }
-    }
-
-    const response = await fetchWithTimeout(rawUrl, { headers });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch file: ${response.statusText}`);
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
+    const arrayBuffer = await provider.fetchFileContent(owner, repo, args.branch, args.filePath);
     return {
       content: Array.from(new Uint8Array(arrayBuffer)),
       size: arrayBuffer.byteLength,
@@ -551,141 +395,16 @@ export const listRepositoryFiles = action({
     }
     // Get all self-hosted GitLab instances to check if URL matches any
     const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
-    const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
-    const path = args.path || "";
     const branch = args.branch || "main";
 
-    // Handle Overleaf projects
-    if (provider === "overleaf") {
-      const overleafParsed = parseOverleafUrl(args.gitUrl);
-      if (!overleafParsed) {
-        throw new Error(`Invalid Overleaf URL: "${args.gitUrl}". Expected format: https://git.overleaf.com/<project_id> or https://www.overleaf.com/project/<project_id>`);
-      }
+    const { provider, owner, repo } = await getProvider(
+      ctx,
+      args.gitUrl,
+      selfHostedInstances,
+      createTokenGetters()
+    );
 
-      const credentials = await getOverleafCredentials(ctx);
-      if (!credentials) {
-        throw new Error("Overleaf credentials not configured.");
-      }
-
-      const latexServiceUrl = process.env.LATEX_SERVICE_URL;
-      if (!latexServiceUrl) {
-        throw new Error("LATEX_SERVICE_URL not configured. Required for Overleaf support.");
-      }
-
-      const response = await fetchWithTimeout(`${latexServiceUrl}/git/tree`, {
-        method: "POST",
-        headers: getLatexServiceHeaders(),
-        body: JSON.stringify({
-          gitUrl: overleafParsed.gitUrl, // Use canonical git URL
-          path,
-          branch,
-          auth: credentials,
-        }),
-        timeout: 60000, // 1 minute for git tree
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Failed to list Overleaf files: ${error}`);
-      }
-
-      const data = await response.json();
-      return data.files as Array<{
-        name: string;
-        path: string;
-        type: "file" | "dir";
-        size?: number;
-      }>;
-    }
-
-    const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
-    if (!parsed) {
-      throw new Error("Invalid repository URL. Expected GitHub, GitLab, or Overleaf URL.");
-    }
-
-    if (parsed.provider === "github") {
-      // Get token for private repo access
-      const token = await getGitHubToken(ctx);
-
-      const headers: Record<string, string> = {
-        Accept: "application/vnd.github.v3+json",
-        "User-Agent": "Carrel",
-      };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
-      const response = await fetchWithTimeout(
-        `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${path}?ref=${branch}`,
-        { headers }
-      );
-
-      if (!response.ok) {
-        throw new Error(`GitHub API error: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-
-      // If it's a single file, wrap in array
-      const files = Array.isArray(data) ? data : [data];
-
-      return files.map((file: { name: string; path: string; type: string; size?: number }) => ({
-        name: file.name,
-        path: file.path,
-        type: file.type as "file" | "dir",
-        size: file.size,
-      }));
-    } else {
-      // GitLab API (both gitlab.com and self-hosted)
-      const isSelfHosted = parsed.provider === "selfhosted-gitlab";
-      const matchingInstance = isSelfHosted
-        ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
-        : null;
-
-      if (isSelfHosted && !matchingInstance) {
-        throw new Error(
-          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
-          `The instance may have been deleted. Please re-add the repository.`
-        );
-      }
-
-      const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
-      const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
-      const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
-
-      const headers: Record<string, string> = {
-        "User-Agent": "Carrel",
-      };
-      if (token) {
-        headers["PRIVATE-TOKEN"] = token;
-      }
-
-      const params = new URLSearchParams({
-        ref: branch,
-        per_page: "100",
-      });
-      if (path) {
-        params.set("path", path);
-      }
-
-      const response = await fetchWithTimeout(
-        `${baseUrl}/api/v4/projects/${projectId}/repository/tree?${params}`,
-        { headers }
-      );
-
-      if (!response.ok) {
-        throw new Error(`GitLab API error: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-
-      return data.map((file: { name: string; path: string; type: string }) => ({
-        name: file.name,
-        path: file.path,
-        type: file.type === "tree" ? "dir" : "file",
-        size: undefined, // GitLab tree endpoint doesn't return size
-      }));
-    }
+    return provider.listFiles(owner, repo, branch, args.path);
   },
 });
 
@@ -702,150 +421,30 @@ export const fetchLatestCommitInternal = internalAction({
     const selfHostedInstances = args.userId
       ? await getAllSelfHostedGitLabInstancesByUserId(ctx, args.userId)
       : await getAllSelfHostedGitLabInstances(ctx);
-    const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
 
-    // Handle Overleaf projects
-    if (provider === "overleaf") {
-      const overleafParsed = parseOverleafUrl(args.gitUrl);
-      if (!overleafParsed) {
-        throw new Error(`Invalid Overleaf URL: "${args.gitUrl}". Expected format: https://git.overleaf.com/<project_id> or https://www.overleaf.com/project/<project_id>`);
-      }
+    const { provider, owner, repo } = await getProvider(
+      ctx,
+      args.gitUrl,
+      selfHostedInstances,
+      createTokenGetters(),
+      args.userId
+    );
 
-      const credentials = args.userId
-        ? await getOverleafCredentialsByUserId(ctx, args.userId)
-        : await getOverleafCredentials(ctx);
-      if (!credentials) {
-        throw new Error("Overleaf credentials not configured.");
-      }
+    const commit = await provider.fetchLatestCommit(owner, repo, args.branch, args.knownSha);
 
-      const latexServiceUrl = process.env.LATEX_SERVICE_URL;
-      if (!latexServiceUrl) {
-        throw new Error("LATEX_SERVICE_URL not configured. Required for Overleaf support.");
-      }
-
-      const response = await fetchWithTimeout(`${latexServiceUrl}/git/refs`, {
-        method: "POST",
-        headers: getLatexServiceHeaders(),
-        body: JSON.stringify({
-          gitUrl: overleafParsed.gitUrl, // Use canonical git URL
-          branch: args.branch,
-          auth: credentials,
-          knownSha: args.knownSha,
-        }),
-        timeout: 30000, // 30 seconds for refs
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Failed to get Overleaf commit: ${error}`);
-      }
-
-      const data = await response.json();
-
-      // If SHA unchanged, return without date (caller should use cached date)
-      if (data.unchanged) {
-        return {
-          sha: data.sha,
-          message: "Overleaf commit",
-          unchanged: true as const,
-        };
-      }
-
+    if (commit.unchanged) {
       return {
-        sha: data.sha,
-        message: data.message || "Overleaf commit",
-        date: data.date || new Date().toISOString(),
+        sha: commit.sha,
+        message: commit.message,
+        unchanged: true as const,
       };
     }
 
-    const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
-    if (!parsed) {
-      throw new Error(`Invalid repository URL: "${args.gitUrl}". Expected format: https://github.com/owner/repo, https://gitlab.com/owner/repo, https://git.overleaf.com/<project_id>, or https://www.overleaf.com/project/<project_id>`);
-    }
-
-    if (parsed.provider === "github") {
-      // Get token for private repo access - use userId if provided (mobile)
-      const token = args.userId
-        ? await getGitHubTokenByUserId(ctx, args.userId)
-        : await getGitHubToken(ctx);
-
-      const headers: Record<string, string> = {
-        Accept: "application/vnd.github.v3+json",
-        "User-Agent": "Carrel",
-      };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
-      const response = await fetchWithTimeout(
-        `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/commits/${args.branch}`,
-        { headers }
-      );
-
-      if (!response.ok) {
-        // Use generic error message to avoid information disclosure
-        if (response.status === 401 || response.status === 403 || response.status === 404) {
-          throw new Error("Repository not found or access denied. Make sure the repository exists and you have the correct permissions.");
-        }
-        throw new Error("Failed to access repository. Please try again later.");
-      }
-
-      const data = await response.json();
-
-      return {
-        sha: data.sha,
-        message: data.commit.message,
-        date: data.commit.committer.date,
-      };
-    } else {
-      // GitLab API (both gitlab.com and self-hosted)
-      const isSelfHosted = parsed.provider === "selfhosted-gitlab";
-      const matchingInstance = isSelfHosted
-        ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
-        : null;
-
-      if (isSelfHosted && !matchingInstance) {
-        throw new Error(
-          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
-          `The instance may have been deleted. Please re-add the repository.`
-        );
-      }
-
-      const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
-      // Use userId if provided (mobile)
-      const token = isSelfHosted
-        ? matchingInstance!.token
-        : (args.userId ? await getGitLabTokenByUserId(ctx, args.userId) : await getGitLabToken(ctx));
-      const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
-
-      const headers: Record<string, string> = {
-        "User-Agent": "Carrel",
-      };
-      if (token) {
-        headers["PRIVATE-TOKEN"] = token;
-      }
-
-      const response = await fetchWithTimeout(
-        `${baseUrl}/api/v4/projects/${projectId}/repository/commits/${encodeURIComponent(args.branch)}`,
-        { headers }
-      );
-
-      if (!response.ok) {
-        // Use generic error message to avoid information disclosure
-        if (response.status === 401 || response.status === 403 || response.status === 404) {
-          throw new Error("Repository not found or access denied. Make sure the repository exists and you have the correct permissions.");
-        }
-        throw new Error("Failed to access repository. Please try again later.");
-      }
-
-      const data = await response.json();
-
-      return {
-        sha: data.id,
-        message: data.message,
-        date: data.committed_date,
-      };
-    }
+    return {
+      sha: commit.sha,
+      message: commit.message,
+      date: commit.date || new Date().toISOString(),
+    };
   },
 });
 
@@ -858,69 +457,16 @@ export const fetchChangedFilesInternal = internalAction({
   },
   handler: async (ctx, args): Promise<string[]> => {
     const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
-    const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
-
-    // Overleaf doesn't support compare API - return empty to trigger full check
-    if (provider === "overleaf") {
-      return [];
-    }
-
-    const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
-    if (!parsed) {
-      return [];
-    }
 
     try {
-      if (parsed.provider === "github") {
-        const token = await getGitHubToken(ctx);
-        const headers: Record<string, string> = {
-          Accept: "application/vnd.github.v3+json",
-          "User-Agent": "Carrel",
-        };
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-        }
+      const { provider, owner, repo } = await getProvider(
+        ctx,
+        args.gitUrl,
+        selfHostedInstances,
+        createTokenGetters()
+      );
 
-        const response = await fetchWithTimeout(
-          `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/compare/${args.baseCommit}...${args.headCommit}`,
-          { headers }
-        );
-
-        if (!response.ok) {
-          console.log(`GitHub compare API failed: ${response.status}`);
-          return [];
-        }
-
-        const data = await response.json();
-        return (data.files || []).map((f: { filename: string }) => f.filename);
-      } else {
-        // GitLab (both gitlab.com and self-hosted)
-        const isSelfHosted = parsed.provider === "selfhosted-gitlab";
-        const matchingInstance = isSelfHosted
-          ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
-          : null;
-
-        const baseUrl = isSelfHosted ? matchingInstance?.url : "https://gitlab.com";
-        const token = isSelfHosted ? matchingInstance?.token : await getGitLabToken(ctx);
-
-        if (!baseUrl) return [];
-
-        const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
-        const headers = getGitLabHeaders(token);
-
-        const response = await fetchWithTimeout(
-          `${baseUrl}/api/v4/projects/${projectId}/repository/compare?from=${args.baseCommit}&to=${args.headCommit}`,
-          { headers }
-        );
-
-        if (!response.ok) {
-          console.log(`GitLab compare API failed: ${response.status}`);
-          return [];
-        }
-
-        const data = await response.json();
-        return (data.diffs || []).map((d: { new_path: string }) => d.new_path);
-      }
+      return provider.fetchChangedFiles(owner, repo, args.baseCommit, args.headCommit);
     } catch (error) {
       console.log(`Failed to fetch changed files: ${error}`);
       return [];
@@ -941,127 +487,16 @@ export const fetchFileContentInternal = internalAction({
     const selfHostedInstances = args.userId
       ? await getAllSelfHostedGitLabInstancesByUserId(ctx, args.userId)
       : await getAllSelfHostedGitLabInstances(ctx);
-    const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
 
-    // Handle Overleaf projects
-    if (provider === "overleaf") {
-      const overleafParsed = parseOverleafUrl(args.gitUrl);
-      if (!overleafParsed) {
-        throw new Error(`Invalid Overleaf URL: "${args.gitUrl}". Expected format: https://git.overleaf.com/<project_id> or https://www.overleaf.com/project/<project_id>`);
-      }
+    const { provider, owner, repo } = await getProvider(
+      ctx,
+      args.gitUrl,
+      selfHostedInstances,
+      createTokenGetters(),
+      args.userId
+    );
 
-      const credentials = args.userId
-        ? await getOverleafCredentialsByUserId(ctx, args.userId)
-        : await getOverleafCredentials(ctx);
-      if (!credentials) {
-        throw new Error("Overleaf credentials not configured.");
-      }
-
-      const latexServiceUrl = process.env.LATEX_SERVICE_URL;
-      if (!latexServiceUrl) {
-        throw new Error("LATEX_SERVICE_URL not configured. Required for Overleaf support.");
-      }
-
-      const response = await fetchWithTimeout(`${latexServiceUrl}/git/file`, {
-        method: "POST",
-        headers: getLatexServiceHeaders(),
-        body: JSON.stringify({
-          gitUrl: overleafParsed.gitUrl, // Use canonical git URL
-          filePath: args.filePath,
-          branch: args.branch,
-          auth: credentials,
-        }),
-        timeout: 60000, // 1 minute for git file
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Failed to fetch file from Overleaf: ${error}`);
-      }
-
-      const data = await response.json();
-      // Return in same format as GitHub/GitLab
-      if (data.encoding === "base64") {
-        const binaryString = atob(data.content);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        return {
-          content: Array.from(bytes),
-          size: bytes.length,
-        };
-      }
-      // Text file - convert to bytes
-      const encoder = new TextEncoder();
-      const bytes = encoder.encode(data.content);
-      return {
-        content: Array.from(bytes),
-        size: bytes.length,
-      };
-    }
-
-    const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
-    if (!parsed) {
-      throw new Error("Invalid repository URL. Expected GitHub, GitLab, or Overleaf URL.");
-    }
-
-    // Get the appropriate token based on provider
-    const isSelfHosted = parsed.provider === "selfhosted-gitlab";
-
-    // Find the matching self-hosted instance if applicable
-    const matchingInstance = isSelfHosted
-      ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
-      : null;
-
-    if (isSelfHosted && !matchingInstance) {
-      throw new Error(
-        `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
-        `The instance may have been deleted. Please re-add the repository.`
-      );
-    }
-
-    const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
-    let token: string | null;
-    if (parsed.provider === "github") {
-      token = args.userId
-        ? await getGitHubTokenByUserId(ctx, args.userId)
-        : await getGitHubToken(ctx);
-    } else if (isSelfHosted) {
-      token = matchingInstance!.token;
-    } else {
-      token = args.userId
-        ? await getGitLabTokenByUserId(ctx, args.userId)
-        : await getGitLabToken(ctx);
-    }
-
-    let rawUrl: string;
-    const headers: Record<string, string> = {
-      "User-Agent": "Carrel",
-    };
-
-    if (parsed.provider === "github") {
-      rawUrl = `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${args.branch}/${args.filePath}`;
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-    } else {
-      // Use GitLab API endpoint for raw file content (works with PRIVATE-TOKEN)
-      const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
-      const encodedFilePath = encodeURIComponent(args.filePath);
-      rawUrl = `${baseUrl}/api/v4/projects/${projectId}/repository/files/${encodedFilePath}/raw?ref=${args.branch}`;
-      if (token) {
-        headers["PRIVATE-TOKEN"] = token;
-      }
-    }
-
-    const response = await fetchWithTimeout(rawUrl, { headers });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch file: ${response.statusText}`);
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
+    const arrayBuffer = await provider.fetchFileContent(owner, repo, args.branch, args.filePath);
     return {
       content: Array.from(new Uint8Array(arrayBuffer)),
       size: arrayBuffer.byteLength,
@@ -1086,118 +521,16 @@ export const fetchAndStoreFileInternal = internalAction({
     const selfHostedInstances = args.userId
       ? await getAllSelfHostedGitLabInstancesByUserId(ctx, args.userId)
       : await getAllSelfHostedGitLabInstances(ctx);
-    const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
 
-    let arrayBuffer: ArrayBuffer;
+    const { provider, owner, repo } = await getProvider(
+      ctx,
+      args.gitUrl,
+      selfHostedInstances,
+      createTokenGetters(),
+      args.userId
+    );
 
-    // Handle Overleaf projects
-    if (provider === "overleaf") {
-      const overleafParsed = parseOverleafUrl(args.gitUrl);
-      if (!overleafParsed) {
-        throw new Error(`Invalid Overleaf URL: "${args.gitUrl}". Expected format: https://git.overleaf.com/<project_id> or https://www.overleaf.com/project/<project_id>`);
-      }
-
-      const credentials = args.userId
-        ? await getOverleafCredentialsByUserId(ctx, args.userId)
-        : await getOverleafCredentials(ctx);
-      if (!credentials) {
-        throw new Error("Overleaf credentials not configured.");
-      }
-
-      const latexServiceUrl = process.env.LATEX_SERVICE_URL;
-      if (!latexServiceUrl) {
-        throw new Error("LATEX_SERVICE_URL not configured. Required for Overleaf support.");
-      }
-
-      const response = await fetchWithTimeout(`${latexServiceUrl}/git/file`, {
-        method: "POST",
-        headers: getLatexServiceHeaders(),
-        body: JSON.stringify({
-          gitUrl: overleafParsed.gitUrl,
-          filePath: args.filePath,
-          branch: args.branch,
-          auth: credentials,
-        }),
-        timeout: 60000,
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Failed to fetch file from Overleaf: ${error}`);
-      }
-
-      const data = await response.json();
-      if (data.encoding === "base64") {
-        const binaryString = atob(data.content);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        arrayBuffer = bytes.buffer;
-      } else {
-        const encoder = new TextEncoder();
-        arrayBuffer = encoder.encode(data.content).buffer;
-      }
-    } else {
-      // GitHub or GitLab
-      const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
-      if (!parsed) {
-        throw new Error("Invalid repository URL. Expected GitHub, GitLab, or Overleaf URL.");
-      }
-
-      const isSelfHosted = parsed.provider === "selfhosted-gitlab";
-      const matchingInstance = isSelfHosted
-        ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
-        : null;
-
-      if (isSelfHosted && !matchingInstance) {
-        throw new Error(
-          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
-          `The instance may have been deleted. Please re-add the repository.`
-        );
-      }
-
-      const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
-      let token: string | null;
-      if (parsed.provider === "github") {
-        token = args.userId
-          ? await getGitHubTokenByUserId(ctx, args.userId)
-          : await getGitHubToken(ctx);
-      } else if (isSelfHosted) {
-        token = matchingInstance!.token;
-      } else {
-        token = args.userId
-          ? await getGitLabTokenByUserId(ctx, args.userId)
-          : await getGitLabToken(ctx);
-      }
-
-      let rawUrl: string;
-      const headers: Record<string, string> = {
-        "User-Agent": "Carrel",
-      };
-
-      if (parsed.provider === "github") {
-        rawUrl = `https://raw.githubusercontent.com/${parsed.owner}/${parsed.repo}/${args.branch}/${args.filePath}`;
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-        }
-      } else {
-        const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
-        const encodedFilePath = encodeURIComponent(args.filePath);
-        rawUrl = `${baseUrl}/api/v4/projects/${projectId}/repository/files/${encodedFilePath}/raw?ref=${args.branch}`;
-        if (token) {
-          headers["PRIVATE-TOKEN"] = token;
-        }
-      }
-
-      const response = await fetchWithTimeout(rawUrl, { headers });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch file: ${response.statusText}`);
-      }
-
-      arrayBuffer = await response.arrayBuffer();
-    }
+    const arrayBuffer = await provider.fetchFileContent(owner, repo, args.branch, args.filePath);
 
     // Store directly to Convex storage
     const blob = new Blob([arrayBuffer], { type: contentType });
@@ -1228,157 +561,16 @@ export const fetchFileHashBatchInternal = internalAction({
     const selfHostedInstances = args.userId
       ? await getAllSelfHostedGitLabInstancesByUserId(ctx, args.userId)
       : await getAllSelfHostedGitLabInstances(ctx);
-    const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
 
-    // Handle Overleaf projects via latex-service batch endpoint
-    if (provider === "overleaf") {
-      const overleafParsed = parseOverleafUrl(args.gitUrl);
-      if (!overleafParsed) {
-        throw new Error(`Invalid Overleaf URL: "${args.gitUrl}"`);
-      }
+    const { provider, owner, repo } = await getProvider(
+      ctx,
+      args.gitUrl,
+      selfHostedInstances,
+      createTokenGetters(),
+      args.userId
+    );
 
-      const credentials = args.userId
-        ? await getOverleafCredentialsByUserId(ctx, args.userId)
-        : await getOverleafCredentials(ctx);
-      if (!credentials) {
-        throw new Error("Overleaf credentials not configured.");
-      }
-
-      const latexServiceUrl = process.env.LATEX_SERVICE_URL;
-      if (!latexServiceUrl) {
-        throw new Error("LATEX_SERVICE_URL not configured.");
-      }
-
-      // Use latex-service /git/file-hash batch endpoint (single clone for all files)
-      const response = await fetchWithTimeout(`${latexServiceUrl}/git/file-hash`, {
-        method: "POST",
-        headers: getLatexServiceHeaders(),
-        body: JSON.stringify({
-          gitUrl: overleafParsed.gitUrl,
-          filePaths: args.filePaths, // Batch request
-          branch: args.branch,
-          auth: credentials,
-        }),
-        timeout: 60000, // 1 minute for hash batch
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Failed to get file hashes from Overleaf: ${error}`);
-      }
-
-      const data = await response.json();
-      return data.hashes as Record<string, string | null>;
-    }
-
-    // For GitHub/GitLab/Self-hosted: use Promise.all with individual API calls
-    // (these are already efficient - 1 HTTP request per file, no git clone)
-    const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
-    if (!parsed) {
-      throw new Error("Invalid repository URL.");
-    }
-
-    const results: Record<string, string | null> = {};
-
-    if (parsed.provider === "github") {
-      const token = args.userId
-        ? await getGitHubTokenByUserId(ctx, args.userId)
-        : await getGitHubToken(ctx);
-      const headers: Record<string, string> = {
-        Accept: "application/vnd.github.v3+json",
-        "User-Agent": "Carrel",
-      };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
-      // Fetch all file hashes in parallel with overall timeout
-      const fetchPromises = args.filePaths.map(async (filePath) => {
-        try {
-          const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
-          const response = await fetchWithTimeout(
-            `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/contents/${encodedPath}?ref=${encodeURIComponent(args.branch)}`,
-            { headers }
-          );
-          if (!response.ok) {
-            return { path: filePath, hash: null };
-          }
-          const data = await response.json();
-          return { path: filePath, hash: data.sha as string };
-        } catch {
-          return { path: filePath, hash: null };
-        }
-      });
-
-      const fetchResults = await withTimeout(
-        Promise.all(fetchPromises),
-        BATCH_OPERATION_TIMEOUT,
-        `Batch hash fetch timed out after ${BATCH_OPERATION_TIMEOUT}ms for ${args.filePaths.length} files`
-      );
-      for (const result of fetchResults) {
-        results[result.path] = result.hash;
-      }
-    } else {
-      // GitLab API (both gitlab.com and self-hosted)
-      const isSelfHosted = parsed.provider === "selfhosted-gitlab";
-      const matchingInstance = isSelfHosted
-        ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
-        : null;
-
-      if (isSelfHosted && !matchingInstance) {
-        throw new Error(
-          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
-          `The instance may have been deleted. Please re-add the repository.`
-        );
-      }
-
-      const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
-      let token: string | null;
-      if (isSelfHosted) {
-        token = matchingInstance!.token;
-      } else {
-        token = args.userId
-          ? await getGitLabTokenByUserId(ctx, args.userId)
-          : await getGitLabToken(ctx);
-      }
-      const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
-
-      const headers: Record<string, string> = {
-        "User-Agent": "Carrel",
-      };
-      if (token) {
-        headers["PRIVATE-TOKEN"] = token;
-      }
-
-      // Fetch all file hashes in parallel with overall timeout
-      const fetchPromises = args.filePaths.map(async (filePath) => {
-        try {
-          const encodedFilePath = encodeURIComponent(filePath);
-          const response = await fetchWithTimeout(
-            `${baseUrl}/api/v4/projects/${projectId}/repository/files/${encodedFilePath}?ref=${encodeURIComponent(args.branch)}`,
-            { headers }
-          );
-          if (!response.ok) {
-            return { path: filePath, hash: null };
-          }
-          const data = await response.json();
-          return { path: filePath, hash: data.blob_id as string };
-        } catch {
-          return { path: filePath, hash: null };
-        }
-      });
-
-      const fetchResults = await withTimeout(
-        Promise.all(fetchPromises),
-        BATCH_OPERATION_TIMEOUT,
-        `Batch hash fetch timed out after ${BATCH_OPERATION_TIMEOUT}ms for ${args.filePaths.length} files`
-      );
-      for (const result of fetchResults) {
-        results[result.path] = result.hash;
-      }
-    }
-
-    return results;
+    return provider.fetchFileHashBatch(owner, repo, args.branch, args.filePaths);
   },
 });
 
@@ -1504,175 +696,20 @@ export const fetchRepoInfo = action({
     }
     // Get all self-hosted GitLab instances to check if URL matches any
     const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
-    const provider = getProviderFromUrl(args.gitUrl, selfHostedInstances);
 
-    // Handle Overleaf projects
-    if (provider === "overleaf") {
-      const overleafParsed = parseOverleafUrl(args.gitUrl);
-      if (!overleafParsed) {
-        throw new Error("Invalid Overleaf URL. Expected format: https://git.overleaf.com/<project_id> or https://www.overleaf.com/project/<project_id>");
-      }
+    const { provider, owner, repo } = await getProvider(
+      ctx,
+      args.gitUrl,
+      selfHostedInstances,
+      createTokenGetters()
+    );
 
-      const credentials = await getOverleafCredentials(ctx);
-      if (!credentials) {
-        throw new Error("Overleaf credentials not configured. Please set up your Overleaf account first.");
-      }
-
-      // Use latex-service to get repo info via git ls-remote
-      const latexServiceUrl = process.env.LATEX_SERVICE_URL;
-      if (!latexServiceUrl) {
-        throw new Error("LATEX_SERVICE_URL not configured. Required for Overleaf support.");
-      }
-
-      const response = await fetchWithTimeout(`${latexServiceUrl}/git/refs`, {
-        method: "POST",
-        headers: getLatexServiceHeaders(),
-        body: JSON.stringify({
-          gitUrl: overleafParsed.gitUrl, // Use canonical git URL
-          auth: credentials,
-        }),
-        timeout: 30000, // 30 seconds for refs
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Failed to access Overleaf project: ${error}`);
-      }
-
-      const data = await response.json();
-
-      return {
-        name: `Overleaf Project ${overleafParsed.projectId.substring(0, 8)}`,
-        defaultBranch: data.defaultBranch || "master",
-        isPrivate: true,
-      };
-    }
-
-    const parsed = parseRepoUrl(args.gitUrl, selfHostedInstances);
-    if (!parsed) {
-      throw new Error(`Invalid repository URL: "${args.gitUrl}". Expected format: https://github.com/owner/repo, https://gitlab.com/owner/repo, https://git.overleaf.com/<project_id>, or https://www.overleaf.com/project/<project_id>`);
-    }
-
-    const headers: Record<string, string> = {
-      "User-Agent": "Carrel",
+    const info = await provider.fetchRepositoryInfo(owner, repo);
+    return {
+      name: info.name,
+      defaultBranch: info.defaultBranch,
+      isPrivate: info.isPrivate,
     };
-
-    if (parsed.provider === "github") {
-      // Try to get the user's GitHub token for private repo access
-      const token = await getGitHubToken(ctx);
-
-      headers["Accept"] = "application/vnd.github.v3+json";
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-
-      const response = await fetchWithTimeout(
-        `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`,
-        { headers }
-      );
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          const privateNote = token
-            ? "Check that you have access to this repository."
-            : "If this is a private repository, sign in with GitHub first.";
-          throw new Error(
-            `Repository not found: ${parsed.owner}/${parsed.repo}. ${privateNote}`
-          );
-        }
-        throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-
-      return {
-        name: data.name as string,
-        defaultBranch: data.default_branch as string,
-        isPrivate: data.private as boolean,
-      };
-    } else {
-      // GitLab API (both gitlab.com and self-hosted)
-      const isSelfHosted = parsed.provider === "selfhosted-gitlab";
-      const matchingInstance = isSelfHosted
-        ? selfHostedInstances.find((inst) => inst.url === parsed.matchedInstanceUrl)
-        : null;
-
-      if (isSelfHosted && !matchingInstance) {
-        throw new Error(
-          `Self-hosted GitLab instance not found for URL: ${parsed.matchedInstanceUrl}. ` +
-          `The instance may have been deleted. Please re-add the repository.`
-        );
-      }
-
-      const baseUrl = isSelfHosted ? matchingInstance!.url : "https://gitlab.com";
-      const token = isSelfHosted ? matchingInstance!.token : await getGitLabToken(ctx);
-      const projectId = encodeURIComponent(`${parsed.owner}/${parsed.repo}`);
-
-      if (token) {
-        headers["PRIVATE-TOKEN"] = token;
-      }
-
-      const response = await fetchWithTimeout(
-        `${baseUrl}/api/v4/projects/${projectId}`,
-        { headers }
-      );
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          if (isSelfHosted) {
-            throw new Error(
-              `Authentication failed for ${matchingInstance!.name}. ` +
-              "Your Personal Access Token may be expired or invalid. " +
-              "Please update the token in your self-hosted GitLab settings."
-            );
-          }
-          throw new Error("GitLab authentication failed. Please sign in with GitLab again.");
-        }
-        if (response.status === 403) {
-          if (isSelfHosted) {
-            throw new Error(
-              `Access denied to ${parsed.owner}/${parsed.repo} on ${matchingInstance!.name}. ` +
-              "Your PAT may lack the required scopes (read_api, read_repository) or you may not have access to this project."
-            );
-          }
-          throw new Error(
-            `Access denied to ${parsed.owner}/${parsed.repo}. ` +
-            "Check that you have permission to view this repository."
-          );
-        }
-        if (response.status === 404) {
-          if (isSelfHosted) {
-            throw new Error(
-              `Repository not found: ${parsed.owner}/${parsed.repo} on ${matchingInstance!.name}. ` +
-              "Check that the repository exists and your PAT has access to it."
-            );
-          }
-          const privateNote = token
-            ? "Check that you have access to this repository."
-            : "If this is a private repository, sign in with GitLab first.";
-          throw new Error(
-            `Repository not found: ${parsed.owner}/${parsed.repo}. ${privateNote}`
-          );
-        }
-        // For other errors, try to get more detail
-        const errorText = await response.text().catch(() => "");
-        if (isSelfHosted) {
-          throw new Error(
-            `Could not access repository on ${matchingInstance!.name} (HTTP ${response.status}). ` +
-            (errorText ? errorText.slice(0, 100) : response.statusText)
-          );
-        }
-        throw new Error(`GitLab API error: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-
-      return {
-        name: data.name as string,
-        defaultBranch: data.default_branch as string,
-        isPrivate: data.visibility !== "public",
-      };
-    }
   },
 });
 

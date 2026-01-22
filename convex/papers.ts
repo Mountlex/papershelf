@@ -3,7 +3,7 @@ import { mutation, query, internalMutation, internalQuery } from "./_generated/s
 import { auth } from "./auth";
 import { validateFilePath } from "./lib/validation";
 import { Id } from "./_generated/dataModel";
-import { determineIfUpToDate, checkPaperOwnership } from "./lib/paperHelpers";
+import { determineIfUpToDate } from "./lib/paperHelpers";
 import { deletePaperAndAssociatedData } from "./lib/cascadeDelete";
 
 // List all papers for a user (via repositories + direct uploads)
