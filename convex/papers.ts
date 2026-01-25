@@ -91,7 +91,9 @@ export const list = query({
                 gitUrl: repository.gitUrl,
                 provider: repository.provider,
                 lastSyncedAt: repository.lastSyncedAt,
+                lastCommitHash: repository.lastCommitHash,
                 lastCommitTime: repository.lastCommitTime,
+                lastCommitAuthor: repository.lastCommitAuthor,
                 syncStatus: repository.syncStatus,
               }
             : null,

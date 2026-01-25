@@ -487,6 +487,8 @@ export const refreshRepository = action({
               cachedCommitHash: latestCommit.sha,
               repositoryId: args.repositoryId,
               attemptId,
+              builtFromCommitAuthor: latestCommit.authorName,
+              builtFromCommitTime: commitTime,
             });
             continue;
           }
@@ -508,6 +510,8 @@ export const refreshRepository = action({
                   cachedCommitHash: latestCommit.sha,
                   repositoryId: args.repositoryId,
                   attemptId,
+                  builtFromCommitAuthor: latestCommit.authorName,
+                  builtFromCommitTime: commitTime,
                 });
                 continue;
               }
@@ -540,6 +544,8 @@ export const refreshRepository = action({
                 cachedCommitHash: latestCommit.sha,
                 repositoryId: args.repositoryId,
                 attemptId,
+                builtFromCommitAuthor: latestCommit.authorName,
+                builtFromCommitTime: commitTime,
               });
               continue;
             }
@@ -576,6 +582,8 @@ export const refreshRepository = action({
                 cachedCommitHash: latestCommit.sha,
                 repositoryId: args.repositoryId,
                 attemptId,
+                builtFromCommitAuthor: latestCommit.authorName,
+                builtFromCommitTime: commitTime,
               });
               continue;
             }
@@ -785,6 +793,9 @@ export const updatePaperCommitOnly = internalMutation({
     cachedCommitHash: v.string(),
     repositoryId: v.optional(v.id("repositories")),
     attemptId: v.optional(v.string()),
+    // Optional author fields to ensure they're populated even when skipping rebuild
+    builtFromCommitAuthor: v.optional(v.union(v.string(), v.null())),
+    builtFromCommitTime: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     // If attemptId and repositoryId are provided, validate first to prevent stale updates
@@ -795,13 +806,29 @@ export const updatePaperCommitOnly = internalMutation({
         return;
       }
     }
-    await ctx.db.patch(args.id, {
+
+    const patchData: Record<string, unknown> = {
       cachedCommitHash: args.cachedCommitHash,
       needsSync: false,
       needsSyncSetAt: undefined, // Clear the timestamp when sync completes
       lastSyncError: undefined,
       updatedAt: Date.now(),
-    });
+    };
+
+    // Set builtFromCommit fields if provided and paper doesn't have them yet
+    // This ensures author info is populated even when we skip actual rebuild
+    if (args.builtFromCommitAuthor && args.builtFromCommitAuthor !== null) {
+      const paper = await ctx.db.get(args.id);
+      if (paper && !paper.builtFromCommitAuthor) {
+        patchData.builtFromCommitHash = args.cachedCommitHash;
+        patchData.builtFromCommitAuthor = args.builtFromCommitAuthor;
+        if (args.builtFromCommitTime) {
+          patchData.builtFromCommitTime = args.builtFromCommitTime;
+        }
+      }
+    }
+
+    await ctx.db.patch(args.id, patchData);
   },
 });
 
@@ -931,9 +958,13 @@ export const buildPaper = action({
       // Check if PDF is already cached for this commit (skip if force=true)
       if (!args.force && paper.cachedCommitHash === latestCommit.sha && paper.pdfFileId) {
         // Clear needsSync flag since we're up to date, then release lock
+        // Also pass author info to ensure it's populated if missing
+        const commitTime = getCommitTime(latestCommit, repository.lastCommitTime);
         await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
           id: args.paperId,
           cachedCommitHash: latestCommit.sha,
+          builtFromCommitAuthor: latestCommit.authorName,
+          builtFromCommitTime: commitTime,
         });
         await ctx.runMutation(internal.sync.releaseBuildLock, {
           id: args.paperId,
@@ -962,9 +993,13 @@ export const buildPaper = action({
         if (!dependenciesChanged) {
           console.log(`Dependencies unchanged for paper ${args.paperId}, skipping recompilation`);
           // Just update the commit hash, no recompilation needed
+          // Also pass author info to ensure it's populated if missing
+          const commitTime = getCommitTime(latestCommit, repository.lastCommitTime);
           await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
             id: args.paperId,
             cachedCommitHash: latestCommit.sha,
+            builtFromCommitAuthor: latestCommit.authorName,
+            builtFromCommitTime: commitTime,
           });
           // Release lock
           await ctx.runMutation(internal.sync.releaseBuildLock, {
@@ -1160,9 +1195,13 @@ export const buildPaperForMobile = internalAction({
 
       // Check if PDF is already cached for this commit (skip if force=true)
       if (!args.force && paper.cachedCommitHash === latestCommit.sha && paper.pdfFileId) {
+        // Also pass author info to ensure it's populated if missing
+        const commitTime = getCommitTime(latestCommit, repository.lastCommitTime);
         await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
           id: paperId,
           cachedCommitHash: latestCommit.sha,
+          builtFromCommitAuthor: latestCommit.authorName,
+          builtFromCommitTime: commitTime,
         });
         await ctx.runMutation(internal.sync.releaseBuildLock, {
           id: paperId,
