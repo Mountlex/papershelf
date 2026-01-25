@@ -228,10 +228,131 @@ async function runPdftoppm(pdfPath, outputPrefix, options = {}) {
   };
 }
 
+/**
+ * Run latexmk with progress callbacks for real-time status updates.
+ * Parses latexmk output to detect compilation passes and bibtex/biber runs.
+ *
+ * @param {string} compilerFlag - Compiler flag (-pdf, -xelatex, -lualatex)
+ * @param {string} targetPath - Path to the .tex file
+ * @param {Object} options - Options object
+ * @param {string} options.cwd - Working directory
+ * @param {number} [options.timeout=300000] - Timeout in milliseconds (default 5 min)
+ * @param {boolean} [options.recorder=false] - Enable -recorder flag for deps detection
+ * @param {Object} [options.logger] - Logger instance
+ * @param {Function} [options.onProgress] - Callback for progress updates (message: string) => void
+ * @returns {Promise<{success: boolean, log: string, timedOut: boolean}>}
+ */
+async function runLatexmkWithProgress(compilerFlag, targetPath, options = {}) {
+  const {
+    cwd,
+    timeout = 300000, // 5 minutes default
+    recorder = false,
+    logger = console,
+    onProgress,
+  } = options;
+
+  const args = [
+    compilerFlag,
+    "-interaction=nonstopmode",
+    "-file-line-error",
+    "-cd",
+    "-f",
+    "-bibtex",
+  ];
+
+  if (recorder) {
+    args.push("-recorder");
+  }
+
+  args.push(targetPath);
+
+  logger.info?.(`Running latexmk with progress tracking: ${args.join(" ")}`);
+
+  return new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let forceKillTimer = null;
+    let currentPass = 0;
+
+    const proc = spawn("latexmk", args, { cwd });
+
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      logger.warn?.(`latexmk timed out after ${timeout}ms, sending SIGTERM`);
+      proc.kill("SIGTERM");
+
+      forceKillTimer = setTimeout(() => {
+        if (!proc.killed) {
+          logger.warn?.("latexmk did not terminate, sending SIGKILL");
+          proc.kill("SIGKILL");
+        }
+      }, 5000);
+    }, timeout);
+
+    proc.stdout.on("data", (data) => {
+      const text = data.toString();
+      stdout += text;
+
+      // Detect latexmk progress from output
+      if (onProgress) {
+        // Detect pdflatex/xelatex/lualatex runs
+        if (text.includes("Latexmk: applying rule 'pdflatex'") ||
+            text.includes("Latexmk: applying rule 'xelatex'") ||
+            text.includes("Latexmk: applying rule 'lualatex'")) {
+          currentPass++;
+          onProgress(`Compiling (pass ${currentPass})...`);
+        }
+        // Detect bibtex run
+        else if (text.includes("Latexmk: applying rule 'bibtex'")) {
+          onProgress("Running bibtex...");
+        }
+        // Detect biber run
+        else if (text.includes("Latexmk: applying rule 'biber'")) {
+          onProgress("Running biber...");
+        }
+        // Detect makeindex run
+        else if (text.includes("Latexmk: applying rule 'makeindex'")) {
+          onProgress("Building index...");
+        }
+      }
+    });
+
+    proc.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on("close", (code) => {
+      clearTimeout(timeoutTimer);
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+      }
+      resolve({
+        success: code === 0 && !timedOut,
+        log: stdout + stderr,
+        timedOut,
+      });
+    });
+
+    proc.on("error", (err) => {
+      clearTimeout(timeoutTimer);
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+      }
+      resolve({
+        success: false,
+        log: err.message,
+        timedOut,
+      });
+    });
+  });
+}
+
 module.exports = {
   spawnAsync,
   runGit,
   runLatexmk,
+  runLatexmkWithProgress,
   runPdftoppm,
   DEFAULT_TIMEOUT,
   DEFAULT_MAX_OUTPUT,

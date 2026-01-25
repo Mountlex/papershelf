@@ -626,4 +626,52 @@ http.route({
   }),
 });
 
+// POST /api/compile-progress - Callback from latex service to update compilation progress
+// This endpoint is called by the latex service during compilation
+http.route({
+  path: "/api/compile-progress",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      // Verify the request comes from our latex service using a shared secret
+      const authHeader = request.headers.get("X-Compile-Secret");
+      const expectedSecret = process.env.LATEX_COMPILE_SECRET;
+
+      if (!expectedSecret || authHeader !== expectedSecret) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      const body = await request.json();
+      const { paperId, progress } = body;
+
+      if (!paperId) {
+        return new Response(JSON.stringify({ error: "Missing paperId" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // Update the paper's compilation progress
+      await ctx.runMutation(internal.papers.updateCompilationProgress, {
+        paperId,
+        progress: progress || null,
+      });
+
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (error) {
+      console.error("Compile progress callback error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }),
+});
+
 export default http;

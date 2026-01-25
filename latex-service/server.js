@@ -6,20 +6,16 @@ const { v4: uuidv4 } = require("uuid");
 
 // Import utilities
 const { logger, createRequestLogger } = require("./lib/logger");
-const { spawnAsync, runLatexmk, runPdftoppm, runGit } = require("./lib/subprocess");
+const { spawnAsync, runLatexmk, runLatexmkWithProgress, runPdftoppm, runGit } = require("./lib/subprocess");
 const { withCleanup, cleanupAllPendingWorkDirs } = require("./lib/cleanup");
 const { rateLimit } = require("./lib/rateLimit");
 const { compilationQueue } = require("./lib/queue");
 const {
   LIMITS,
-  ALLOWED_COMPILERS,
-  safePath,
   safePathAsync,
   validateTarget,
   validateCompiler,
   validateThumbnailOptions,
-  validateResources,
-  validateAndParseResource,
   validateGitUrl,
   validateFilePath,
 } = require("./lib/validation");
@@ -158,20 +154,43 @@ function buildAuthenticatedUrl(gitUrl, auth) {
   return url.toString();
 }
 
-// Compile endpoint - accepts JSON with resources array
-app.post("/compile", rateLimit, async (req, res) => {
+// Compile from git - clone repo and compile directly
+app.post("/compile-from-git", rateLimit, async (req, res) => {
   try {
     await compilationQueue.run(async () => {
       const jobId = uuidv4();
-      const workDir = `/tmp/latex-${jobId}`;
+      const workDir = `/tmp/latex-git-${jobId}`;
 
       await withCleanup(workDir, async () => {
-        const { resources, target, compiler = "pdflatex" } = req.body;
+        const { gitUrl, branch, target, auth, compiler = "pdflatex", progressCallback } = req.body;
 
-        // Validate inputs
-        const resourcesValidation = validateResources(resources);
-        if (!resourcesValidation.valid) {
-          return res.status(400).json({ error: resourcesValidation.error });
+        // Helper to send progress callbacks (fire-and-forget, don't block on errors)
+        const sendProgress = async (message) => {
+          if (progressCallback && progressCallback.url && progressCallback.paperId) {
+            try {
+              const resp = await fetch(progressCallback.url, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Compile-Secret": progressCallback.secret || "",
+                },
+                body: JSON.stringify({
+                  paperId: progressCallback.paperId,
+                  progress: message,
+                }),
+              });
+              if (!resp.ok) {
+                req.log.warn(`Progress callback failed: ${resp.status} ${resp.statusText}`);
+              }
+            } catch (err) {
+              req.log.warn({ err }, "Failed to send progress callback");
+            }
+          }
+        };
+
+        const gitUrlValidation = validateGitUrl(gitUrl);
+        if (!gitUrlValidation.valid) {
+          return res.status(400).json({ error: gitUrlValidation.error });
         }
 
         const targetValidation = validateTarget(target);
@@ -184,26 +203,26 @@ app.post("/compile", rateLimit, async (req, res) => {
           return res.status(400).json({ error: compilerValidation.error });
         }
 
-        // Create work directory
+        const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
+
         await fs.mkdir(workDir, { recursive: true });
 
-        // Write all resources to disk
-        let totalSize = 0;
-        for (const resource of resources) {
-          const filePath = safePath(workDir, resource.path);
-          if (!filePath) {
-            return res.status(400).json({ error: `Invalid resource path: ${resource.path}` });
-          }
+        // Clone repository
+        await sendProgress("Cloning repository...");
+        req.log.info("Cloning repository...");
+        const cloneArgs = ["clone", "--depth", "1"];
+        if (branch) {
+          cloneArgs.push("--branch", branch);
+        }
+        cloneArgs.push(authenticatedUrl, workDir);
 
-          const parseResult = validateAndParseResource(resource, totalSize);
-          if (!parseResult.valid) {
-            return res.status(400).json({ error: parseResult.error });
-          }
+        const cloneResult = await spawnAsync("git", cloneArgs, {
+          timeout: 180000,
+          logger: req.log,
+        });
 
-          totalSize = parseResult.newTotalSize;
-          const fileDir = path.dirname(filePath);
-          await fs.mkdir(fileDir, { recursive: true });
-          await fs.writeFile(filePath, parseResult.content);
+        if (!cloneResult.success) {
+          return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
         }
 
         // Run latexmk with -recorder to track dependencies
@@ -211,16 +230,35 @@ app.post("/compile", rateLimit, async (req, res) => {
         const targetDir = path.dirname(targetPath);
         const targetName = path.basename(target, ".tex");
 
+        // Check if target file exists
+        try {
+          await fs.access(targetPath);
+        } catch {
+          return res.status(404).json({ error: `Target file not found: ${target}` });
+        }
+
         const compilerFlag = compiler === "xelatex" ? "-xelatex"
                            : compiler === "lualatex" ? "-lualatex"
                            : "-pdf";
 
-        const result = await runLatexmk(compilerFlag, targetPath, {
-          cwd: targetDir,
-          timeout: 180000, // 3 minutes
-          recorder: true,  // Generate .fls file for dependency tracking
-          logger: req.log,
-        });
+        await sendProgress("Starting compilation...");
+        req.log.info(`Compiling ${target} with ${compiler}...`);
+
+        // Use progress-enabled latexmk if callback is configured
+        const result = progressCallback
+          ? await runLatexmkWithProgress(compilerFlag, targetPath, {
+              cwd: targetDir,
+              timeout: 300000,
+              recorder: true,
+              logger: req.log,
+              onProgress: sendProgress,
+            })
+          : await runLatexmk(compilerFlag, targetPath, {
+              cwd: targetDir,
+              timeout: 300000,
+              recorder: true,
+              logger: req.log,
+            });
 
         // Check if PDF was created
         const pdfPath = path.join(targetDir, `${targetName}.pdf`);
@@ -242,6 +280,9 @@ app.post("/compile", rateLimit, async (req, res) => {
             timedOut: result.timedOut,
           });
         }
+
+        // Compilation succeeded
+        await sendProgress("Finalizing...");
 
         // Parse .fls file for dependencies
         const flsPath = path.join(targetDir, `${targetName}.fls`);
@@ -273,9 +314,13 @@ app.post("/compile", rateLimit, async (req, res) => {
               }
 
               if (relativePath && !relativePath.match(/\.(aux|log|fls|fdb_latexmk|out|toc|lof|lot|bbl|blg|bcf|run\.xml)$/)) {
-                const isProvided = resources.some(r => r.path === relativePath || r.path.endsWith("/" + relativePath));
-                if (isProvided) {
+                // Check if file exists in repo (not a system file)
+                const fullPath = path.join(workDir, relativePath);
+                try {
+                  await fs.access(fullPath);
                   deps.add(relativePath);
+                } catch {
+                  // File doesn't exist in repo, skip
                 }
               }
             }
@@ -284,7 +329,7 @@ app.post("/compile", rateLimit, async (req, res) => {
           // .fls file might not exist
         }
 
-        // Check for .bib files used (from .aux or .bcf files, since bibtex/biber processes them separately)
+        // Check for .bib files used
         const auxPath = path.join(targetDir, `${targetName}.aux`);
         try {
           const auxContent = await fs.readFile(auxPath, "utf-8");
@@ -293,9 +338,20 @@ app.post("/compile", rateLimit, async (req, res) => {
             const bibFiles = match[1].split(",").map(f => f.trim());
             for (const bibFile of bibFiles) {
               const bibWithExt = bibFile.endsWith(".bib") ? bibFile : `${bibFile}.bib`;
-              const isProvided = resources.some(r => r.path === bibWithExt || r.path.endsWith("/" + bibWithExt));
-              if (isProvided) {
+              const fullPath = path.join(workDir, bibWithExt);
+              try {
+                await fs.access(fullPath);
                 deps.add(bibWithExt);
+              } catch {
+                // Try in target directory
+                const altPath = path.join(targetDir, bibWithExt);
+                try {
+                  await fs.access(altPath);
+                  const relPath = path.relative(workDir, altPath);
+                  deps.add(relPath);
+                } catch {
+                  // File not found
+                }
               }
             }
           }
@@ -313,9 +369,20 @@ app.post("/compile", rateLimit, async (req, res) => {
             if (dsMatch[1]) {
               const bibFile = dsMatch[1];
               const bibWithExt = bibFile.endsWith(".bib") ? bibFile : `${bibFile}.bib`;
-              const isProvided = resources.some(r => r.path === bibWithExt || r.path.endsWith("/" + bibWithExt));
-              if (isProvided) {
+              const fullPath = path.join(workDir, bibWithExt);
+              try {
+                await fs.access(fullPath);
                 deps.add(bibWithExt);
+              } catch {
+                // Try in target directory
+                const altPath = path.join(targetDir, bibWithExt);
+                try {
+                  await fs.access(altPath);
+                  const relPath = path.relative(workDir, altPath);
+                  deps.add(relPath);
+                } catch {
+                  // File not found
+                }
               }
             }
           }
@@ -325,6 +392,7 @@ app.post("/compile", rateLimit, async (req, res) => {
 
         // Read and return PDF with dependencies in header
         const pdfBuffer = await fs.readFile(pdfPath);
+        req.log.info(`Compilation successful, PDF size: ${pdfBuffer.length} bytes`);
         res.setHeader("Content-Type", "application/pdf");
         res.setHeader("Content-Length", pdfBuffer.length);
         if (deps.size > 0) {

@@ -5,13 +5,13 @@ const fs = require("fs/promises");
 const LIMITS = {
   MAX_RESOURCES: 300,
   MAX_RESOURCE_SIZE: 30 * 1024 * 1024, // 30MB per resource
-  MAX_TOTAL_SIZE: 150 * 1024 * 1024, // 150MB total
+  MAX_TOTAL_SIZE: 500 * 1024 * 1024, // 500MB total
   MAX_OUTPUT_SIZE: 10 * 1024 * 1024, // 10MB - generous for verbose LaTeX logs
   MAX_THUMBNAIL_WIDTH: 4000,
   MIN_THUMBNAIL_WIDTH: 1,
   // Repository archive limits (higher than compile limits to allow filtering)
-  MAX_REPO_SIZE: 150 * 1024 * 1024, // 150MB
-  MAX_REPO_FILES: 1500, // Higher than MAX_RESOURCES to allow filtering later
+  MAX_REPO_SIZE: 500 * 1024 * 1024, // 500MB
+  MAX_REPO_FILES: 10000, // Support very large LaTeX projects with many figures
 };
 
 const ALLOWED_COMPILERS = ["pdflatex", "xelatex", "lualatex"];

@@ -42,8 +42,8 @@ export function PaperStatusIndicator({
         title={compilationProgress || (pdfSourceType === "compile" ? "Compiling LaTeX..." : "Fetching PDF...")}
       >
         <LoadingSpinner size="xs" />
-        <span className="text-[10px]">
-          {pdfSourceType === "compile" ? "Compiling" : "Fetching"}
+        <span className="text-[10px] max-w-[100px] truncate">
+          {compilationProgress || (pdfSourceType === "compile" ? "Compiling..." : "Fetching...")}
         </span>
       </span>
     );

@@ -21,19 +21,8 @@ import type { Id } from "./_generated/dataModel";
 import {
   fetchWithRetry,
   getLatexServiceHeaders,
-  DEFAULT_LATEX_SERVICE_TIMEOUT,
-  ARCHIVE_FETCH_TIMEOUT,
   type DependencyHash,
 } from "./lib/http";
-
-// Comprehensive LaTeX extensions for full archive fetch
-const LATEX_EXTENSIONS = [
-  ".tex", ".sty", ".cls", ".bst", ".bib",      // Core LaTeX
-  ".bbx", ".cbx", ".lbx", ".dbx",              // Biblatex
-  ".def", ".cfg", ".fd", ".dtx", ".ins",       // Package/font definitions
-  ".png", ".jpg", ".jpeg", ".pdf", ".eps", ".svg", ".gif",  // Images
-  ".tikz", ".pgf",                              // TikZ
-];
 
 // Helper to get authentication for any git provider
 async function getAuthForProvider(
@@ -162,73 +151,44 @@ export const compileLatexInternal = internalAction({
       const auth = await getAuthForProvider(ctx, provider, args.gitUrl, selfHostedInstances, args.userId);
 
       // For Overleaf, convert project URL to git URL
-      let archiveGitUrl = args.gitUrl;
+      let compileGitUrl = args.gitUrl;
       if (provider === "overleaf") {
         const overleafParsed = parseOverleafUrl(args.gitUrl);
         if (overleafParsed) {
-          archiveGitUrl = overleafParsed.gitUrl;
+          compileGitUrl = overleafParsed.gitUrl;
         }
       }
 
-      // Fetch all LaTeX-related files via selective archive
-      await updateProgress("Fetching all LaTeX files...");
+      // Build progress callback configuration
+      // The latex service will call back to Convex HTTP endpoint with progress updates
+      // CONVEX_SITE_URL may be built-in, or we derive it from CONVEX_URL
+      let convexSiteUrl = process.env.CONVEX_SITE_URL;
+      if (!convexSiteUrl && process.env.CONVEX_URL) {
+        // Derive site URL from cloud URL: xxx.convex.cloud -> xxx.convex.site
+        convexSiteUrl = process.env.CONVEX_URL.replace(".convex.cloud", ".convex.site");
+      }
+      const compileSecret = process.env.LATEX_COMPILE_SECRET;
 
-      const archiveResponse = await fetchWithRetry(`${latexServiceUrl}/git/selective-archive`, {
+      const progressCallback = (convexSiteUrl && compileSecret && args.paperId) ? {
+        url: `${convexSiteUrl}/api/compile-progress`,
+        paperId: args.paperId,
+        secret: compileSecret,
+      } : undefined;
+
+      await updateProgress("Starting...");
+
+      const pdfResponse = await fetchWithRetry(`${latexServiceUrl}/compile-from-git`, {
         method: "POST",
         headers: getLatexServiceHeaders(),
         body: JSON.stringify({
-          gitUrl: archiveGitUrl,
+          gitUrl: compileGitUrl,
           branch: args.branch,
           auth,
-          extensions: LATEX_EXTENSIONS,
-        }),
-        timeout: ARCHIVE_FETCH_TIMEOUT,
-      });
-
-      if (!archiveResponse.ok) {
-        await updateProgress(null);
-        let errorMessage = "Failed to fetch repository files";
-        try {
-          const responseText = await archiveResponse.text();
-          if (responseText.trim().startsWith("<!DOCTYPE") || responseText.trim().startsWith("<html")) {
-            errorMessage = `Failed to fetch repository files (HTTP ${archiveResponse.status}). ` +
-              "This usually indicates an authentication error or service issue.";
-          } else {
-            try {
-              const errorData = JSON.parse(responseText);
-              errorMessage = errorData.error || errorMessage;
-            } catch {
-              errorMessage = responseText.length > 500
-                ? `Failed to fetch repository files: ${responseText.substring(0, 500)}...`
-                : `Failed to fetch repository files: ${responseText}`;
-            }
-          }
-        } catch {
-          errorMessage = `Failed to fetch repository files (HTTP ${archiveResponse.status})`;
-        }
-        throw new Error(errorMessage);
-      }
-
-      const { files } = await archiveResponse.json() as { files: Array<{ path: string; content: string; encoding?: string }> };
-      console.log(`Fetched ${files.length} files for ${provider}`);
-
-      if (files.length === 0) {
-        await updateProgress(null);
-        throw new Error("No LaTeX files found in repository.");
-      }
-
-      // Compile
-      await updateProgress("Compiling LaTeX...");
-
-      const pdfResponse = await fetchWithRetry(`${latexServiceUrl}/compile`, {
-        method: "POST",
-        headers: getLatexServiceHeaders(),
-        body: JSON.stringify({
-          resources: files,
           target: args.filePath,
           compiler: "pdflatex",
+          progressCallback,
         }),
-        timeout: DEFAULT_LATEX_SERVICE_TIMEOUT,
+        timeout: 600000, // 10 minutes for clone + compile of large repos
       }, 2);
 
       if (!pdfResponse.ok) {
@@ -262,7 +222,7 @@ export const compileLatexInternal = internalAction({
         throw new Error(errorMessage);
       }
 
-      console.log(`Compile succeeded with ${files.length} files`);
+      console.log(`Compile succeeded for ${args.filePath}`);
 
       // Get dependencies from X-Dependencies header (parsed from .fls file by latex-service)
       let finalDependencies: string[] = [];
@@ -277,13 +237,10 @@ export const compileLatexInternal = internalAction({
         }
       }
 
-      // Fallback if no dependencies in header - use all source files
+      // If no dependencies detected, use just the target file as a minimal dependency
       if (finalDependencies.length === 0) {
-        const sourceExtensions = [".tex", ".sty", ".cls", ".bst", ".bib", ".bbx", ".cbx", ".lbx", ".dbx", ".def", ".cfg", ".fd"];
-        finalDependencies = files
-          .map(f => f.path)
-          .filter(p => sourceExtensions.some(ext => p.endsWith(ext)));
-        console.log(`Using ${finalDependencies.length} source files as dependencies (fallback)`);
+        finalDependencies = [args.filePath];
+        console.log("No dependencies detected, using target file only");
       }
 
       // Store PDF
