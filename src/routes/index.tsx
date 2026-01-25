@@ -79,6 +79,7 @@ function GalleryPage() {
   const updatePaper = useMutation(api.papers.update);
   const deletePaper = useMutation(api.papers.deletePaper);
   const refreshRepository = useAction(api.sync.refreshRepository);
+  const refreshAllRepositories = useAction(api.sync.refreshAllRepositories);
 
   const [editingPaperId, setEditingPaperId] = useState<Id<"papers"> | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -333,32 +334,19 @@ function GalleryPage() {
     if (!repositories || isSyncing) return;
 
     setIsSyncing(true);
+    setSyncProgress(null); // Batch operation doesn't report per-repo progress
 
-    // Filter repos that aren't already syncing
-    const reposToCheck = repositories.filter((repo) => repo.syncStatus !== "syncing");
-    setSyncProgress({ current: 0, total: reposToCheck.length });
-
-    // Quick check all repositories in parallel
-    let failedCount = 0;
-    const checkPromises = reposToCheck.map(async (repo) => {
-      try {
-        await refreshRepository({ repositoryId: repo._id });
-      } catch (err) {
-        console.error(`Quick check failed for ${repo.name}:`, err);
-        failedCount++;
+    try {
+      const result = await refreshAllRepositories({});
+      if (result.failed > 0) {
+        showToast(`${result.failed} ${result.failed === 1 ? "repository" : "repositories"} failed to check`, "error");
       }
-      // Use functional update to avoid race conditions
-      setSyncProgress((prev) => prev ? { ...prev, current: prev.current + 1 } : null);
-    });
-
-    await Promise.all(checkPromises);
+    } catch (err) {
+      console.error("Check all failed:", err);
+      showToast("Failed to check repositories", "error");
+    }
 
     setIsSyncing(false);
-    setSyncProgress(null);
-
-    if (failedCount > 0) {
-      showToast(`${failedCount} ${failedCount === 1 ? "repository" : "repositories"} failed to check`, "error");
-    }
   };
 
   // Refresh all papers that are not up to date

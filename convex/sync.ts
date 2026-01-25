@@ -1321,3 +1321,352 @@ export const buildPaperForMobile = internalAction({
   },
 });
 
+// Internal query to get all repositories for a user (for batch operations)
+export const getUserRepositories = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("repositories")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+  },
+});
+
+// Internal action to refresh a single repository without auth/rate limit checks
+// Used by refreshAllRepositories for batch operations
+export const refreshRepositoryInternal = internalAction({
+  args: { repositoryId: v.id("repositories"), userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const repository = await ctx.runQuery(internal.git.getRepository, {
+      id: args.repositoryId,
+    });
+    if (!repository || repository.userId !== args.userId) {
+      return { updated: false, skipped: true, reason: "Not found or unauthorized" };
+    }
+
+    // Try to acquire sync lock (optimistic locking to prevent concurrent syncs)
+    const lockResult = await ctx.runMutation(internal.sync.tryAcquireSyncLock, {
+      id: args.repositoryId,
+    });
+
+    if (!lockResult.acquired || !lockResult.attemptId) {
+      return { updated: false, skipped: true, reason: "Repository is already syncing" };
+    }
+
+    const attemptId = lockResult.attemptId;
+
+    try {
+      // Clear stale sync errors from previous attempts at the start
+      await ctx.runMutation(internal.sync.clearPaperSyncErrors, {
+        repositoryId: args.repositoryId,
+      });
+
+      // Fetch latest commit (pass knownSha to skip expensive date fetch if unchanged)
+      const latestCommit = await ctx.runAction(internal.git.fetchLatestCommitInternal, {
+        gitUrl: repository.gitUrl,
+        branch: repository.defaultBranch,
+        knownSha: repository.lastCommitHash,
+      });
+
+      // Convert commit date to Unix timestamp
+      const commitTime = getCommitTime(latestCommit, repository.lastCommitTime);
+
+      // Get all papers for this repository
+      const papers = await ctx.runQuery(internal.sync.getPapersForRepository, {
+        repositoryId: args.repositoryId,
+      });
+
+      // Check if we need to update
+      if (repository.lastCommitHash === latestCommit.sha) {
+        // No changes, just update sync time
+        const result = await ctx.runMutation(internal.sync.updateRepositoryAfterSync, {
+          id: args.repositoryId,
+          lastCommitHash: latestCommit.sha,
+          lastCommitTime: commitTime,
+          lastCommitAuthor: latestCommit.authorName,
+          lastSyncedAt: Date.now(),
+          syncStatus: "idle",
+          attemptId,
+        });
+        if (!result.success) {
+          console.log(`Sync attempt ${attemptId} was superseded`);
+        }
+        return { updated: false, commitHash: latestCommit.sha };
+      }
+
+      // Validate attempt before expensive operations
+      const isStillValid = await ctx.runQuery(internal.sync.validateSyncAttempt, {
+        repositoryId: args.repositoryId,
+        attemptId,
+      });
+      if (!isStillValid) {
+        console.log(`Sync attempt ${attemptId} was superseded before processing papers`);
+        return { updated: false, commitHash: latestCommit.sha, superseded: true };
+      }
+
+      // New commit detected - fetch changed files to efficiently check which papers are affected
+      let changedFiles: string[] = [];
+      if (repository.lastCommitHash) {
+        changedFiles = await ctx.runAction(internal.git.fetchChangedFilesInternal, {
+          gitUrl: repository.gitUrl,
+          baseCommit: repository.lastCommitHash,
+          headCommit: latestCommit.sha,
+        });
+        console.log(`Found ${changedFiles.length} changed files between commits`);
+      }
+      const changedFilesSet = new Set(changedFiles);
+
+      // Batch load all tracked files upfront to avoid O(n) sequential queries
+      const trackedFileIds = papers
+        .map(p => p.trackedFileId)
+        .filter((id): id is Id<"trackedFiles"> => id !== undefined);
+      const trackedFiles = await ctx.runQuery(internal.sync.getTrackedFilesByIds, { ids: trackedFileIds });
+      const trackedFileMap = new Map(trackedFiles.map(tf => [tf._id, tf]));
+
+      // Process each paper
+      for (const paper of papers) {
+        // Skip papers without tracked files
+        if (!paper.trackedFileId) continue;
+
+        const trackedFile = trackedFileMap.get(paper.trackedFileId);
+
+        // If paper has never been synced, it needs sync
+        if (!paper.pdfFileId || !paper.cachedCommitHash) {
+          await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
+            id: paper._id,
+            needsSync: true,
+            repositoryId: args.repositoryId,
+            attemptId,
+          });
+          continue;
+        }
+
+        // For committed PDF source type, check if the PDF file changed
+        if (trackedFile && trackedFile.pdfSourceType === "committed") {
+          // If we have changed files list, use it for quick check
+          if (changedFiles.length > 0 && !changedFilesSet.has(trackedFile.filePath)) {
+            // PDF file not in changed list - just update commit hash
+            console.log(`Committed PDF not in changed files for paper ${paper._id}`);
+            await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
+              id: paper._id,
+              cachedCommitHash: latestCommit.sha,
+              repositoryId: args.repositoryId,
+              attemptId,
+            });
+            continue;
+          }
+
+          // Fall back to blob hash check if no changed files list or file is in list
+          if (paper.cachedPdfBlobHash) {
+            try {
+              const currentHashes = await ctx.runAction(internal.git.fetchFileHashBatchInternal, {
+                gitUrl: repository.gitUrl,
+                filePaths: [trackedFile.filePath],
+                branch: repository.defaultBranch,
+              });
+              const currentPdfHash = currentHashes[trackedFile.filePath];
+
+              if (currentPdfHash && currentPdfHash === paper.cachedPdfBlobHash) {
+                console.log(`Committed PDF unchanged for paper ${paper._id}, skipping re-download`);
+                await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
+                  id: paper._id,
+                  cachedCommitHash: latestCommit.sha,
+                  repositoryId: args.repositoryId,
+                  attemptId,
+                });
+                continue;
+              }
+            } catch (error) {
+              console.log(`Could not check PDF hash for paper ${paper._id}: ${error}`);
+            }
+          }
+
+          // PDF needs re-download
+          await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
+            id: paper._id,
+            needsSync: true,
+            repositoryId: args.repositoryId,
+            attemptId,
+          });
+          continue;
+        }
+
+        // For compile source type, check if any dependency file changed
+        if (trackedFile && trackedFile.pdfSourceType === "compile") {
+          // If we have changed files list (GitHub/GitLab), do quick intersection check
+          if (changedFiles.length > 0 && paper.cachedDependencies && paper.cachedDependencies.length > 0) {
+            const hasChangedDependency = paper.cachedDependencies.some(dep => changedFilesSet.has(dep.path));
+
+            if (!hasChangedDependency) {
+              // No dependencies changed - just update commit hash
+              console.log(`No dependencies changed for paper ${paper._id}`);
+              await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
+                id: paper._id,
+                cachedCommitHash: latestCommit.sha,
+                repositoryId: args.repositoryId,
+                attemptId,
+              });
+              continue;
+            }
+
+            // At least one dependency changed - mark for rebuild and update lastAffectedCommit
+            console.log(`Dependencies changed for paper ${paper._id}`);
+            await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
+              id: paper._id,
+              needsSync: true,
+              repositoryId: args.repositoryId,
+              attemptId,
+              lastAffectedCommitHash: latestCommit.sha,
+              lastAffectedCommitTime: commitTime,
+              lastAffectedCommitMessage: latestCommit.message,
+              lastAffectedCommitAuthor: latestCommit.authorName,
+            });
+            continue;
+          }
+
+          // Fall back to hash checking for Overleaf or when no cached dependencies
+          if (paper.cachedDependencies && paper.cachedDependencies.length > 0) {
+            const depsChanged = await checkDependenciesChanged(
+              ctx,
+              repository.gitUrl,
+              repository.defaultBranch,
+              paper.cachedDependencies
+            );
+
+            if (!depsChanged) {
+              console.log(`Dependencies unchanged for paper ${paper._id} (hash check)`);
+              await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
+                id: paper._id,
+                cachedCommitHash: latestCommit.sha,
+                repositoryId: args.repositoryId,
+                attemptId,
+              });
+              continue;
+            }
+
+            // Dependencies changed - mark for rebuild
+            console.log(`Dependencies changed for paper ${paper._id} (hash check)`);
+            await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
+              id: paper._id,
+              needsSync: true,
+              repositoryId: args.repositoryId,
+              attemptId,
+              lastAffectedCommitHash: latestCommit.sha,
+              lastAffectedCommitTime: commitTime,
+              lastAffectedCommitMessage: latestCommit.message,
+              lastAffectedCommitAuthor: latestCommit.authorName,
+            });
+            continue;
+          }
+
+          // No cached dependencies - needs full rebuild
+          await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
+            id: paper._id,
+            needsSync: true,
+            repositoryId: args.repositoryId,
+            attemptId,
+          });
+          continue;
+        }
+
+        // For artifact/release source types or unknown, mark as needing sync
+        await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
+          id: paper._id,
+          needsSync: true,
+          repositoryId: args.repositoryId,
+          attemptId,
+        });
+      }
+
+      // Update repository with new commit
+      const result = await ctx.runMutation(internal.sync.updateRepositoryAfterSync, {
+        id: args.repositoryId,
+        lastCommitHash: latestCommit.sha,
+        lastCommitTime: commitTime,
+        lastCommitAuthor: latestCommit.authorName,
+        lastSyncedAt: Date.now(),
+        syncStatus: "idle",
+        attemptId,
+      });
+
+      if (!result.success) {
+        console.log(`Sync attempt ${attemptId} was superseded at final update`);
+        return { updated: true, commitHash: latestCommit.sha, superseded: true };
+      }
+
+      return { updated: true, commitHash: latestCommit.sha };
+    } catch (error) {
+      // Release lock on failure
+      await ctx.runMutation(internal.sync.releaseSyncLock, {
+        id: args.repositoryId,
+        status: "idle",
+        attemptId,
+      });
+      throw error;
+    }
+  },
+});
+
+// Batch refresh all repositories for a user - much faster than individual calls
+// Does auth and rate limit check once, then processes all repos in parallel
+export const refreshAllRepositories = action({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+
+    // Single rate limit check for the batch operation
+    const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
+      userId,
+      action: "refresh_all_repositories",
+    });
+    if (!rateLimitResult.allowed) {
+      throw new Error(`Rate limit exceeded. Try again in ${Math.ceil(rateLimitResult.retryAfter! / 1000)} seconds.`);
+    }
+
+    // Fetch all repositories at once
+    const repositories = await ctx.runQuery(internal.sync.getUserRepositories, { userId });
+
+    if (repositories.length === 0) {
+      return { total: 0, updated: 0, failed: 0, skipped: 0 };
+    }
+
+    // Filter repos that aren't already syncing
+    const reposToCheck = repositories.filter((repo) => repo.syncStatus !== "syncing");
+
+    // Process all repos in parallel using the internal action
+    const results = await Promise.allSettled(
+      reposToCheck.map((repo) =>
+        ctx.runAction(internal.sync.refreshRepositoryInternal, {
+          repositoryId: repo._id,
+          userId,
+        })
+      )
+    );
+
+    // Tally results
+    let updated = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    for (const result of results) {
+      if (result.status === "rejected") {
+        failed++;
+        console.error("Repository refresh failed:", result.reason);
+      } else if (result.value.skipped) {
+        skipped++;
+      } else if (result.value.updated) {
+        updated++;
+      }
+    }
+
+    return {
+      total: reposToCheck.length,
+      updated,
+      failed,
+      skipped: skipped + (repositories.length - reposToCheck.length), // Include already-syncing repos
+    };
+  },
+});

@@ -53,6 +53,7 @@ function RepositoriesPage() {
   const removeRepository = useMutation(api.repositories.remove);
   const updateRepository = useMutation(api.repositories.update);
   const refreshRepository = useAction(api.sync.refreshRepository);
+  const refreshAllRepositories = useAction(api.sync.refreshAllRepositories);
   const buildPaper = useAction(api.sync.buildPaper);
   const fetchRepoInfo = useAction(api.git.fetchRepoInfo);
   const listUserRepos = useAction(api.git.listUserRepos);
@@ -325,18 +326,14 @@ function RepositoriesPage() {
 
   const handleCheckAll = async () => {
     if (!repositories || repositories.length === 0) return;
-    let failedCount = 0;
-    const checkPromises = repositories
-      .filter((repo) => repo.syncStatus !== "syncing")
-      .map((repo) =>
-        refreshRepository({ repositoryId: repo._id }).catch((err) => {
-          console.error(`Quick check failed for ${repo.name}:`, err);
-          failedCount++;
-        })
-      );
-    await Promise.all(checkPromises);
-    if (failedCount > 0) {
-      showToast(`${failedCount} ${failedCount === 1 ? "repository" : "repositories"} failed to check`, "error");
+    try {
+      const result = await refreshAllRepositories({});
+      if (result.failed > 0) {
+        showToast(`${result.failed} ${result.failed === 1 ? "repository" : "repositories"} failed to check`, "error");
+      }
+    } catch (err) {
+      console.error("Check all failed:", err);
+      showToast("Failed to check repositories", "error");
     }
   };
 
