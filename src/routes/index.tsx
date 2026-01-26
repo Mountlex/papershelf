@@ -23,7 +23,6 @@ function GalleryPage() {
   const repositories = useQuery(api.repositories.list, isAuthenticated && user ? { userId: user._id } : "skip");
   const updatePaper = useMutation(api.papers.update);
   const deletePaper = useMutation(api.papers.deletePaper);
-  const refreshRepository = useAction(api.sync.refreshRepository);
   const refreshAllRepositories = useAction(api.sync.refreshAllRepositories);
 
   const [editingPaperId, setEditingPaperId] = useState<Id<"papers"> | null>(null);
