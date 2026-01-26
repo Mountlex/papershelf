@@ -226,6 +226,8 @@ export const listForMobile = internalQuery({
         pdfUrl,
         isUpToDate,
         buildStatus: paper.buildStatus,
+        compilationProgress: paper.compilationProgress,
+        lastSyncError: paper.lastSyncError,
         pdfSourceType: trackedFile?.pdfSourceType ?? null,
         lastAffectedCommitTime: paper.lastAffectedCommitTime,
         updatedAt: paper.updatedAt,

@@ -12,6 +12,8 @@ data class Paper(
     val thumbnailUrl: String? = null,
     val isUpToDate: Boolean? = null,
     val buildStatus: String? = null,
+    val compilationProgress: String? = null,
+    val lastSyncError: String? = null,
     val isPublic: Boolean = false,
     val shareSlug: String? = null,
     val repositoryId: String? = null,

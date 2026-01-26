@@ -5,9 +5,15 @@ struct StatusBadge: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
+            if status == .building {
+                ProgressView()
+                    .scaleEffect(0.5)
+                    .frame(width: 8, height: 8)
+            } else {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 8, height: 8)
+            }
 
             Text(statusText)
                 .font(.caption2)

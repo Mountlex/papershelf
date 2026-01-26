@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.carrel.app.core.network.ConvexClient
 import com.carrel.app.core.network.models.Paper
+import com.carrel.app.core.network.models.PaperStatus
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,6 +27,7 @@ class PaperViewModel(
 
     private val _uiState = MutableStateFlow(PaperDetailUiState())
     val uiState: StateFlow<PaperDetailUiState> = _uiState.asStateFlow()
+    private var pollingJob: Job? = null
 
     init {
         loadPaper()
@@ -53,17 +57,35 @@ class PaperViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isBuilding = true)
 
+            // Start polling for progress updates
+            pollingJob = viewModelScope.launch {
+                while (true) {
+                    delay(1500) // 1.5 seconds
+                    convexClient.paper(paperId)
+                        .onSuccess { paper ->
+                            _uiState.value = _uiState.value.copy(paper = paper)
+                            // Stop polling if build completed
+                            if (paper.compilationProgress == null && paper.status != PaperStatus.BUILDING) {
+                                pollingJob?.cancel()
+                            }
+                        }
+                }
+            }
+
             convexClient.buildPaper(paperId, force)
                 .onSuccess {
-                    loadPaper()
+                    // Build started successfully
                 }
                 .onError { exception ->
                     _uiState.value = _uiState.value.copy(
-                        error = exception.message,
-                        isBuilding = false
+                        error = exception.message
                     )
                 }
 
+            // Stop polling and do final refresh
+            pollingJob?.cancel()
+            pollingJob = null
+            loadPaper()
             _uiState.value = _uiState.value.copy(isBuilding = false)
         }
     }

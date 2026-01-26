@@ -141,13 +141,24 @@ struct PaperDetailView: View {
                 }
                 .disabled(viewModel.isTogglingPublic)
 
-                if viewModel.isBuilding {
+                if viewModel.isBuilding || viewModel.paper.compilationProgress != nil {
                     HStack(spacing: 6) {
                         ProgressView()
                             .scaleEffect(0.7)
-                        Text("Building...")
+                        Text(viewModel.paper.compilationProgress ?? "Building...")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let error = viewModel.paper.lastSyncError {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                        Text(error.prefix(50) + (error.count > 50 ? "..." : ""))
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .lineLimit(1)
                     }
                 }
 

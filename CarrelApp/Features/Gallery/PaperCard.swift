@@ -93,7 +93,7 @@ extension Paper {
             "title": "A Long Paper Title That Might Wrap",
             "authors": "John Doe, Jane Smith",
             "thumbnailUrl": null,
-            "status": "synced",
+            "isUpToDate": true,
             "isPublic": false,
             "createdAt": 1704067200000,
             "updatedAt": 1704067200000
@@ -108,7 +108,7 @@ extension Paper {
             "title": "Paper with Error",
             "authors": "Test Author",
             "thumbnailUrl": null,
-            "status": "error",
+            "buildStatus": "error",
             "isPublic": false,
             "createdAt": 1704067200000,
             "updatedAt": 1704067200000

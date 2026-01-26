@@ -6,19 +6,34 @@ struct Paper: Codable, Identifiable, Equatable {
     let authors: String?
     let pdfUrl: String?
     let thumbnailUrl: String?
-    let status: PaperStatus
+    let isUpToDate: Bool?
+    let buildStatus: String?
     let isPublic: Bool
     let shareSlug: String?
     let repositoryId: String?
     let trackedFileId: String?
+    let compilationProgress: String?
+    let lastSyncError: String?
     let lastSyncedAt: Date?
     let createdAt: Date
     let updatedAt: Date
 
+    // Derive status from isUpToDate and buildStatus (matches Android logic)
+    var status: PaperStatus {
+        if buildStatus == "building" { return .building }
+        if buildStatus == "error" { return .error }
+        if buildStatus == "pending" { return .pending }
+        if isUpToDate == true { return .synced }
+        if isUpToDate == false { return .pending }
+        return .unknown
+    }
+
     enum CodingKeys: String, CodingKey {
         case id = "_id"
-        case title, authors, pdfUrl, thumbnailUrl, status
+        case title, authors, pdfUrl, thumbnailUrl
+        case isUpToDate, buildStatus
         case isPublic, shareSlug, repositoryId, trackedFileId
+        case compilationProgress, lastSyncError
         case lastSyncedAt, createdAt, updatedAt
     }
 
@@ -29,11 +44,14 @@ struct Paper: Codable, Identifiable, Equatable {
         authors = try container.decodeIfPresent(String.self, forKey: .authors)
         pdfUrl = try container.decodeIfPresent(String.self, forKey: .pdfUrl)
         thumbnailUrl = try container.decodeIfPresent(String.self, forKey: .thumbnailUrl)
-        status = try container.decodeIfPresent(PaperStatus.self, forKey: .status) ?? .unknown
+        isUpToDate = try container.decodeIfPresent(Bool.self, forKey: .isUpToDate)
+        buildStatus = try container.decodeIfPresent(String.self, forKey: .buildStatus)
         isPublic = try container.decodeIfPresent(Bool.self, forKey: .isPublic) ?? false
         shareSlug = try container.decodeIfPresent(String.self, forKey: .shareSlug)
         repositoryId = try container.decodeIfPresent(String.self, forKey: .repositoryId)
         trackedFileId = try container.decodeIfPresent(String.self, forKey: .trackedFileId)
+        compilationProgress = try container.decodeIfPresent(String.self, forKey: .compilationProgress)
+        lastSyncError = try container.decodeIfPresent(String.self, forKey: .lastSyncError)
 
         // Parse timestamps (Convex sends milliseconds)
         if let lastSyncedMs = try container.decodeIfPresent(Double.self, forKey: .lastSyncedAt) {
@@ -62,7 +80,8 @@ struct Paper: Codable, Identifiable, Equatable {
         try container.encodeIfPresent(authors, forKey: .authors)
         try container.encodeIfPresent(pdfUrl, forKey: .pdfUrl)
         try container.encodeIfPresent(thumbnailUrl, forKey: .thumbnailUrl)
-        try container.encode(status, forKey: .status)
+        try container.encodeIfPresent(isUpToDate, forKey: .isUpToDate)
+        try container.encodeIfPresent(buildStatus, forKey: .buildStatus)
         try container.encode(isPublic, forKey: .isPublic)
         try container.encodeIfPresent(shareSlug, forKey: .shareSlug)
         try container.encodeIfPresent(repositoryId, forKey: .repositoryId)

@@ -254,7 +254,7 @@ private fun PaperInfoPanel(
                     Text(if (paper.isPublic) "Public" else "Private")
                 }
 
-                if (isBuilding) {
+                if (isBuilding || paper.compilationProgress != null) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -264,9 +264,29 @@ private fun PaperInfoPanel(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Building...",
+                            text = paper.compilationProgress ?: "Building...",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                paper.lastSyncError?.let { error ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (error.length > 50) error.take(50) + "..." else error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 1
                         )
                     }
                 }
