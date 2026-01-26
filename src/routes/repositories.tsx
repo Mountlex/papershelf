@@ -87,6 +87,7 @@ function RepositoriesPage() {
 
   // Sync state
   const [syncingRepoId, setSyncingRepoId] = useState<string | null>(null);
+  const [isCheckingAll, setIsCheckingAll] = useState(false);
   const hasQuickSyncedRef = useRef(false);
 
   // Confirm dialog and toast state
@@ -326,16 +327,27 @@ function RepositoriesPage() {
   };
 
   const handleCheckAll = async () => {
-    if (!repositories || repositories.length === 0) return;
+    if (!repositories || repositories.length === 0 || isCheckingAll) return;
+    setIsCheckingAll(true);
     try {
       const result = await refreshAllRepositories({});
       if (result.failed > 0) {
         showToast(`${result.failed} ${result.failed === 1 ? "repository" : "repositories"} failed to check`, "error");
+      } else if (result.checked === 0 && result.skipped > 0) {
+        showToast("All repositories were recently checked", "info");
       }
     } catch (err) {
       console.error("Check all failed:", err);
-      showToast("Failed to check repositories", "error");
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes("Rate limit exceeded")) {
+        const seconds = message.match(/(\d+) seconds/)?.[1];
+        const minutes = seconds ? Math.ceil(parseInt(seconds) / 60) : 5;
+        showToast(`Too many requests. Try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`, "info");
+      } else {
+        showToast("Failed to check repositories", "error");
+      }
     }
+    setIsCheckingAll(false);
   };
 
   // Transform repositories to match the expected type
@@ -371,7 +383,7 @@ function RepositoriesPage() {
     );
   }
 
-  const isSyncingAny = repositories?.some((repo) => repo.syncStatus === "syncing") ?? false;
+  const isSyncingAny = isCheckingAll || repositories?.some((repo) => repo.syncStatus === "syncing") || false;
 
   return (
     <div>

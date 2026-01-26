@@ -60,9 +60,28 @@ export class GitLabProvider implements GitProvider {
   async fetchLatestCommit(
     owner: string,
     repo: string,
-    branch: string
+    branch: string,
+    knownSha?: string
   ): Promise<CommitInfo> {
     const pid = this.projectId(owner, repo);
+
+    // Quick SHA check if we have a known SHA - uses branches endpoint which returns commit SHA
+    if (knownSha) {
+      const branchResponse = await fetchWithTimeout(
+        `${this.baseUrl}/api/v4/projects/${pid}/repository/branches/${encodeURIComponent(branch)}`,
+        { headers: this.headers() }
+      );
+      if (branchResponse.ok) {
+        const branchData = await safeJsonParse(branchResponse, "GitLab branch info") as {
+          commit?: { id?: string };
+        };
+        if (branchData.commit?.id === knownSha) {
+          return { sha: knownSha, message: "", unchanged: true };
+        }
+      }
+      // Fall through to full commit fetch if branch check fails or SHA differs
+    }
+
     const response = await fetchWithTimeout(
       `${this.baseUrl}/api/v4/projects/${pid}/repository/commits/${encodeURIComponent(branch)}`,
       { headers: this.headers() }

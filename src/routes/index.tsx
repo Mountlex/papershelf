@@ -31,7 +31,6 @@ function GalleryPage() {
   const [deletingPaperId, setDeletingPaperId] = useState<Id<"papers"> | null>(null);
   const [fullscreenPdf, setFullscreenPdf] = useState<{ url: string; title: string } | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [syncProgress, setSyncProgress] = useState<{ current: number; total: number } | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshProgress, setRefreshProgress] = useState<{ current: number; total: number } | null>(null);
   const buildPaper = useAction(api.sync.buildPaper);
@@ -87,36 +86,23 @@ function GalleryPage() {
 
     if (!shouldSync) return;
 
-    const reposToCheck = repositories.filter((repo) => repo.syncStatus !== "syncing");
-    if (reposToCheck.length === 0) return;
-
     // Set flag IMMEDIATELY, synchronously, before async work
     hasSyncedOnLoad.current = true;
 
-    // Now start async work
+    // Now start async work using the batch operation
     const runSync = async () => {
       setIsSyncing(true);
-      setSyncProgress({ current: 0, total: reposToCheck.length });
 
-      let failedCount = 0;
-
-      const checkPromises = reposToCheck.map(async (repo) => {
-        try {
-          await refreshRepository({ repositoryId: repo._id });
-        } catch (err) {
-          console.error(`Quick check failed for ${repo.name}:`, err);
-          failedCount++;
+      try {
+        const result = await refreshAllRepositories({});
+        if (result.failed > 0) {
+          showToast("Some repositories failed to check", "info");
         }
-        setSyncProgress((prev) => prev ? { ...prev, current: prev.current + 1 } : null);
-      });
-
-      await Promise.all(checkPromises);
+      } catch (err) {
+        console.error("Auto-sync failed:", err);
+      }
 
       setIsSyncing(false);
-      setSyncProgress(null);
-      if (failedCount > 0) {
-        showToast("Some repositories failed to check", "info");
-      }
     };
 
     runSync();
@@ -279,16 +265,24 @@ function GalleryPage() {
     if (!repositories || isSyncing) return;
 
     setIsSyncing(true);
-    setSyncProgress(null); // Batch operation doesn't report per-repo progress
 
     try {
       const result = await refreshAllRepositories({});
       if (result.failed > 0) {
         showToast(`${result.failed} ${result.failed === 1 ? "repository" : "repositories"} failed to check`, "error");
+      } else if (result.checked === 0 && result.skipped > 0) {
+        showToast("All repositories were recently checked", "info");
       }
     } catch (err) {
       console.error("Check all failed:", err);
-      showToast("Failed to check repositories", "error");
+      const message = err instanceof Error ? err.message : "";
+      if (message.includes("Rate limit exceeded")) {
+        const seconds = message.match(/(\d+) seconds/)?.[1];
+        const minutes = seconds ? Math.ceil(parseInt(seconds) / 60) : 5;
+        showToast(`Too many requests. Try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`, "info");
+      } else {
+        showToast("Failed to check repositories", "error");
+      }
     }
 
     setIsSyncing(false);
@@ -417,36 +411,26 @@ function GalleryPage() {
             <button
               onClick={handleCheckAll}
               disabled={isSyncing || isRefreshing || !repositories || repositories.length === 0}
-              className="relative inline-flex items-center justify-center gap-2 overflow-hidden whitespace-nowrap rounded-md border border-primary-200 bg-primary-50 p-2 text-gray-900 hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:border-primary-700 dark:bg-primary-500/20 dark:text-gray-100 dark:hover:bg-primary-500/30 md:min-w-[125px] md:px-4 md:py-2"
+              className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md border border-primary-200 bg-primary-50 p-2 text-gray-900 hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:border-primary-700 dark:bg-primary-500/20 dark:text-gray-100 dark:hover:bg-primary-500/30 md:min-w-[125px] md:px-4 md:py-2"
               title="Check all repositories for new commits"
               aria-label={isSyncing ? "Checking repositories" : "Check all repositories"}
             >
-              {isSyncing && syncProgress && (
-                <span
-                  className="absolute inset-0 bg-primary-200 dark:bg-primary-800/40 transition-all duration-300"
-                  style={{ width: `${(syncProgress.current / syncProgress.total) * 100}%` }}
-                />
+              {isSyncing ? (
+                <>
+                  <svg className="h-5 w-5 animate-spin md:h-4 md:w-4" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span className="hidden text-sm font-normal md:inline">Checking</span>
+                </>
+              ) : (
+                <>
+                  <svg className="h-5 w-5 md:h-4 md:w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span className="hidden text-sm font-normal md:inline">Check All</span>
+                </>
               )}
-              <span className="relative flex items-center gap-2">
-                {isSyncing ? (
-                  <>
-                    <svg className="h-5 w-5 animate-spin md:h-4 md:w-4" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    <span className="hidden text-sm font-normal md:inline">
-                      {syncProgress ? `${syncProgress.current}/${syncProgress.total}` : "Checking"}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <svg className="h-5 w-5 md:h-4 md:w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    <span className="hidden text-sm font-normal md:inline">Check All</span>
-                  </>
-                )}
-              </span>
             </button>
             {/* Refresh All */}
             <button

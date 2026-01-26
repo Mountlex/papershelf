@@ -163,7 +163,7 @@ export function Toast({ message, type = "info", onClose }: ToastProps) {
 
   return (
     <div
-      className={`fixed bottom-4 right-4 z-[100] max-w-sm rounded-lg border px-4 py-3 shadow-lg ${typeStyles[type]}`}
+      className={`fixed top-4 left-1/2 -translate-x-1/2 z-[100] max-w-sm rounded-lg border px-4 py-3 shadow-lg ${typeStyles[type]}`}
       role="alert"
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}

@@ -51,8 +51,26 @@ export class GitHubProvider implements GitProvider {
   async fetchLatestCommit(
     owner: string,
     repo: string,
-    branch: string
+    branch: string,
+    knownSha?: string
   ): Promise<CommitInfo> {
+    // Quick SHA check if we have a known SHA - uses lightweight refs endpoint
+    if (knownSha) {
+      const refResponse = await fetchWithTimeout(
+        `${this.baseUrl}/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`,
+        { headers: this.headers() }
+      );
+      if (refResponse.ok) {
+        const refData = await safeJsonParse(refResponse, "GitHub ref info") as {
+          object?: { sha?: string };
+        };
+        if (refData.object?.sha === knownSha) {
+          return { sha: knownSha, message: "", unchanged: true };
+        }
+      }
+      // Fall through to full commit fetch if ref check fails or SHA differs
+    }
+
     const response = await fetchWithTimeout(
       `${this.baseUrl}/repos/${owner}/${repo}/commits/${branch}`,
       { headers: this.headers() }

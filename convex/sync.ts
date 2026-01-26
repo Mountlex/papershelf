@@ -379,13 +379,20 @@ export const refreshRepository = action({
       throw new Error("Not authenticated");
     }
 
-    // Check rate limit for refresh operations
-    const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
-      userId,
-      action: "refresh_repository",
-    });
-    if (!rateLimitResult.allowed) {
-      throw new Error(`Rate limit exceeded. Try again in ${Math.ceil(rateLimitResult.retryAfter! / 1000)} seconds.`);
+    // Check rate limit for refresh operations (OCC errors are allowed through - conflict means active tracking)
+    try {
+      const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
+        userId,
+        action: "refresh_repository",
+      });
+      if (!rateLimitResult.allowed) {
+        throw new Error(`Rate limit exceeded. Try again in ${Math.ceil(rateLimitResult.retryAfter! / 1000)} seconds.`);
+      }
+    } catch (error) {
+      // Allow through on OCC conflicts - rate limit is being tracked by concurrent requests
+      if (!(error instanceof Error && error.message.includes("changed while this mutation"))) {
+        throw error;
+      }
     }
 
     const repository = await ctx.runQuery(internal.git.getRepository, {
@@ -904,13 +911,20 @@ export const buildPaper = action({
       throw new Error("Not authenticated");
     }
 
-    // Check rate limit for build operations
-    const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
-      userId,
-      action: "build_paper",
-    });
-    if (!rateLimitResult.allowed) {
-      throw new Error(`Rate limit exceeded. Try again in ${Math.ceil(rateLimitResult.retryAfter! / 1000)} seconds.`);
+    // Check rate limit for build operations (OCC errors are allowed through - conflict means active tracking)
+    try {
+      const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
+        userId,
+        action: "build_paper",
+      });
+      if (!rateLimitResult.allowed) {
+        throw new Error(`Rate limit exceeded. Try again in ${Math.ceil(rateLimitResult.retryAfter! / 1000)} seconds.`);
+      }
+    } catch (error) {
+      // Allow through on OCC conflicts - rate limit is being tracked by concurrent requests
+      if (!(error instanceof Error && error.message.includes("changed while this mutation"))) {
+        throw error;
+      }
     }
 
     // Get paper and related data
@@ -1609,23 +1623,32 @@ export const refreshRepositoryInternal = internalAction({
   },
 });
 
+// Minimum sync interval (in milliseconds)
+const MIN_SYNC_INTERVAL = 10000;
+
 // Batch refresh all repositories for a user - much faster than individual calls
 // Does auth and rate limit check once, then processes all repos in parallel
 export const refreshAllRepositories = action({
-  args: {},
-  handler: async (ctx) => {
+  args: { force: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
     const userId = await auth.getUserId(ctx);
     if (!userId) {
       throw new Error("Not authenticated");
     }
 
-    // Single rate limit check for the batch operation
-    const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
-      userId,
-      action: "refresh_all_repositories",
-    });
-    if (!rateLimitResult.allowed) {
-      throw new Error(`Rate limit exceeded. Try again in ${Math.ceil(rateLimitResult.retryAfter! / 1000)} seconds.`);
+    // Single rate limit check for the batch operation (OCC errors are allowed through)
+    try {
+      const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
+        userId,
+        action: "refresh_all_repositories",
+      });
+      if (!rateLimitResult.allowed) {
+        throw new Error(`Rate limit exceeded. Try again in ${Math.ceil(rateLimitResult.retryAfter! / 1000)} seconds.`);
+      }
+    } catch (error) {
+      if (!(error instanceof Error && error.message.includes("changed while this mutation"))) {
+        throw error;
+      }
     }
 
     // Fetch all repositories at once
@@ -1635,8 +1658,16 @@ export const refreshAllRepositories = action({
       return { total: 0, updated: 0, failed: 0, skipped: 0 };
     }
 
-    // Filter repos that aren't already syncing
-    const reposToCheck = repositories.filter((repo) => repo.syncStatus !== "syncing");
+    // Filter repos that aren't already syncing and haven't been synced recently
+    const reposToCheck = repositories.filter((repo) => {
+      if (repo.syncStatus === "syncing") return false;
+      if (args.force) return true;
+      if (repo.lastSyncedAt && Date.now() - repo.lastSyncedAt < MIN_SYNC_INTERVAL) {
+        return false;
+      }
+      return true;
+    });
+    const skippedDueToInterval = repositories.length - reposToCheck.length;
 
     // Process all repos in parallel using the internal action
     const results = await Promise.allSettled(
@@ -1665,10 +1696,11 @@ export const refreshAllRepositories = action({
     }
 
     return {
-      total: reposToCheck.length,
+      total: repositories.length,
+      checked: reposToCheck.length,
       updated,
       failed,
-      skipped: skipped + (repositories.length - reposToCheck.length), // Include already-syncing repos
+      skipped: skipped + skippedDueToInterval,
     };
   },
 });

@@ -24,6 +24,11 @@ const {
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Cache for git refs to speed up repeated "Check All" requests
+// Key: `${gitUrl}:${branch || 'default'}`, Value: { sha, defaultBranch, details, timestamp }
+const refsCache = new Map();
+const REFS_CACHE_TTL = 10000; // 10 seconds (matches MIN_SYNC_INTERVAL)
+
 // Request tracking for graceful shutdown
 let activeRequests = 0;
 let shuttingDown = false;
@@ -418,6 +423,22 @@ app.post("/git/refs", rateLimit, async (req, res) => {
     return res.status(400).json({ error: gitUrlValidation.error });
   }
 
+  // Check cache first
+  const cacheKey = `${gitUrl}:${branch || "default"}`;
+  const cached = refsCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < REFS_CACHE_TTL) {
+    // If knownSha provided and matches cached SHA, return unchanged
+    if (knownSha && cached.sha === knownSha) {
+      return res.json({ sha: cached.sha, defaultBranch: cached.defaultBranch, unchanged: true });
+    }
+    // Return cached result with full details
+    return res.json({
+      sha: cached.sha,
+      defaultBranch: cached.defaultBranch,
+      ...cached.details,
+    });
+  }
+
   const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
 
   const result = await spawnAsync("git", ["ls-remote", authenticatedUrl], {
@@ -508,14 +529,29 @@ app.post("/git/refs", rateLimit, async (req, res) => {
       }
     }
 
-    res.json({
+    const responseData = {
       sha,
       defaultBranch,
       message: commitMessage,
       date: commitDate || new Date().toISOString(),
       authorName,
       authorEmail,
+    };
+
+    // Cache the result for future requests
+    refsCache.set(cacheKey, {
+      sha,
+      defaultBranch,
+      details: {
+        message: commitMessage,
+        date: responseData.date,
+        authorName,
+        authorEmail,
+      },
+      timestamp: Date.now(),
     });
+
+    res.json(responseData);
   }, req.log);
 });
 
