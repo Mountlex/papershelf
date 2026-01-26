@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { Repository } from "./types";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { formatDateTime } from "../../lib/formatters";
+import { getProviderLabel } from "../../lib/providers";
 
 interface RepositoryCardProps {
   repo: Repository;
@@ -11,32 +13,10 @@ interface RepositoryCardProps {
   onUpdateName: (repoId: Id<"repositories">, name: string) => Promise<void>;
 }
 
-function formatDateTime(timestamp: number | undefined): string {
-  if (!timestamp) return "";
-
-  const date = new Date(timestamp);
-  const day = date.getDate().toString().padStart(2, "0");
-  const month = (date.getMonth() + 1).toString().padStart(2, "0");
-  const year = date.getFullYear().toString().slice(-2);
-  const hours = date.getHours().toString().padStart(2, "0");
-  const minutes = date.getMinutes().toString().padStart(2, "0");
-
-  return `${day}.${month}.${year} ${hours}:${minutes}`;
-}
-
+// Use shorter label for selfhosted-gitlab in card context
 function formatProviderName(provider: string): string {
-  switch (provider) {
-    case "github":
-      return "GitHub";
-    case "gitlab":
-      return "GitLab";
-    case "overleaf":
-      return "Overleaf";
-    case "selfhosted-gitlab":
-      return "Self-hosted";
-    default:
-      return provider;
-  }
+  if (provider === "selfhosted-gitlab") return "Self-hosted";
+  return getProviderLabel(provider);
 }
 
 // Provider icons

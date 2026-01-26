@@ -7,17 +7,7 @@ import { Toast, ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../hooks/useToast";
 import { StatusBadge, BuildProgress, CompilationLog, PaperDetailSkeleton } from "../components/ui";
 import { PdfViewer, type PdfViewerRef } from "../components/PdfViewer";
-
-// Format timestamp as DD.MM.YY HH:MM
-function formatDateTime(timestamp: number): string {
-  const d = new Date(timestamp);
-  const day = d.getDate().toString().padStart(2, "0");
-  const month = (d.getMonth() + 1).toString().padStart(2, "0");
-  const year = d.getFullYear().toString().slice(-2);
-  const hours = d.getHours().toString().padStart(2, "0");
-  const minutes = d.getMinutes().toString().padStart(2, "0");
-  return `${day}.${month}.${year} ${hours}:${minutes}`;
-}
+import { formatDateTime } from "../lib/formatters";
 
 export const Route = createFileRoute("/papers/$id")({
   component: PaperDetailPage,

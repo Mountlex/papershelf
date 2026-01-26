@@ -58,18 +58,8 @@ export function buildGitHubHeaders(token?: string | null): Record<string, string
   return headers;
 }
 
-/**
- * Build headers for GitLab API requests.
- */
-export function buildGitLabHeaders(token?: string | null): Record<string, string> {
-  const headers: Record<string, string> = {
-    "User-Agent": "Carrel",
-  };
-  if (token) {
-    headers["PRIVATE-TOKEN"] = token;
-  }
-  return headers;
-}
+// Re-export getGitLabHeaders as buildGitLabHeaders for backward compatibility
+export { getGitLabHeaders as buildGitLabHeaders } from "../gitProviders";
 
 /**
  * Parse GitHub commit response to normalized format.

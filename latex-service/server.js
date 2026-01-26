@@ -6,7 +6,8 @@ const { v4: uuidv4 } = require("uuid");
 
 // Import utilities
 const { logger, createRequestLogger } = require("./lib/logger");
-const { spawnAsync, runLatexmk, runLatexmkWithProgress, runPdftoppm, runGit } = require("./lib/subprocess");
+const { spawnAsync, runLatexmk, runLatexmkWithProgress, runPdftoppm } = require("./lib/subprocess");
+const { cloneRepository, BINARY_EXTENSIONS } = require("./lib/gitOperations");
 const { withCleanup, cleanupAllPendingWorkDirs } = require("./lib/cleanup");
 const { rateLimit } = require("./lib/rateLimit");
 const { compilationQueue } = require("./lib/queue");
@@ -205,24 +206,19 @@ app.post("/compile-from-git", rateLimit, async (req, res) => {
 
         const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
 
-        await fs.mkdir(workDir, { recursive: true });
-
         // Clone repository
         await sendProgress("Cloning repository...");
         req.log.info("Cloning repository...");
-        const cloneArgs = ["clone", "--depth", "1"];
-        if (branch) {
-          cloneArgs.push("--branch", branch);
-        }
-        cloneArgs.push(authenticatedUrl, workDir);
-
-        const cloneResult = await spawnAsync("git", cloneArgs, {
+        const cloneResult = await cloneRepository({
+          authenticatedUrl,
+          workDir,
+          branch,
           timeout: 180000,
           logger: req.log,
         });
 
         if (!cloneResult.success) {
-          return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
+          return res.status(400).json({ error: cloneResult.error });
         }
 
         // Run latexmk with -recorder to track dependencies
@@ -538,22 +534,17 @@ app.post("/git/tree", rateLimit, async (req, res) => {
 
     const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
 
-    await fs.mkdir(workDir, { recursive: true });
-
     // Clone with depth 1
-    const cloneArgs = ["clone", "--depth", "1"];
-    if (branch) {
-      cloneArgs.push("--branch", branch);
-    }
-    cloneArgs.push(authenticatedUrl, workDir);
-
-    const cloneResult = await spawnAsync("git", cloneArgs, {
+    const cloneResult = await cloneRepository({
+      authenticatedUrl,
+      workDir,
+      branch,
       timeout: 60000,
       logger: req.log,
     });
 
     if (!cloneResult.success) {
-      return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
+      return res.status(400).json({ error: cloneResult.error });
     }
 
     // List files with path traversal protection
@@ -607,21 +598,16 @@ app.post("/git/file", rateLimit, async (req, res) => {
 
     const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
 
-    await fs.mkdir(workDir, { recursive: true });
-
-    const cloneArgs = ["clone", "--depth", "1"];
-    if (branch) {
-      cloneArgs.push("--branch", branch);
-    }
-    cloneArgs.push(authenticatedUrl, workDir);
-
-    const cloneResult = await spawnAsync("git", cloneArgs, {
+    const cloneResult = await cloneRepository({
+      authenticatedUrl,
+      workDir,
+      branch,
       timeout: 60000,
       logger: req.log,
     });
 
     if (!cloneResult.success) {
-      return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
+      return res.status(400).json({ error: cloneResult.error });
     }
 
     const targetPath = await safePathAsync(workDir, filePath);
@@ -632,9 +618,8 @@ app.post("/git/file", rateLimit, async (req, res) => {
     try {
       const content = await fs.readFile(targetPath);
       const ext = path.extname(filePath).toLowerCase();
-      const binaryExtensions = [".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".eps", ".svg"];
 
-      if (binaryExtensions.includes(ext)) {
+      if (BINARY_EXTENSIONS.has(ext)) {
         res.json({
           content: content.toString("base64"),
           encoding: "base64",
@@ -666,29 +651,20 @@ app.post("/git/archive", rateLimit, async (req, res) => {
 
     const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
 
-    await fs.mkdir(workDir, { recursive: true });
-
-    const cloneArgs = ["clone", "--depth", "1"];
-    if (branch) {
-      cloneArgs.push("--branch", branch);
-    }
-    cloneArgs.push(authenticatedUrl, workDir);
-
-    const cloneResult = await spawnAsync("git", cloneArgs, {
+    const cloneResult = await cloneRepository({
+      authenticatedUrl,
+      workDir,
+      branch,
       timeout: 180000,
       logger: req.log,
     });
 
     if (!cloneResult.success) {
-      return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
+      return res.status(400).json({ error: cloneResult.error });
     }
 
     // Recursively read all files with depth limit and size/count tracking
     const files = [];
-    const binaryExtensions = new Set([
-      ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif",
-      ".eps", ".ps", ".svg", ".ico", ".webp", ".zip", ".tar", ".gz",
-    ]);
     const MAX_DEPTH = 20; // Prevent stack overflow on deeply nested repos
 
     // Track totals for repository limits
@@ -748,7 +724,7 @@ app.post("/git/archive", rateLimit, async (req, res) => {
               return;
             }
 
-            if (binaryExtensions.has(ext)) {
+            if (BINARY_EXTENSIONS.has(ext)) {
               files.push({
                 path: relPath,
                 content: content.toString("base64"),
@@ -798,28 +774,19 @@ app.post("/git/selective-archive", rateLimit, async (req, res) => {
 
     const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
 
-    await fs.mkdir(workDir, { recursive: true });
-
-    const cloneArgs = ["clone", "--depth", "1"];
-    if (branch) {
-      cloneArgs.push("--branch", branch);
-    }
-    cloneArgs.push(authenticatedUrl, workDir);
-
-    const cloneResult = await spawnAsync("git", cloneArgs, {
+    const cloneResult = await cloneRepository({
+      authenticatedUrl,
+      workDir,
+      branch,
       timeout: 180000,
       logger: req.log,
     });
 
     if (!cloneResult.success) {
-      return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
+      return res.status(400).json({ error: cloneResult.error });
     }
 
     const files = [];
-    const binaryExtensions = new Set([
-      ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif",
-      ".eps", ".ps", ".svg", ".ico", ".webp", ".zip", ".tar", ".gz",
-    ]);
     const MAX_DEPTH = 20;
 
     // Track totals for repository limits
@@ -898,7 +865,7 @@ app.post("/git/selective-archive", rateLimit, async (req, res) => {
               return;
             }
 
-            if (binaryExtensions.has(ext)) {
+            if (BINARY_EXTENSIONS.has(ext)) {
               files.push({
                 path: relPath,
                 content: content.toString("base64"),
@@ -957,21 +924,16 @@ app.post("/git/file-hash", rateLimit, async (req, res) => {
 
     const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
 
-    await fs.mkdir(workDir, { recursive: true });
-
-    const cloneArgs = ["clone", "--depth", "1"];
-    if (branch) {
-      cloneArgs.push("--branch", branch);
-    }
-    cloneArgs.push(authenticatedUrl, workDir);
-
-    const cloneResult = await spawnAsync("git", cloneArgs, {
+    const cloneResult = await cloneRepository({
+      authenticatedUrl,
+      workDir,
+      branch,
       timeout: 60000,
       logger: req.log,
     });
 
     if (!cloneResult.success) {
-      return res.status(400).json({ error: cloneResult.stderr || "Failed to clone repository" });
+      return res.status(400).json({ error: cloneResult.error });
     }
 
     // Process all file paths

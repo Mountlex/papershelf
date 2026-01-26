@@ -4,7 +4,7 @@ import { mutation, query, internalMutation, internalQuery } from "./_generated/s
 import { auth } from "./auth";
 import { validateFilePath, validatePaperFieldsOrThrow, validateTitleOrThrow } from "./lib/validation";
 import { Id } from "./_generated/dataModel";
-import { determineIfUpToDate } from "./lib/paperHelpers";
+import { determineIfUpToDate, generateSlug, fetchPaperWithAuth, fetchUserPapers, sortPapersByTime } from "./lib/paperHelpers";
 import { deletePaperAndAssociatedData } from "./lib/cascadeDelete";
 
 // List all papers for a user (via repositories + direct uploads)
@@ -12,125 +12,43 @@ export const list = query({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
     // Authorization check: verify the caller owns this userId
-    // For queries, return empty array if not authorized (don't throw)
     const authenticatedUserId = await auth.getUserId(ctx);
     if (!authenticatedUserId || authenticatedUserId !== args.userId) {
       return [];
     }
 
-    // Get user's repositories
-    const repositories = await ctx.db
-      .query("repositories")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .collect();
+    const { papers } = await fetchUserPapers(ctx, args.userId);
 
-    // Get papers for all repositories in parallel (reduces sequential N+1 to parallel queries)
-    const [repoPapersArrays, directUploads] = await Promise.all([
-      Promise.all(
-        repositories.map((repo) =>
-          ctx.db
-            .query("papers")
-            .withIndex("by_repository", (q) => q.eq("repositoryId", repo._id))
-            .collect()
-        )
-      ),
-      // Also get directly uploaded papers (no repository)
-      ctx.db
-        .query("papers")
-        .withIndex("by_user", (q) => q.eq("userId", args.userId))
-        .collect(),
-    ]);
+    // Transform to desktop-specific format with repository details
+    const enrichedPapers = papers.map(({ paper, repository, trackedFile, thumbnailUrl, pdfUrl, isUpToDate }) => ({
+      _id: paper._id,
+      _creationTime: paper._creationTime,
+      title: paper.title,
+      authors: paper.authors,
+      thumbnailUrl,
+      pdfUrl,
+      isUpToDate,
+      pdfSourceType: trackedFile?.pdfSourceType ?? null,
+      buildStatus: paper.buildStatus,
+      compilationProgress: paper.compilationProgress,
+      lastSyncError: paper.lastSyncError,
+      isPublic: paper.isPublic,
+      lastAffectedCommitTime: paper.lastAffectedCommitTime,
+      updatedAt: paper.updatedAt,
+      repository: repository
+        ? {
+            _id: repository._id,
+            name: repository.name,
+            gitUrl: repository.gitUrl,
+            provider: repository.provider,
+            lastSyncedAt: repository.lastSyncedAt,
+            lastCommitTime: repository.lastCommitTime,
+            syncStatus: repository.syncStatus,
+          }
+        : null,
+    }));
 
-    const papers = [...repoPapersArrays.flat(), ...directUploads];
-
-    // Pre-fetch all trackedFiles in a batch to avoid N+1 queries during enrichment
-    const trackedFileIds = [
-      ...new Set(
-        papers.filter((p) => p.trackedFileId).map((p) => p.trackedFileId!)
-      ),
-    ];
-    const trackedFilesArray = await Promise.all(
-      trackedFileIds.map((id) => ctx.db.get(id))
-    );
-    const trackedFileMap = new Map(
-      trackedFilesArray
-        .filter((tf): tf is NonNullable<typeof tf> => tf !== null)
-        .map((tf) => [tf._id, tf])
-    );
-
-    // Create repository lookup map for faster access
-    const repositoryMap = new Map(repositories.map((r) => [r._id, r]));
-
-    // Batch fetch all storage URLs upfront to avoid N+1 queries
-    const thumbnailIds = papers
-      .filter((p) => p.thumbnailFileId)
-      .map((p) => p.thumbnailFileId!);
-    const pdfIds = papers
-      .filter((p) => p.pdfFileId)
-      .map((p) => p.pdfFileId!);
-
-    const [thumbnailUrls, pdfUrls] = await Promise.all([
-      Promise.all(thumbnailIds.map((id) => ctx.storage.getUrl(id))),
-      Promise.all(pdfIds.map((id) => ctx.storage.getUrl(id))),
-    ]);
-
-    const thumbnailUrlMap = new Map(
-      thumbnailIds.map((id, i) => [id, thumbnailUrls[i]])
-    );
-    const pdfUrlMap = new Map(pdfIds.map((id, i) => [id, pdfUrls[i]]));
-
-    // Enrich with thumbnail URLs, repository info, and up-to-date status
-    const enrichedPapers = papers.map((paper) => {
-      const repository = paper.repositoryId
-        ? repositoryMap.get(paper.repositoryId) ?? null
-        : null;
-      const trackedFile = paper.trackedFileId
-        ? trackedFileMap.get(paper.trackedFileId) ?? null
-        : null;
-      const thumbnailUrl = paper.thumbnailFileId
-        ? thumbnailUrlMap.get(paper.thumbnailFileId) ?? null
-        : null;
-      const pdfUrl = paper.pdfFileId
-        ? pdfUrlMap.get(paper.pdfFileId) ?? null
-        : null;
-
-      const isUpToDate = determineIfUpToDate(paper, repository);
-
-      return {
-        _id: paper._id,
-        _creationTime: paper._creationTime,
-        title: paper.title,
-        authors: paper.authors,
-        thumbnailUrl,
-        pdfUrl,
-        isUpToDate,
-        pdfSourceType: trackedFile?.pdfSourceType ?? null,
-        buildStatus: paper.buildStatus,
-        compilationProgress: paper.compilationProgress,
-        lastSyncError: paper.lastSyncError,
-        isPublic: paper.isPublic,
-        lastAffectedCommitTime: paper.lastAffectedCommitTime,
-        updatedAt: paper.updatedAt,
-        repository: repository
-          ? {
-              _id: repository._id,
-              name: repository.name,
-              gitUrl: repository.gitUrl,
-              provider: repository.provider,
-              lastSyncedAt: repository.lastSyncedAt,
-              lastCommitTime: repository.lastCommitTime,
-              syncStatus: repository.syncStatus,
-            }
-          : null,
-      };
-    });
-
-    // Sort by last affected time (when dependencies changed), falling back to updatedAt
-    return enrichedPapers.sort((a, b) => {
-      const aTime = a.lastAffectedCommitTime ?? a.updatedAt;
-      const bTime = b.lastAffectedCommitTime ?? b.updatedAt;
-      return bTime - aTime;
-    });
+    return sortPapersByTime(enrichedPapers);
   },
 });
 
@@ -139,107 +57,25 @@ export const listForMobile = internalQuery({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
     const userId = args.userId as Id<"users">;
+    const { papers } = await fetchUserPapers(ctx, userId);
 
-    // Get user's repositories
-    const repositories = await ctx.db
-      .query("repositories")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .collect();
+    // Transform to mobile-specific format (simpler, no repository details)
+    const enrichedPapers = papers.map(({ paper, trackedFile, thumbnailUrl, pdfUrl, isUpToDate }) => ({
+      _id: paper._id,
+      title: paper.title,
+      authors: paper.authors,
+      thumbnailUrl,
+      pdfUrl,
+      isUpToDate,
+      buildStatus: paper.buildStatus,
+      compilationProgress: paper.compilationProgress,
+      lastSyncError: paper.lastSyncError,
+      pdfSourceType: trackedFile?.pdfSourceType ?? null,
+      lastAffectedCommitTime: paper.lastAffectedCommitTime,
+      updatedAt: paper.updatedAt,
+    }));
 
-    // Get papers for all repositories in parallel
-    const [repoPapersArrays, directUploads] = await Promise.all([
-      Promise.all(
-        repositories.map((repo) =>
-          ctx.db
-            .query("papers")
-            .withIndex("by_repository", (q) => q.eq("repositoryId", repo._id))
-            .collect()
-        )
-      ),
-      // Also get directly uploaded papers (no repository)
-      ctx.db
-        .query("papers")
-        .withIndex("by_user", (q) => q.eq("userId", userId))
-        .collect(),
-    ]);
-
-    const papers = [...repoPapersArrays.flat(), ...directUploads];
-
-    // Pre-fetch all trackedFiles in a batch
-    const trackedFileIds = [
-      ...new Set(
-        papers.filter((p) => p.trackedFileId).map((p) => p.trackedFileId!)
-      ),
-    ];
-    const trackedFilesArray = await Promise.all(
-      trackedFileIds.map((id) => ctx.db.get(id))
-    );
-    const trackedFileMap = new Map(
-      trackedFilesArray
-        .filter((tf): tf is NonNullable<typeof tf> => tf !== null)
-        .map((tf) => [tf._id, tf])
-    );
-
-    // Create repository lookup map
-    const repositoryMap = new Map(repositories.map((r) => [r._id, r]));
-
-    // Batch fetch all storage URLs upfront to avoid N+1 queries
-    const thumbnailIds = papers
-      .filter((p) => p.thumbnailFileId)
-      .map((p) => p.thumbnailFileId!);
-    const pdfIds = papers
-      .filter((p) => p.pdfFileId)
-      .map((p) => p.pdfFileId!);
-
-    const [thumbnailUrls, pdfUrls] = await Promise.all([
-      Promise.all(thumbnailIds.map((id) => ctx.storage.getUrl(id))),
-      Promise.all(pdfIds.map((id) => ctx.storage.getUrl(id))),
-    ]);
-
-    const thumbnailUrlMap = new Map(
-      thumbnailIds.map((id, i) => [id, thumbnailUrls[i]])
-    );
-    const pdfUrlMap = new Map(pdfIds.map((id, i) => [id, pdfUrls[i]]));
-
-    // Enrich with thumbnail URLs and status
-    const enrichedPapers = papers.map((paper) => {
-      const repository = paper.repositoryId
-        ? repositoryMap.get(paper.repositoryId) ?? null
-        : null;
-      const trackedFile = paper.trackedFileId
-        ? trackedFileMap.get(paper.trackedFileId) ?? null
-        : null;
-      const thumbnailUrl = paper.thumbnailFileId
-        ? thumbnailUrlMap.get(paper.thumbnailFileId) ?? null
-        : null;
-      const pdfUrl = paper.pdfFileId
-        ? pdfUrlMap.get(paper.pdfFileId) ?? null
-        : null;
-
-      const isUpToDate = determineIfUpToDate(paper, repository);
-
-      return {
-        _id: paper._id,
-        title: paper.title,
-        authors: paper.authors,
-        thumbnailUrl,
-        pdfUrl,
-        isUpToDate,
-        buildStatus: paper.buildStatus,
-        compilationProgress: paper.compilationProgress,
-        lastSyncError: paper.lastSyncError,
-        pdfSourceType: trackedFile?.pdfSourceType ?? null,
-        lastAffectedCommitTime: paper.lastAffectedCommitTime,
-        updatedAt: paper.updatedAt,
-      };
-    });
-
-    // Sort by last affected time
-    return enrichedPapers.sort((a, b) => {
-      const aTime = a.lastAffectedCommitTime ?? a.updatedAt;
-      const bTime = b.lastAffectedCommitTime ?? b.updatedAt;
-      return bTime - aTime;
-    });
+    return sortPapersByTime(enrichedPapers);
   },
 });
 
@@ -250,34 +86,10 @@ export const getForMobile = internalQuery({
     const paperId = args.paperId as Id<"papers">;
     const userId = args.userId as Id<"users">;
 
-    const paper = await ctx.db.get(paperId);
-    if (!paper) return null;
+    const result = await fetchPaperWithAuth(ctx, paperId, userId);
+    if (!result || !result.hasAccess) return null;
 
-    // Authorization: paper must be owned directly or via repository
-    let hasValidOwnership = false;
-
-    if (paper.userId) {
-      if (paper.userId !== userId) {
-        return null;
-      }
-      hasValidOwnership = true;
-    }
-
-    if (paper.repositoryId) {
-      const repository = await ctx.db.get(paper.repositoryId);
-      if (!repository || repository.userId !== userId) {
-        return null;
-      }
-      hasValidOwnership = true;
-    }
-
-    if (!hasValidOwnership) {
-      return null;
-    }
-
-    const repository = paper.repositoryId
-      ? await ctx.db.get(paper.repositoryId)
-      : null;
+    const { paper, repository } = result;
     const trackedFile = paper.trackedFileId
       ? await ctx.db.get(paper.trackedFileId)
       : null;
@@ -319,33 +131,11 @@ export const deletePaperForMobile = internalMutation({
     const paperId = args.paperId as Id<"papers">;
     const userId = args.userId as Id<"users">;
 
-    const paper = await ctx.db.get(paperId);
-    if (!paper) {
-      throw new Error("Paper not found");
-    }
+    const result = await fetchPaperWithAuth(ctx, paperId, userId);
+    if (!result) throw new Error("Paper not found");
+    if (!result.hasAccess) throw new Error("Unauthorized");
 
-    // Authorization: paper must be owned directly or via repository
-    let hasValidOwnership = false;
-
-    if (paper.userId) {
-      if (paper.userId !== userId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-
-    if (paper.repositoryId) {
-      const repository = await ctx.db.get(paper.repositoryId);
-      if (!repository || repository.userId !== userId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-
-    if (!hasValidOwnership) {
-      throw new Error("Unauthorized");
-    }
-
+    const { paper } = result;
     // Store tracked file ID before deletion
     const trackedFileId = paper.trackedFileId;
 
@@ -371,32 +161,9 @@ export const updatePaperForMobile = internalMutation({
     const paperId = args.paperId as Id<"papers">;
     const userId = args.userId as Id<"users">;
 
-    const paper = await ctx.db.get(paperId);
-    if (!paper) {
-      throw new Error("Paper not found");
-    }
-
-    // Authorization: paper must be owned directly or via repository
-    let hasValidOwnership = false;
-
-    if (paper.userId) {
-      if (paper.userId !== userId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-
-    if (paper.repositoryId) {
-      const repository = await ctx.db.get(paper.repositoryId);
-      if (!repository || repository.userId !== userId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-
-    if (!hasValidOwnership) {
-      throw new Error("Unauthorized");
-    }
+    const result = await fetchPaperWithAuth(ctx, paperId, userId);
+    if (!result) throw new Error("Paper not found");
+    if (!result.hasAccess) throw new Error("Unauthorized");
 
     // Validate field lengths
     validatePaperFieldsOrThrow({ title: args.title, authors: args.authors });
@@ -411,17 +178,6 @@ export const updatePaperForMobile = internalMutation({
   },
 });
 
-// Generate a share slug (duplicated from below for internal use)
-function generateSlugForMobile(title: string): string {
-  const base = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 30);
-  const randomSuffix = crypto.randomUUID().replace(/-/g, "").substring(0, 12);
-  return `${base}-${randomSuffix}`;
-}
-
 // Toggle public/private for mobile app (internal, auth handled by HTTP layer)
 export const togglePublicForMobile = internalMutation({
   args: { paperId: v.string(), userId: v.string() },
@@ -429,35 +185,13 @@ export const togglePublicForMobile = internalMutation({
     const paperId = args.paperId as Id<"papers">;
     const userId = args.userId as Id<"users">;
 
-    const paper = await ctx.db.get(paperId);
-    if (!paper) {
-      throw new Error("Paper not found");
-    }
+    const result = await fetchPaperWithAuth(ctx, paperId, userId);
+    if (!result) throw new Error("Paper not found");
+    if (!result.hasAccess) throw new Error("Unauthorized");
 
-    // Authorization: paper must be owned directly or via repository
-    let hasValidOwnership = false;
-
-    if (paper.userId) {
-      if (paper.userId !== userId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-
-    if (paper.repositoryId) {
-      const repository = await ctx.db.get(paper.repositoryId);
-      if (!repository || repository.userId !== userId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-
-    if (!hasValidOwnership) {
-      throw new Error("Unauthorized");
-    }
-
+    const { paper } = result;
     const isPublic = !paper.isPublic;
-    const shareSlug = isPublic && !paper.shareSlug ? generateSlugForMobile(paper.title) : paper.shareSlug;
+    const shareSlug = isPublic && !paper.shareSlug ? generateSlug(paper.title) : paper.shareSlug;
 
     await ctx.db.patch(paperId, {
       isPublic,
@@ -532,38 +266,10 @@ export const get = query({
       return null;
     }
 
-    const paper = await ctx.db.get(args.id);
-    if (!paper) return null;
+    const result = await fetchPaperWithAuth(ctx, args.id, authenticatedUserId);
+    if (!result || !result.hasAccess) return null;
 
-    // Authorization: paper must be owned either directly (userId) or via repository
-    // At least one ownership path must exist and be valid
-    let hasValidOwnership = false;
-
-    // Check direct ownership via userId
-    if (paper.userId) {
-      if (paper.userId !== authenticatedUserId) {
-        return null; // userId is set but doesn't match - deny access
-      }
-      hasValidOwnership = true;
-    }
-
-    // Check ownership via repository
-    if (paper.repositoryId) {
-      const repository = await ctx.db.get(paper.repositoryId);
-      if (!repository || repository.userId !== authenticatedUserId) {
-        return null; // repository doesn't exist or doesn't belong to user - deny access
-      }
-      hasValidOwnership = true;
-    }
-
-    // If neither userId nor repositoryId is set, deny access (orphaned paper)
-    if (!hasValidOwnership) {
-      return null;
-    }
-
-    const repository = paper.repositoryId
-      ? await ctx.db.get(paper.repositoryId)
-      : null;
+    const { paper, repository } = result;
     const trackedFile = paper.trackedFileId
       ? await ctx.db.get(paper.trackedFileId)
       : null;
@@ -624,35 +330,12 @@ export const update = mutation({
     authors: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
-    // Authorization check: verify the caller owns this paper
     const authenticatedUserId = await auth.getUserId(ctx);
-    if (!authenticatedUserId) {
-      throw new Error("Unauthorized");
-    }
-    const paper = await ctx.db.get(args.id);
-    if (!paper) {
-      throw new Error("Paper not found");
-    }
-    // Authorization: paper must be owned either directly (userId) or via repository
-    // At least one ownership path must exist and be valid
-    let hasValidOwnership = false;
+    if (!authenticatedUserId) throw new Error("Unauthorized");
 
-    if (paper.userId) {
-      if (paper.userId !== authenticatedUserId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-    if (paper.repositoryId) {
-      const repository = await ctx.db.get(paper.repositoryId);
-      if (!repository || repository.userId !== authenticatedUserId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-    if (!hasValidOwnership) {
-      throw new Error("Unauthorized");
-    }
+    const result = await fetchPaperWithAuth(ctx, args.id, authenticatedUserId);
+    if (!result) throw new Error("Paper not found");
+    if (!result.hasAccess) throw new Error("Unauthorized");
 
     // Validate field lengths to prevent storage abuse
     validatePaperFieldsOrThrow({ title: args.title, authors: args.authors });
@@ -668,50 +351,18 @@ export const update = mutation({
   },
 });
 
-// Generate a share slug
-function generateSlug(title: string): string {
-  const base = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 30);
-  // Use crypto.randomUUID() for unpredictable suffix
-  const randomSuffix = crypto.randomUUID().replace(/-/g, "").substring(0, 12);
-  return `${base}-${randomSuffix}`;
-}
-
 // Toggle public/private and generate share slug
 export const togglePublic = mutation({
   args: { id: v.id("papers") },
   handler: async (ctx, args) => {
-    // Authorization check: verify the caller owns this paper
     const authenticatedUserId = await auth.getUserId(ctx);
-    if (!authenticatedUserId) {
-      throw new Error("Unauthorized");
-    }
-    const paper = await ctx.db.get(args.id);
-    if (!paper) throw new Error("Paper not found");
+    if (!authenticatedUserId) throw new Error("Unauthorized");
 
-    // Authorization: paper must be owned either directly (userId) or via repository
-    let hasValidOwnership = false;
+    const result = await fetchPaperWithAuth(ctx, args.id, authenticatedUserId);
+    if (!result) throw new Error("Paper not found");
+    if (!result.hasAccess) throw new Error("Unauthorized");
 
-    if (paper.userId) {
-      if (paper.userId !== authenticatedUserId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-    if (paper.repositoryId) {
-      const repository = await ctx.db.get(paper.repositoryId);
-      if (!repository || repository.userId !== authenticatedUserId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-    if (!hasValidOwnership) {
-      throw new Error("Unauthorized");
-    }
-
+    const { paper } = result;
     const isPublic = !paper.isPublic;
     const shareSlug = isPublic && !paper.shareSlug ? generateSlug(paper.title) : paper.shareSlug;
 
@@ -957,34 +608,14 @@ export const uploadPdf = mutation({
 export const deletePaper = mutation({
   args: { id: v.id("papers") },
   handler: async (ctx, args) => {
-    // Authorization check: verify the caller owns this paper
     const authenticatedUserId = await auth.getUserId(ctx);
-    if (!authenticatedUserId) {
-      throw new Error("Unauthorized");
-    }
-    const paper = await ctx.db.get(args.id);
-    if (!paper) throw new Error("Paper not found");
+    if (!authenticatedUserId) throw new Error("Unauthorized");
 
-    // Authorization: paper must be owned either directly (userId) or via repository
-    let hasValidOwnership = false;
+    const result = await fetchPaperWithAuth(ctx, args.id, authenticatedUserId);
+    if (!result) throw new Error("Paper not found");
+    if (!result.hasAccess) throw new Error("Unauthorized");
 
-    if (paper.userId) {
-      if (paper.userId !== authenticatedUserId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-    if (paper.repositoryId) {
-      const repository = await ctx.db.get(paper.repositoryId);
-      if (!repository || repository.userId !== authenticatedUserId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-    if (!hasValidOwnership) {
-      throw new Error("Unauthorized");
-    }
-
+    const { paper } = result;
     // Store tracked file ID before deletion (cascade delete removes the paper)
     const trackedFileId = paper.trackedFileId;
 
@@ -1002,34 +633,11 @@ export const deletePaper = mutation({
 export const listVersions = query({
   args: { paperId: v.id("papers") },
   handler: async (ctx, args) => {
-    // Authorization check
     const authenticatedUserId = await auth.getUserId(ctx);
-    if (!authenticatedUserId) {
-      return [];
-    }
+    if (!authenticatedUserId) return [];
 
-    const paper = await ctx.db.get(args.paperId);
-    if (!paper) return [];
-
-    // Authorization: paper must be owned either directly (userId) or via repository
-    let hasValidOwnership = false;
-
-    if (paper.userId) {
-      if (paper.userId !== authenticatedUserId) {
-        return [];
-      }
-      hasValidOwnership = true;
-    }
-    if (paper.repositoryId) {
-      const repository = await ctx.db.get(paper.repositoryId);
-      if (!repository || repository.userId !== authenticatedUserId) {
-        return [];
-      }
-      hasValidOwnership = true;
-    }
-    if (!hasValidOwnership) {
-      return [];
-    }
+    const result = await fetchPaperWithAuth(ctx, args.paperId, authenticatedUserId);
+    if (!result || !result.hasAccess) return [];
 
     // Get all versions for this paper
     const versions = await ctx.db
@@ -1073,34 +681,11 @@ export const getVersion = query({
     versionId: v.id("paperVersions"),
   },
   handler: async (ctx, args) => {
-    // Authorization check
     const authenticatedUserId = await auth.getUserId(ctx);
-    if (!authenticatedUserId) {
-      return null;
-    }
+    if (!authenticatedUserId) return null;
 
-    const paper = await ctx.db.get(args.paperId);
-    if (!paper) return null;
-
-    // Authorization: paper must be owned either directly (userId) or via repository
-    let hasValidOwnership = false;
-
-    if (paper.userId) {
-      if (paper.userId !== authenticatedUserId) {
-        return null;
-      }
-      hasValidOwnership = true;
-    }
-    if (paper.repositoryId) {
-      const repository = await ctx.db.get(paper.repositoryId);
-      if (!repository || repository.userId !== authenticatedUserId) {
-        return null;
-      }
-      hasValidOwnership = true;
-    }
-    if (!hasValidOwnership) {
-      return null;
-    }
+    const result = await fetchPaperWithAuth(ctx, args.paperId, authenticatedUserId);
+    if (!result || !result.hasAccess) return null;
 
     const version = await ctx.db.get(args.versionId);
     if (!version || version.paperId !== args.paperId) {
@@ -1129,34 +714,12 @@ export const deleteOldVersions = mutation({
   handler: async (ctx, args) => {
     const keepCount = args.keepCount ?? 10;
 
-    // Authorization check
     const authenticatedUserId = await auth.getUserId(ctx);
-    if (!authenticatedUserId) {
-      throw new Error("Unauthorized");
-    }
+    if (!authenticatedUserId) throw new Error("Unauthorized");
 
-    const paper = await ctx.db.get(args.paperId);
-    if (!paper) throw new Error("Paper not found");
-
-    // Authorization: paper must be owned either directly (userId) or via repository
-    let hasValidOwnership = false;
-
-    if (paper.userId) {
-      if (paper.userId !== authenticatedUserId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-    if (paper.repositoryId) {
-      const repository = await ctx.db.get(paper.repositoryId);
-      if (!repository || repository.userId !== authenticatedUserId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-    if (!hasValidOwnership) {
-      throw new Error("Unauthorized");
-    }
+    const result = await fetchPaperWithAuth(ctx, args.paperId, authenticatedUserId);
+    if (!result) throw new Error("Paper not found");
+    if (!result.hasAccess) throw new Error("Unauthorized");
 
     // Get all versions sorted by date (newest first)
     const versions = await ctx.db
@@ -1197,39 +760,14 @@ export const toggleVersionPinned = mutation({
   },
   handler: async (ctx, args) => {
     const authenticatedUserId = await auth.getUserId(ctx);
-    if (!authenticatedUserId) {
-      throw new Error("Unauthorized");
-    }
+    if (!authenticatedUserId) throw new Error("Unauthorized");
 
     const version = await ctx.db.get(args.versionId);
-    if (!version) {
-      throw new Error("Version not found");
-    }
+    if (!version) throw new Error("Version not found");
 
-    const paper = await ctx.db.get(version.paperId);
-    if (!paper) {
-      throw new Error("Paper not found");
-    }
-
-    // Authorization: paper must be owned either directly (userId) or via repository
-    let hasValidOwnership = false;
-
-    if (paper.userId) {
-      if (paper.userId !== authenticatedUserId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-    if (paper.repositoryId) {
-      const repository = await ctx.db.get(paper.repositoryId);
-      if (!repository || repository.userId !== authenticatedUserId) {
-        throw new Error("Unauthorized");
-      }
-      hasValidOwnership = true;
-    }
-    if (!hasValidOwnership) {
-      throw new Error("Unauthorized");
-    }
+    const result = await fetchPaperWithAuth(ctx, version.paperId, authenticatedUserId);
+    if (!result) throw new Error("Paper not found");
+    if (!result.hasAccess) throw new Error("Unauthorized");
 
     // Toggle pinned status
     const newPinned = !version.pinned;

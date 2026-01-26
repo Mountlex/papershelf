@@ -17,61 +17,6 @@ export const Route = createFileRoute("/")({
   component: GalleryPage,
 });
 
-// Format timestamp as relative time (e.g., "2 hours ago")
-function formatRelativeTime(timestamp: number | undefined): string {
-  if (!timestamp) return "Never";
-
-  const now = Date.now();
-  const diff = now - timestamp;
-
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (days > 0) return `${days}d ago`;
-  if (hours > 0) return `${hours}h ago`;
-  if (minutes > 0) return `${minutes}m ago`;
-  return "Just now";
-}
-
-// Convert git URL to web URL for the repository
-function getRepoWebUrl(gitUrl: string, provider: string): string | null {
-  // Remove .git suffix if present
-  const url = gitUrl.replace(/\.git$/, "");
-
-  // GitHub: https://github.com/owner/repo
-  if (provider === "github") {
-    const match = url.match(/github\.com[/:]([\w-]+\/[\w.-]+)/);
-    if (match) return `https://github.com/${match[1]}`;
-  }
-
-  // GitLab: https://gitlab.com/owner/repo
-  if (provider === "gitlab") {
-    const match = url.match(/gitlab\.com[/:]((?:[\w-]+\/)+[\w.-]+)/);
-    if (match) return `https://gitlab.com/${match[1]}`;
-  }
-
-  // Overleaf: https://www.overleaf.com/project/<id>
-  if (provider === "overleaf") {
-    const match = url.match(/git\.overleaf\.com\/([a-f0-9]+)/i);
-    if (match) return `https://www.overleaf.com/project/${match[1]}`;
-  }
-
-  // Self-hosted GitLab: convert git URL to web URL
-  if (provider === "selfhosted-gitlab") {
-    // Handle both https:// and git@ formats
-    if (url.startsWith("git@")) {
-      const match = url.match(/git@([^:]+):(.+)/);
-      if (match) return `https://${match[1]}/${match[2]}`;
-    }
-    // Already https format
-    return url;
-  }
-
-  return null;
-}
-
 function GalleryPage() {
   const { user, isLoading: isUserLoading, isAuthenticated } = useUser();
   const papers = useQuery(api.papers.list, isAuthenticated && user ? { userId: user._id } : "skip");
@@ -658,8 +603,6 @@ function GalleryPage() {
               onStartEdit={handleStartEdit}
               onDeleteClick={handleDeleteClick}
               onFullscreen={handleFullscreen}
-              getRepoWebUrl={getRepoWebUrl}
-              formatRelativeTime={formatRelativeTime}
             />
           ))}
         </div>

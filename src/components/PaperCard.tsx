@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import type { RefObject, KeyboardEvent } from "react";
 import type { Id } from "../../convex/_generated/dataModel";
 import { PaperStatusIndicator } from "./PaperStatusIndicator";
+import { getRepoWebUrl } from "../lib/providers";
 
 interface Repository {
   _id: Id<"repositories">;
@@ -41,8 +42,6 @@ interface PaperCardProps {
   onStartEdit: (e: React.MouseEvent, paperId: Id<"papers">, title: string) => void;
   onDeleteClick: (e: React.MouseEvent, paperId: Id<"papers">) => void;
   onFullscreen: (e: React.MouseEvent, pdfUrl: string, title: string) => void;
-  getRepoWebUrl: (gitUrl: string, provider: string) => string | null;
-  formatRelativeTime: (timestamp: number | undefined) => string;
 }
 
 export function PaperCard({
@@ -56,8 +55,6 @@ export function PaperCard({
   onStartEdit,
   onDeleteClick,
   onFullscreen,
-  getRepoWebUrl,
-  formatRelativeTime,
 }: PaperCardProps) {
   const cardClassName =
     "group overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm transition-all duration-200 hover:border-gray-200 hover:shadow-lg dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700";
@@ -190,7 +187,6 @@ export function PaperCard({
                 repository={paper.repository}
                 lastAffectedCommitTime={paper.lastAffectedCommitTime}
                 creationTime={paper._creationTime}
-                formatRelativeTime={formatRelativeTime}
               />
             </span>
           ) : (

@@ -147,66 +147,6 @@ function validateThumbnailOptions({ width, format }) {
 }
 
 /**
- * Validate resources array.
- *
- * @param {Array} resources - The resources array
- * @returns {{valid: boolean, error?: string}}
- */
-function validateResources(resources) {
-  if (!resources || !Array.isArray(resources)) {
-    return { valid: false, error: "Missing resources array" };
-  }
-
-  if (resources.length > LIMITS.MAX_RESOURCES) {
-    return {
-      valid: false,
-      error: `Too many resources. Maximum is ${LIMITS.MAX_RESOURCES}`,
-    };
-  }
-
-  return { valid: true };
-}
-
-/**
- * Validate a single resource and check size limits.
- *
- * @param {Object} resource - The resource object
- * @param {string} resource.path - Resource file path
- * @param {string} resource.content - Resource content
- * @param {string} [resource.encoding] - Content encoding (base64, bytes, or text)
- * @param {number} currentTotalSize - Current accumulated total size
- * @returns {{valid: boolean, error?: string, content?: Buffer, newTotalSize?: number}}
- */
-function validateAndParseResource(resource, currentTotalSize) {
-  if (!resource.path || typeof resource.path !== "string") {
-    return { valid: false, error: "Invalid resource: missing path" };
-  }
-
-  // Parse content based on encoding
-  let content;
-  if (resource.encoding === "base64") {
-    content = Buffer.from(resource.content, "base64");
-  } else if (resource.encoding === "bytes") {
-    content = Buffer.from(resource.content);
-  } else {
-    content = Buffer.from(resource.content || "");
-  }
-
-  // Check individual size
-  if (content.length > LIMITS.MAX_RESOURCE_SIZE) {
-    return { valid: false, error: `Resource too large: ${resource.path}` };
-  }
-
-  // Check total size
-  const newTotalSize = currentTotalSize + content.length;
-  if (newTotalSize > LIMITS.MAX_TOTAL_SIZE) {
-    return { valid: false, error: "Total resources size exceeds limit" };
-  }
-
-  return { valid: true, content, newTotalSize };
-}
-
-/**
  * Validate git URL.
  *
  * @param {string} gitUrl - The git URL
@@ -282,8 +222,6 @@ module.exports = {
   validateTarget,
   validateCompiler,
   validateThumbnailOptions,
-  validateResources,
-  validateAndParseResource,
   validateGitUrl,
   validateFilePath,
 };

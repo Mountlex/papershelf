@@ -350,7 +350,6 @@ async function runLatexmkWithProgress(compilerFlag, targetPath, options = {}) {
 
 module.exports = {
   spawnAsync,
-  runGit,
   runLatexmk,
   runLatexmkWithProgress,
   runPdftoppm,

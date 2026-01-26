@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "./ui/LoadingSpinner";
+import { formatRelativeTime } from "../lib/formatters";
 
 interface Repository {
   syncStatus?: string;
@@ -15,7 +16,6 @@ interface PaperStatusIndicatorProps {
   repository: Repository | null;
   lastAffectedCommitTime?: number;
   creationTime?: number;
-  formatRelativeTime: (timestamp: number | undefined) => string;
 }
 
 export function PaperStatusIndicator({
@@ -27,7 +27,6 @@ export function PaperStatusIndicator({
   repository,
   lastAffectedCommitTime,
   creationTime,
-  formatRelativeTime,
 }: PaperStatusIndicatorProps) {
   if (!repository) return null;
 

@@ -2,17 +2,10 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { auth } from "./auth";
+import { requireUserId } from "./lib/auth";
 import { logAudit } from "./lib/audit";
 import { encryptTokenIfNeeded } from "./lib/crypto";
 import { deleteRepositoriesAndData, deletePaperAndAssociatedData } from "./lib/cascadeDelete";
-
-async function requireUserId(ctx: Parameters<typeof auth.getUserId>[0]) {
-  const userId = await auth.getUserId(ctx);
-  if (!userId) {
-    throw new Error("Not authenticated");
-  }
-  return userId;
-}
 
 async function requireDevAdmin(ctx: Parameters<typeof auth.getUserId>[0] & { db: { get: (id: Id<"users">) => Promise<{ email?: string } | null> } }) {
   const userId = await requireUserId(ctx);

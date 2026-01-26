@@ -25,6 +25,63 @@ interface RateLimitResult {
   remaining?: number;
 }
 
+// Shared rate limit record interface
+interface RateLimitRecord {
+  _id: Id<"emailRateLimits"> | Id<"userRateLimits">;
+  attempts: number;
+  windowStart: number;
+  lastAttempt: number;
+  lockedUntil?: number;
+}
+
+/**
+ * Core rate limit logic shared between email-based and user-based rate limiting.
+ * Handles lockout checking, window expiration, and attempt incrementing.
+ */
+async function checkRateLimitCore(
+  ctx: MutationCtx,
+  config: RateLimitConfig,
+  record: RateLimitRecord | null,
+  createRecord: () => Promise<void>,
+  updateRecord: (id: RateLimitRecord["_id"], updates: Partial<RateLimitRecord>) => Promise<void>
+): Promise<RateLimitResult> {
+  const now = Date.now();
+
+  // Check if currently locked out
+  if (record?.lockedUntil && now < record.lockedUntil) {
+    return { allowed: false, retryAfter: record.lockedUntil - now };
+  }
+
+  // No record or expired window - create/reset
+  if (!record || now - record.windowStart > config.windowMs) {
+    if (record) {
+      await updateRecord(record._id, {
+        attempts: 1,
+        windowStart: now,
+        lastAttempt: now,
+        lockedUntil: undefined,
+      });
+    } else {
+      await createRecord();
+    }
+    return { allowed: true, remaining: config.max - 1 };
+  }
+
+  // Check if max attempts reached
+  if (record.attempts >= config.max) {
+    await updateRecord(record._id, { lockedUntil: now + config.lockoutMs });
+    return { allowed: false, retryAfter: config.lockoutMs };
+  }
+
+  // Increment attempts
+  await updateRecord(record._id, {
+    attempts: record.attempts + 1,
+    lastAttempt: now,
+  });
+
+  return { allowed: true, remaining: config.max - record.attempts - 1 };
+}
+
 export async function checkRateLimit(
   ctx: MutationCtx,
   email: string,
@@ -41,21 +98,11 @@ export async function checkRateLimit(
     )
     .first();
 
-  // Check if currently locked out
-  if (record?.lockedUntil && now < record.lockedUntil) {
-    return { allowed: false, retryAfter: record.lockedUntil - now };
-  }
-
-  // No record or expired window - create/reset
-  if (!record || now - record.windowStart > config.windowMs) {
-    if (record) {
-      await ctx.db.patch(record._id, {
-        attempts: 1,
-        windowStart: now,
-        lastAttempt: now,
-        lockedUntil: undefined,
-      });
-    } else {
+  return checkRateLimitCore(
+    ctx,
+    config,
+    record,
+    async () => {
       await ctx.db.insert("emailRateLimits", {
         email: normalizedEmail,
         action,
@@ -63,23 +110,11 @@ export async function checkRateLimit(
         windowStart: now,
         lastAttempt: now,
       });
+    },
+    async (id, updates) => {
+      await ctx.db.patch(id as Id<"emailRateLimits">, updates);
     }
-    return { allowed: true, remaining: config.max - 1 };
-  }
-
-  // Check if max attempts reached
-  if (record.attempts >= config.max) {
-    await ctx.db.patch(record._id, { lockedUntil: now + config.lockoutMs });
-    return { allowed: false, retryAfter: config.lockoutMs };
-  }
-
-  // Increment attempts
-  await ctx.db.patch(record._id, {
-    attempts: record.attempts + 1,
-    lastAttempt: now,
-  });
-
-  return { allowed: true, remaining: config.max - record.attempts - 1 };
+  );
 }
 
 export async function resetRateLimit(
@@ -123,21 +158,11 @@ export async function checkUserRateLimit(
     )
     .first();
 
-  // Check if currently locked out
-  if (record?.lockedUntil && now < record.lockedUntil) {
-    return { allowed: false, retryAfter: record.lockedUntil - now };
-  }
-
-  // No record or expired window - create/reset
-  if (!record || now - record.windowStart > config.windowMs) {
-    if (record) {
-      await ctx.db.patch(record._id, {
-        attempts: 1,
-        windowStart: now,
-        lastAttempt: now,
-        lockedUntil: undefined,
-      });
-    } else {
+  return checkRateLimitCore(
+    ctx,
+    config,
+    record,
+    async () => {
       await ctx.db.insert("userRateLimits", {
         userId,
         action,
@@ -145,21 +170,9 @@ export async function checkUserRateLimit(
         windowStart: now,
         lastAttempt: now,
       });
+    },
+    async (id, updates) => {
+      await ctx.db.patch(id as Id<"userRateLimits">, updates);
     }
-    return { allowed: true, remaining: config.max - 1 };
-  }
-
-  // Check if max attempts reached
-  if (record.attempts >= config.max) {
-    await ctx.db.patch(record._id, { lockedUntil: now + config.lockoutMs });
-    return { allowed: false, retryAfter: config.lockoutMs };
-  }
-
-  // Increment attempts
-  await ctx.db.patch(record._id, {
-    attempts: record.attempts + 1,
-    lastAttempt: now,
-  });
-
-  return { allowed: true, remaining: config.max - record.attempts - 1 };
+  );
 }
