@@ -26,18 +26,22 @@ export const Route = createFileRoute("/papers/$id")({
 function PaperDetailPage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
+  const [isLocallyBuilding, setIsLocallyBuilding] = useState(false);
+  const [buildError, setBuildError] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+
   const paper = useQuery(api.papers.get, { id: id as Id<"papers"> });
   const selfHostedInstances = useQuery(api.users.getSelfHostedGitLabInstances, {});
-  const versions = useQuery(api.papers.listVersions, { paperId: id as Id<"papers"> });
+  const versions = useQuery(
+    api.papers.listVersions,
+    showVersionHistory ? { paperId: id as Id<"papers"> } : "skip"
+  );
   const togglePublic = useMutation(api.papers.togglePublic);
   const deletePaper = useMutation(api.papers.deletePaper);
   const toggleVersionPinned = useMutation(api.papers.toggleVersionPinned);
   const buildPaper = useAction(api.sync.buildPaper);
-  const [isLocallyBuilding, setIsLocallyBuilding] = useState(false);
   const isBuilding = isLocallyBuilding || paper?.buildStatus === "building";
-  const [buildError, setBuildError] = useState<string | null>(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showVersionHistory, setShowVersionHistory] = useState(false);
   const { toast, showError, showSuccess, clearToast } = useToast();
   const pdfViewerRef = useRef<PdfViewerRef>(null);
 
@@ -221,9 +225,6 @@ function PaperDetailPage() {
               <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
                 Authors: {paper.authors.join(", ")}
               </p>
-            )}
-            {paper.abstract && (
-              <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">{paper.abstract}</p>
             )}
           </div>
 
@@ -612,100 +613,106 @@ function PaperDetailPage() {
           )}
 
           {/* Version History */}
-          {versions && versions.length > 0 && (
-            <div className="rounded-lg border bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-              <button
-                onClick={() => setShowVersionHistory(!showVersionHistory)}
-                aria-expanded={showVersionHistory}
-                className="flex w-full items-center justify-between text-sm font-normal text-gray-900 dark:text-gray-100"
+          <div className="rounded-lg border bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+            <button
+              onClick={() => setShowVersionHistory(!showVersionHistory)}
+              aria-expanded={showVersionHistory}
+              className="flex w-full items-center justify-between text-sm font-normal text-gray-900 dark:text-gray-100"
+            >
+              <span>Version History</span>
+              <svg
+                className={`h-4 w-4 transition-transform ${showVersionHistory ? "rotate-180" : ""}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
               >
-                <span>Version History ({versions.length})</span>
-                <svg
-                  className={`h-4 w-4 transition-transform ${showVersionHistory ? "rotate-180" : ""}`}
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              {showVersionHistory && (
-                <div className="mt-3 space-y-2">
-                  {/* Current version indicator */}
-                  <div className="rounded border border-green-200 bg-green-50 p-2 dark:border-green-800 dark:bg-green-950">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center rounded bg-green-600 px-1.5 py-0.5 text-xs font-normal text-white">
-                          Current
-                        </span>
-                        <span className="font-mono text-xs text-gray-700 dark:text-gray-300">
-                          {paper.cachedCommitHash?.slice(0, 7) || "N/A"}
-                        </span>
-                      </div>
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
-                        {new Date(paper.updatedAt).toLocaleDateString()}
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {showVersionHistory && (
+              <div className="mt-3 space-y-2">
+                {/* Current version indicator */}
+                <div className="rounded border border-green-200 bg-green-50 p-2 dark:border-green-800 dark:bg-green-950">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center rounded bg-green-600 px-1.5 py-0.5 text-xs font-normal text-white">
+                        Current
+                      </span>
+                      <span className="font-mono text-xs text-gray-700 dark:text-gray-300">
+                        {paper.cachedCommitHash?.slice(0, 7) || "N/A"}
                       </span>
                     </div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {new Date(paper.updatedAt).toLocaleDateString()}
+                    </span>
                   </div>
-
-                  {/* Previous versions */}
-                  {versions.map((version) => (
-                    <div
-                      key={version._id}
-                      className={`rounded border p-2 ${
-                        version.pinned
-                          ? "border-yellow-300 bg-yellow-50 dark:border-yellow-700 dark:bg-yellow-950"
-                          : "border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={async () => {
-                              await toggleVersionPinned({ versionId: version._id });
-                              showSuccess(version.pinned ? "Version unpinned" : "Version pinned");
-                            }}
-                            className={`rounded p-0.5 transition-colors ${
-                              version.pinned
-                                ? "text-yellow-500 hover:text-yellow-600"
-                                : "text-gray-400 hover:text-yellow-500"
-                            }`}
-                            title={version.pinned ? "Unpin version (allows auto-deletion)" : "Pin version (prevents auto-deletion)"}
-                          >
-                            <svg className="h-4 w-4" fill={version.pinned ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                            </svg>
-                          </button>
-                          <span className="font-mono text-xs text-gray-700 dark:text-gray-300">
-                            {version.commitHash.slice(0, 7)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-500 dark:text-gray-400">
-                            {new Date(version.versionCreatedAt).toLocaleDateString()}
-                          </span>
-                          <a
-                            href={version.pdfUrl || "#"}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                          >
-                            View
-                          </a>
-                        </div>
-                      </div>
-                      {version.fileSize && (
-                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                          {(version.fileSize / 1024 / 1024).toFixed(2)} MB
-                          {version.pageCount && ` · ${version.pageCount} pages`}
-                        </div>
-                      )}
-                    </div>
-                  ))}
                 </div>
-              )}
-            </div>
-          )}
+
+                {versions === undefined && (
+                  <div className="text-xs text-gray-500 dark:text-gray-400">Loading versions…</div>
+                )}
+
+                {versions && versions.length === 0 && (
+                  <div className="text-xs text-gray-500 dark:text-gray-400">No previous versions yet.</div>
+                )}
+
+                {/* Previous versions */}
+                {versions?.map((version) => (
+                  <div
+                    key={version._id}
+                    className={`rounded border p-2 ${
+                      version.pinned
+                        ? "border-yellow-300 bg-yellow-50 dark:border-yellow-700 dark:bg-yellow-950"
+                        : "border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={async () => {
+                            await toggleVersionPinned({ versionId: version._id });
+                            showSuccess(version.pinned ? "Version unpinned" : "Version pinned");
+                          }}
+                          className={`rounded p-0.5 transition-colors ${
+                            version.pinned
+                              ? "text-yellow-500 hover:text-yellow-600"
+                              : "text-gray-400 hover:text-yellow-500"
+                          }`}
+                          title={version.pinned ? "Unpin version (allows auto-deletion)" : "Pin version (prevents auto-deletion)"}
+                        >
+                          <svg className="h-4 w-4" fill={version.pinned ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                          </svg>
+                        </button>
+                        <span className="font-mono text-xs text-gray-700 dark:text-gray-300">
+                          {version.commitHash.slice(0, 7)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          {new Date(version.versionCreatedAt).toLocaleDateString()}
+                        </span>
+                        <a
+                          href={version.pdfUrl || "#"}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                        >
+                          View
+                        </a>
+                      </div>
+                    </div>
+                    {version.fileSize && (
+                      <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        {(version.fileSize / 1024 / 1024).toFixed(2)} MB
+                        {version.pageCount && ` · ${version.pageCount} pages`}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

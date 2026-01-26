@@ -114,7 +114,6 @@ export default defineSchema({
 
     title: v.string(),
     authors: v.optional(v.array(v.string())),
-    abstract: v.optional(v.string()),
 
     // PDF storage
     pdfFileId: v.optional(v.id("_storage")),

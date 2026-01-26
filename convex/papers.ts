@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
 import { auth } from "./auth";
 import { validateFilePath, validatePaperFieldsOrThrow, validateTitleOrThrow } from "./lib/validation";
@@ -96,11 +97,20 @@ export const list = query({
       const isUpToDate = determineIfUpToDate(paper, repository);
 
       return {
-        ...paper,
+        _id: paper._id,
+        _creationTime: paper._creationTime,
+        title: paper.title,
+        authors: paper.authors,
         thumbnailUrl,
         pdfUrl,
         isUpToDate,
         pdfSourceType: trackedFile?.pdfSourceType ?? null,
+        buildStatus: paper.buildStatus,
+        compilationProgress: paper.compilationProgress,
+        lastSyncError: paper.lastSyncError,
+        isPublic: paper.isPublic,
+        lastAffectedCommitTime: paper.lastAffectedCommitTime,
+        updatedAt: paper.updatedAt,
         repository: repository
           ? {
               _id: repository._id,
@@ -108,9 +118,7 @@ export const list = query({
               gitUrl: repository.gitUrl,
               provider: repository.provider,
               lastSyncedAt: repository.lastSyncedAt,
-              lastCommitHash: repository.lastCommitHash,
               lastCommitTime: repository.lastCommitTime,
-              lastCommitAuthor: repository.lastCommitAuthor,
               syncStatus: repository.syncStatus,
             }
           : null,
@@ -459,33 +467,57 @@ export const togglePublicForMobile = internalMutation({
   },
 });
 
-// Get public papers (for gallery)
+// Get public papers (for gallery) with pagination
 export const listPublic = query({
-  handler: async (ctx) => {
-    const papers = await ctx.db
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, args) => {
+    const paginatedResult = await ctx.db
       .query("papers")
       .withIndex("by_public", (q) => q.eq("isPublic", true))
-      .collect();
+      .order("desc")
+      .paginate(args.paginationOpts);
 
-    const enrichedPapers = await Promise.all(
-      papers.map(async (paper) => {
-        const thumbnailUrl = paper.thumbnailFileId
-          ? await ctx.storage.getUrl(paper.thumbnailFileId)
-          : null;
+    const papers = paginatedResult.page;
 
-        return {
-          ...paper,
-          thumbnailUrl,
-        };
-      })
+    // Batch fetch all storage URLs upfront to avoid N+1 queries
+    const thumbnailIds = papers
+      .filter((p) => p.thumbnailFileId)
+      .map((p) => p.thumbnailFileId!);
+    const pdfIds = papers
+      .filter((p) => p.pdfFileId)
+      .map((p) => p.pdfFileId!);
+
+    const [thumbnailUrls, pdfUrls] = await Promise.all([
+      Promise.all(thumbnailIds.map((id) => ctx.storage.getUrl(id))),
+      Promise.all(pdfIds.map((id) => ctx.storage.getUrl(id))),
+    ]);
+
+    const thumbnailUrlMap = new Map(
+      thumbnailIds.map((id, i) => [id, thumbnailUrls[i]])
     );
+    const pdfUrlMap = new Map(pdfIds.map((id, i) => [id, pdfUrls[i]]));
 
-    // Sort by last affected time (when dependencies changed), falling back to updatedAt
-    return enrichedPapers.sort((a, b) => {
-      const aTime = a.lastAffectedCommitTime ?? a.updatedAt;
-      const bTime = b.lastAffectedCommitTime ?? b.updatedAt;
-      return bTime - aTime;
-    });
+    // Now enrich synchronously - no await needed inside the map
+    const enrichedPapers = papers.map((paper) => ({
+      _id: paper._id,
+      _creationTime: paper._creationTime,
+      title: paper.title,
+      authors: paper.authors,
+      thumbnailUrl: paper.thumbnailFileId
+        ? thumbnailUrlMap.get(paper.thumbnailFileId) ?? null
+        : null,
+      pdfUrl: paper.pdfFileId
+        ? pdfUrlMap.get(paper.pdfFileId) ?? null
+        : null,
+      isPublic: paper.isPublic,
+      lastAffectedCommitTime: paper.lastAffectedCommitTime,
+      updatedAt: paper.updatedAt,
+    }));
+
+    return {
+      ...paginatedResult,
+      page: enrichedPapers,
+    };
   },
 });
 
@@ -572,7 +604,10 @@ export const getByShareSlug = query({
       : null;
 
     return {
-      ...paper,
+      _id: paper._id,
+      _creationTime: paper._creationTime,
+      title: paper.title,
+      authors: paper.authors,
       thumbnailUrl,
       pdfUrl,
     };
@@ -585,7 +620,6 @@ export const update = mutation({
     id: v.id("papers"),
     title: v.optional(v.string()),
     authors: v.optional(v.array(v.string())),
-    abstract: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // Authorization check: verify the caller owns this paper
@@ -619,7 +653,7 @@ export const update = mutation({
     }
 
     // Validate field lengths to prevent storage abuse
-    validatePaperFieldsOrThrow({ title: args.title, abstract: args.abstract, authors: args.authors });
+    validatePaperFieldsOrThrow({ title: args.title, authors: args.authors });
 
     const { id, ...updates } = args;
     const filteredUpdates = Object.fromEntries(
@@ -823,12 +857,12 @@ export const listTrackedFiles = query({
           .query("papers")
           .withIndex("by_tracked_file", (q) => q.eq("trackedFileId", file._id))
           .first();
-        return { ...file, paper };
+        return paper ? { _id: file._id, filePath: file.filePath } : null;
       })
     );
 
     // Only return tracked files that have an associated paper
-    return filesWithPapers.filter((f) => f.paper !== null);
+    return filesWithPapers.filter((f): f is NonNullable<typeof f> => f !== null);
   },
 });
 
@@ -1001,21 +1035,30 @@ export const listVersions = query({
       .withIndex("by_paper", (q) => q.eq("paperId", args.paperId))
       .collect();
 
-    // Enrich with PDF URLs and sort by date (newest first)
-    const enrichedVersions = await Promise.all(
-      versions.map(async (version) => {
-        const pdfUrl = await ctx.storage.getUrl(version.pdfFileId);
-        const thumbnailUrl = version.thumbnailFileId
-          ? await ctx.storage.getUrl(version.thumbnailFileId)
-          : null;
+    // Batch fetch all storage URLs upfront to avoid N+1 queries
+    const pdfIds = versions.map((v) => v.pdfFileId);
+    const thumbnailIds = versions
+      .filter((v) => v.thumbnailFileId)
+      .map((v) => v.thumbnailFileId!);
 
-        return {
-          ...version,
-          pdfUrl,
-          thumbnailUrl,
-        };
-      })
+    const [pdfUrls, thumbnailUrls] = await Promise.all([
+      Promise.all(pdfIds.map((id) => ctx.storage.getUrl(id))),
+      Promise.all(thumbnailIds.map((id) => ctx.storage.getUrl(id))),
+    ]);
+
+    const pdfUrlMap = new Map(pdfIds.map((id, i) => [id, pdfUrls[i]]));
+    const thumbnailUrlMap = new Map(
+      thumbnailIds.map((id, i) => [id, thumbnailUrls[i]])
     );
+
+    // Enrich synchronously and sort by date (newest first)
+    const enrichedVersions = versions.map((version) => ({
+      ...version,
+      pdfUrl: pdfUrlMap.get(version.pdfFileId) ?? null,
+      thumbnailUrl: version.thumbnailFileId
+        ? thumbnailUrlMap.get(version.thumbnailFileId) ?? null
+        : null,
+    }));
 
     return enrichedVersions.sort((a, b) => b.versionCreatedAt - a.versionCreatedAt);
   },

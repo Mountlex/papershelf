@@ -76,11 +76,6 @@ function SharePage() {
         {paper.authors && paper.authors.length > 0 && (
           <p className="mt-1 text-gray-600 dark:text-gray-400">by {paper.authors.join(", ")}</p>
         )}
-        {paper.abstract && (
-          <p className="mx-auto mt-4 max-w-2xl text-sm text-gray-600 dark:text-gray-400">
-            {paper.abstract}
-          </p>
-        )}
         {paper.pdfUrl && (
           <div className="mt-4">
             <a

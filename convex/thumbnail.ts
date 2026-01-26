@@ -234,11 +234,25 @@ export const generateThumbnailForPaper = action({
 });
 
 // Get papers that need thumbnails (have PDF but no thumbnail)
+// Limited to 100 papers per batch to avoid memory issues on large datasets
 export const getPapersNeedingThumbnails = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    const papers = await ctx.db.query("papers").collect();
-    return papers.filter((p) => p.pdfFileId && !p.thumbnailFileId);
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const batchLimit = args.limit ?? 100;
+    const papers: Array<{
+      _id: typeof import("./_generated/dataModel").Id<"papers">;
+      pdfFileId: typeof import("./_generated/dataModel").Id<"_storage">;
+    }> = [];
+
+    // Stream through papers with early termination once we have enough
+    for await (const paper of ctx.db.query("papers")) {
+      if (paper.pdfFileId && !paper.thumbnailFileId) {
+        papers.push({ _id: paper._id, pdfFileId: paper.pdfFileId });
+        if (papers.length >= batchLimit) break;
+      }
+    }
+
+    return papers;
   },
 });
 

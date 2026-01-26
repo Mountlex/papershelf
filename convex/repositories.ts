@@ -22,52 +22,58 @@ export const list = query({
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .collect();
 
-    // Enrich with sync status based on papers
-    const enrichedRepos = await Promise.all(
-      repositories.map(async (repo) => {
-        // Get papers for this repository
-        const papers = await ctx.db
+    // Batch-load all papers for all repositories upfront to avoid N+1 queries
+    const repoIds = repositories.map((r) => r._id);
+    const allPapersArrays = await Promise.all(
+      repoIds.map((id) =>
+        ctx.db
           .query("papers")
-          .withIndex("by_repository", (q) => q.eq("repositoryId", repo._id))
-          .collect();
-
-        // Determine sync status:
-        // - "no_papers" if no papers are tracked
-        // - "in_sync" if all papers have needsSync=false and have pdfFileId
-        // - "needs_sync" if any paper needs syncing
-        // - "never_synced" if repo has no lastCommitHash yet
-        let paperSyncStatus: "no_papers" | "in_sync" | "needs_sync" | "never_synced" = "no_papers";
-
-        if (papers.length === 0) {
-          paperSyncStatus = "no_papers";
-        } else if (!repo.lastCommitHash) {
-          paperSyncStatus = "never_synced";
-        } else {
-          // Check if all papers are in sync
-          // A paper is in sync if it has a PDF and either:
-          // - needsSync is explicitly false, OR
-          // - needsSync is undefined and cachedCommitHash matches (fallback for existing papers)
-          const allInSync = papers.every((paper) => {
-            if (!paper.pdfFileId) return false;
-            if (paper.needsSync === true) return false;
-            if (paper.needsSync === false) return true;
-            // Fallback for papers without needsSync set
-            return paper.cachedCommitHash === repo.lastCommitHash;
-          });
-          paperSyncStatus = allInSync ? "in_sync" : "needs_sync";
-        }
-
-        // Count papers with errors
-        const papersWithErrors = papers.filter((p) => p.lastSyncError).length;
-
-        return {
-          ...repo,
-          paperSyncStatus,
-          paperCount: papers.length,
-          papersWithErrors,
-        };
-      })
+          .withIndex("by_repository", (q) => q.eq("repositoryId", id))
+          .collect()
+      )
     );
+    const papersByRepo = new Map(repoIds.map((id, i) => [id, allPapersArrays[i]]));
+
+    // Now enrich synchronously - no await needed inside the map
+    const enrichedRepos = repositories.map((repo) => {
+      const papers = papersByRepo.get(repo._id) ?? [];
+
+      // Determine sync status:
+      // - "no_papers" if no papers are tracked
+      // - "in_sync" if all papers have needsSync=false and have pdfFileId
+      // - "needs_sync" if any paper needs syncing
+      // - "never_synced" if repo has no lastCommitHash yet
+      let paperSyncStatus: "no_papers" | "in_sync" | "needs_sync" | "never_synced" = "no_papers";
+
+      if (papers.length === 0) {
+        paperSyncStatus = "no_papers";
+      } else if (!repo.lastCommitHash) {
+        paperSyncStatus = "never_synced";
+      } else {
+        // Check if all papers are in sync
+        // A paper is in sync if it has a PDF and either:
+        // - needsSync is explicitly false, OR
+        // - needsSync is undefined and cachedCommitHash matches (fallback for existing papers)
+        const allInSync = papers.every((paper) => {
+          if (!paper.pdfFileId) return false;
+          if (paper.needsSync === true) return false;
+          if (paper.needsSync === false) return true;
+          // Fallback for papers without needsSync set
+          return paper.cachedCommitHash === repo.lastCommitHash;
+        });
+        paperSyncStatus = allInSync ? "in_sync" : "needs_sync";
+      }
+
+      // Count papers with errors
+      const papersWithErrors = papers.filter((p) => p.lastSyncError).length;
+
+      return {
+        ...repo,
+        paperSyncStatus,
+        paperCount: papers.length,
+        papersWithErrors,
+      };
+    });
 
     return enrichedRepos;
   },

@@ -46,14 +46,16 @@ export async function deletePaperAndAssociatedData(
   if (paper.pdfFileId) storageIdsToDelete.push(paper.pdfFileId);
   if (paper.thumbnailFileId) storageIdsToDelete.push(paper.thumbnailFileId);
 
-  // Delete storage files (with error handling for already-deleted files)
-  for (const storageId of storageIdsToDelete) {
-    try {
-      await ctx.storage.delete(storageId);
-    } catch {
-      // Storage file may already be deleted, continue
-    }
-  }
+  // Delete storage files in parallel (with error handling for already-deleted files)
+  await Promise.all(
+    storageIdsToDelete.map(async (storageId) => {
+      try {
+        await ctx.storage.delete(storageId);
+      } catch {
+        // Storage file may already be deleted, continue
+      }
+    })
+  );
 
   // Delete the paper
   await ctx.db.delete(paper._id);

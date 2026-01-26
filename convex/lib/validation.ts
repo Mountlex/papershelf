@@ -56,7 +56,6 @@ export function validatePasswordOrThrow(password: string, email?: string): void 
 // Paper field validation limits
 export const PAPER_VALIDATION_LIMITS = {
   title: { maxLength: 500 },
-  abstract: { maxLength: 10000 },
   authors: { maxCount: 50, maxNameLength: 200 },
 };
 
@@ -77,16 +76,6 @@ export function validateTitleOrThrow(title: string): void {
 }
 
 /**
- * Validates a paper abstract.
- * @param abstract - The abstract to validate
- * @throws Error if abstract exceeds maximum length
- */
-export function validateAbstractOrThrow(abstract: string): void {
-  if (abstract.length > PAPER_VALIDATION_LIMITS.abstract.maxLength) {
-    throw new Error(`Abstract must be ${PAPER_VALIDATION_LIMITS.abstract.maxLength.toLocaleString()} characters or less`);
-  }
-}
-
 /**
  * Validates paper authors array.
  * @param authors - The authors array to validate
@@ -105,19 +94,15 @@ export function validateAuthorsOrThrow(authors: string[]): void {
 
 /**
  * Validates multiple paper fields at once.
- * @param fields - Object containing optional title, abstract, and authors
+ * @param fields - Object containing optional title and authors
  * @throws Error if any field fails validation
  */
 export function validatePaperFieldsOrThrow(fields: {
   title?: string;
-  abstract?: string;
   authors?: string[];
 }): void {
   if (fields.title !== undefined) {
     validateTitleOrThrow(fields.title);
-  }
-  if (fields.abstract !== undefined) {
-    validateAbstractOrThrow(fields.abstract);
   }
   if (fields.authors !== undefined) {
     validateAuthorsOrThrow(fields.authors);
