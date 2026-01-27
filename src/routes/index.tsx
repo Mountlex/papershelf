@@ -41,6 +41,7 @@ function GalleryPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [sortBy, setSortBy] = useState<"recent" | "least-recent" | "a-z" | "repository">("recent");
+  const [showMobileSearch, setShowMobileSearch] = useState(false);
 
   // Toast state using hook
   const { toast, showError, showToast, clearToast } = useToast();
@@ -185,6 +186,18 @@ function GalleryPage() {
       }
     },
     [uploadFile, showToast]
+  );
+
+  // Handle rejected files from DropZone
+  const handleFileReject = useCallback(
+    (rejectedFiles: { file: File; reason: string }[]) => {
+      if (rejectedFiles.length === 1) {
+        showToast(`"${rejectedFiles[0].file.name}" is not a PDF file`, "error");
+      } else {
+        showToast(`${rejectedFiles.length} files were not PDF files`, "error");
+      }
+    },
+    [showToast]
   );
 
   const clearFilters = () => {
@@ -373,6 +386,23 @@ function GalleryPage() {
         <div className="flex items-center justify-between">
           <h1 className="font-serif text-2xl font-normal text-gray-900 dark:text-gray-100">Your Papers</h1>
           <div className="flex items-center gap-1 md:gap-3">
+            {/* Mobile search toggle */}
+            <button
+              onClick={() => setShowMobileSearch(!showMobileSearch)}
+              className="inline-flex items-center justify-center rounded-md border border-gray-200 bg-gray-50/50 p-2 text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-400 dark:hover:bg-gray-800 md:hidden"
+              aria-label={showMobileSearch ? "Close search" : "Open search"}
+              aria-expanded={showMobileSearch}
+            >
+              {showMobileSearch ? (
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              ) : (
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              )}
+            </button>
             {/* Search - desktop only */}
             <div className="relative hidden md:block">
               <input
@@ -487,12 +517,40 @@ function GalleryPage() {
             </button>
           </div>
         </div>
+
+        {/* Mobile search bar */}
+        {showMobileSearch && (
+          <div className="mt-4 md:hidden">
+            <div className="relative">
+              <input
+                ref={searchInputRef}
+                type="text"
+                placeholder="Search papers..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                autoFocus
+                className="w-full rounded-md border border-gray-200 bg-gray-50/50 px-3 py-2 pr-8 text-sm placeholder:text-gray-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-100 dark:placeholder:text-gray-500 dark:focus:bg-gray-800"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  aria-label="Clear search"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
 
       <LiveRegion message={searchResultsMessage} />
 
-      <DropZone onDrop={handleFileDrop} className="min-h-[200px]">
+      <DropZone onDrop={handleFileDrop} onReject={handleFileReject} className="min-h-[200px]">
       {papers === undefined ? (
         <PaperCardSkeletonGrid count={8} />
       ) : papers.length === 0 ? (

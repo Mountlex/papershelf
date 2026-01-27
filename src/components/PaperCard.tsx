@@ -138,7 +138,7 @@ export function PaperCard({
               <button
                 onClick={(e) => onDeleteClick(e, paper._id)}
                 className="shrink-0 rounded p-0.5 text-gray-400 opacity-0 transition-opacity hover:bg-red-100 hover:text-red-600 group-hover:opacity-100 focus:opacity-100 focus-visible:opacity-100 dark:hover:bg-red-900/30"
-                title="Delete"
+                title="Delete this paper permanently"
                 aria-label={`Delete ${paper.title}`}
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">

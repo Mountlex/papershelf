@@ -88,36 +88,37 @@ export function AddRepositoryModal({
 
   const getRepositoryErrorMessage = (err: unknown): string => {
     const message = err instanceof Error ? err.message : "";
+    const lowerMessage = message.toLowerCase();
 
     // Provide user-friendly messages for common patterns, otherwise show the detailed backend error
-    if (message.includes("already") || message.includes("exists") || message.includes("duplicate")) {
+    if (lowerMessage.includes("already") || lowerMessage.includes("exists") || lowerMessage.includes("duplicate")) {
       return "This repository has already been added to your collection.";
     }
 
     // For self-hosted GitLab, the backend provides detailed messages - show them directly
-    if (message.includes("Self-hosted") || message.includes("self-hosted") ||
-        message.includes("PAT") || message.includes("Personal Access Token")) {
+    if (lowerMessage.includes("self-hosted") ||
+        lowerMessage.includes("pat") || lowerMessage.includes("personal access token")) {
       return message;
     }
 
     // For other detailed backend messages (containing specific info), show them directly
     if (message.length > 50 && (
-      message.includes("Repository not found") ||
-      message.includes("Authentication failed") ||
-      message.includes("Access denied") ||
-      message.includes("Could not")
+      lowerMessage.includes("repository not found") ||
+      lowerMessage.includes("authentication failed") ||
+      lowerMessage.includes("access denied") ||
+      lowerMessage.includes("could not")
     )) {
       return message;
     }
 
     // Generic fallbacks for terse error messages
-    if (message.includes("401") || message.includes("403") || message.includes("permission")) {
+    if (lowerMessage.includes("401") || lowerMessage.includes("403") || lowerMessage.includes("permission")) {
       return "Unable to access this repository. Please check your permissions.";
     }
-    if (message.includes("404") || message.includes("not found")) {
+    if (lowerMessage.includes("404") || lowerMessage.includes("not found")) {
       return "Repository not found. Please check the URL and try again.";
     }
-    if (message.includes("network") || message.includes("fetch")) {
+    if (lowerMessage.includes("network") || lowerMessage.includes("fetch")) {
       return "Network error. Please check your connection and try again.";
     }
 
@@ -182,7 +183,7 @@ export function AddRepositoryModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-lg bg-white shadow-xl dark:bg-gray-800">
+      <div className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-lg bg-white shadow-xl dark:bg-gray-800">
         <div className="flex items-center justify-between border-b p-4 dark:border-gray-700">
           <h2 className="text-lg font-normal text-gray-900 dark:text-gray-100">Add Repository</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">

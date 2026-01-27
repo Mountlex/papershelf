@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, memo } from "react";
 import type { Repository } from "./types";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { formatDateTime } from "../../lib/formatters";
@@ -262,7 +262,7 @@ export function RepositoryCard({
   );
 }
 
-function SyncStatusBadge({ repo }: { repo: Repository }) {
+const SyncStatusBadge = memo(function SyncStatusBadge({ repo }: { repo: Repository }) {
   if (repo.syncStatus === "syncing") {
     return (
       <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md bg-warning-50 px-2 py-0.5 text-xs font-medium text-warning-700 dark:bg-warning-500/20 dark:text-warning-400">
@@ -305,4 +305,4 @@ function SyncStatusBadge({ repo }: { repo: Repository }) {
     );
   }
   return null;
-}
+});

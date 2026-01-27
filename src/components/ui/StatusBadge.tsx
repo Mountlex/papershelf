@@ -55,6 +55,7 @@ export function StatusBadge({
   return (
     <span
       role="status"
+      aria-live="polite"
       aria-label={title || label}
       title={title}
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-normal ${statusStyles[status]} ${className}`}

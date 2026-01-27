@@ -194,7 +194,9 @@ function PaperDetailPage() {
                     ) : (paper.trackedFile?.pdfSourceType === "compile" ? "Compile" : "Fetch")}
                   </button>
                   {isBuilding && paper.compilationProgress && (
-                    <p className="mt-2 text-xs text-blue-600 dark:text-blue-400">{paper.compilationProgress}</p>
+                    <p className="mt-2 text-xs text-blue-600 dark:text-blue-400">
+                      {paper.trackedFile?.pdfSourceType === "compile" ? "Compiling: " : "Fetching: "}{paper.compilationProgress}
+                    </p>
                   )}
                   {buildError && (
                     <div className="mt-2">
@@ -535,13 +537,34 @@ function PaperDetailPage() {
                 />
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(
-                      `${window.location.origin}/share/${paper.shareSlug}`
-                    ).then(() => {
-                      showSuccess("Link copied to clipboard");
-                    }).catch(() => {
-                      showError(null, "Failed to copy link");
-                    });
+                    const shareUrl = `${window.location.origin}/share/${paper.shareSlug}`;
+
+                    // Try modern Clipboard API first, fall back to execCommand
+                    if (navigator.clipboard && window.isSecureContext) {
+                      navigator.clipboard.writeText(shareUrl).then(() => {
+                        showSuccess("Link copied to clipboard");
+                      }).catch(() => {
+                        showError(null, "Failed to copy link");
+                      });
+                    } else {
+                      // Fallback for browsers without Clipboard API
+                      const textArea = document.createElement("textarea");
+                      textArea.value = shareUrl;
+                      textArea.style.position = "fixed";
+                      textArea.style.left = "-999999px";
+                      textArea.style.top = "-999999px";
+                      document.body.appendChild(textArea);
+                      textArea.focus();
+                      textArea.select();
+                      try {
+                        document.execCommand("copy");
+                        showSuccess("Link copied to clipboard");
+                      } catch {
+                        showError(null, "Failed to copy link");
+                      } finally {
+                        document.body.removeChild(textArea);
+                      }
+                    }
                   }}
                   className="rounded bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-700"
                   aria-label="Copy share link to clipboard"

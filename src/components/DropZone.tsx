@@ -1,8 +1,14 @@
 import { useState, useCallback, type ReactNode, type DragEvent } from "react";
 
+interface RejectedFile {
+  file: File;
+  reason: string;
+}
+
 interface DropZoneProps {
   children: ReactNode;
   onDrop: (files: File[]) => void;
+  onReject?: (rejectedFiles: RejectedFile[]) => void;
   accept?: string;
   className?: string;
 }
@@ -10,6 +16,7 @@ interface DropZoneProps {
 export function DropZone({
   children,
   onDrop,
+  onReject,
   accept = ".pdf",
   className = "",
 }: DropZoneProps) {
@@ -42,16 +49,30 @@ export function DropZone({
       const files = Array.from(e.dataTransfer.files);
       const acceptedExtensions = accept.split(",").map((ext) => ext.trim().toLowerCase());
 
-      const validFiles = files.filter((file) => {
+      const validFiles: File[] = [];
+      const rejectedFiles: RejectedFile[] = [];
+
+      files.forEach((file) => {
         const extension = `.${file.name.split(".").pop()?.toLowerCase()}`;
-        return acceptedExtensions.includes(extension) || acceptedExtensions.includes("*");
+        if (acceptedExtensions.includes(extension) || acceptedExtensions.includes("*")) {
+          validFiles.push(file);
+        } else {
+          rejectedFiles.push({
+            file,
+            reason: `File type not accepted. Expected: ${accept}`,
+          });
+        }
       });
 
       if (validFiles.length > 0) {
         onDrop(validFiles);
       }
+
+      if (rejectedFiles.length > 0 && onReject) {
+        onReject(rejectedFiles);
+      }
     },
-    [accept, onDrop]
+    [accept, onDrop, onReject]
   );
 
   return (

@@ -50,6 +50,7 @@ function ProfilePage() {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSuccess, setPasswordSuccess] = useState(false);
+  const [codeSentSuccess, setCodeSentSuccess] = useState(false);
 
   // Overleaf setup modal state
   const [showOverleafSetup, setShowOverleafSetup] = useState(false);
@@ -89,9 +90,12 @@ function ProfilePage() {
   const handleSendPasswordCode = async () => {
     setPasswordLoading(true);
     setPasswordError(null);
+    setCodeSentSuccess(false);
     try {
       await requestPasswordChangeCode();
       setPasswordMode("enterCode");
+      setCodeSentSuccess(true);
+      setTimeout(() => setCodeSentSuccess(false), 5000);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to send code";
       if (message.includes("No password account")) {
@@ -247,6 +251,11 @@ function ProfilePage() {
               <p className="text-sm text-gray-600 dark:text-gray-400">
                 We sent a verification code to <strong>{user?.email}</strong>
               </p>
+              {codeSentSuccess && (
+                <p className="text-sm text-green-600 dark:text-green-400">
+                  Verification code sent successfully. Please check your email.
+                </p>
+              )}
               <div>
                 <input
                   type="text"

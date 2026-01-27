@@ -20,7 +20,55 @@ export const Route = createFileRoute("/share/$slug")({
     ],
   }),
   component: SharePage,
+  errorComponent: SharePageError,
 });
+
+function SharePageError({ error }: { error: Error }) {
+  const isNetworkError = error.message?.toLowerCase().includes("network") ||
+                         error.message?.toLowerCase().includes("fetch");
+
+  return (
+    <div className="flex flex-col items-center justify-center py-12">
+      <div className="mb-4 rounded-full bg-red-100 p-4 dark:bg-red-900/30">
+        <svg
+          className="h-8 w-8 text-red-600 dark:text-red-400"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+          />
+        </svg>
+      </div>
+      <h2 className="text-lg font-normal text-gray-900 dark:text-gray-100">
+        {isNetworkError ? "Connection Error" : "Unable to Load Paper"}
+      </h2>
+      <p className="mt-2 max-w-md text-center text-sm text-gray-500 dark:text-gray-400">
+        {isNetworkError
+          ? "Please check your internet connection and try again."
+          : "This paper may have been made private, deleted, or there was an error loading it."}
+      </p>
+      <div className="mt-4 flex gap-3">
+        <button
+          onClick={() => window.location.reload()}
+          className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-normal text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+        >
+          Try Again
+        </button>
+        <Link
+          to="/"
+          className="rounded-md bg-gray-900 px-4 py-2 text-sm font-normal text-white hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200"
+        >
+          Go to Carrel
+        </Link>
+      </div>
+    </div>
+  );
+}
 
 function SharePage() {
   const { slug } = Route.useParams();

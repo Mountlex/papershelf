@@ -236,7 +236,7 @@ function RootComponent() {
                 <div id="recovery-modal-description">
                   <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
                     The account linking session has expired or was invalid. This can happen if you took
-                    more than 10 minutes to complete the OAuth flow, or if you navigated away.
+                    more than 30 seconds to complete the OAuth flow, or if you navigated away.
                   </p>
                   <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
                     You can sign out and try again, or dismiss this message and continue using your
