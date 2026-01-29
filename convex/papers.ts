@@ -544,8 +544,51 @@ export const addTrackedFile = mutation({
       throw new Error(filePathValidation.error);
     }
 
+    const normalizedPath = filePathValidation.normalized;
+
     // Determine file type from extension
-    const fileType = filePathValidation.normalized.endsWith(".pdf") ? "pdf" : "tex";
+    const fileType = normalizedPath.endsWith(".pdf") ? "pdf" : "tex";
+
+    const existingTrackedFile = await ctx.db
+      .query("trackedFiles")
+      .withIndex("by_repository", (q) => q.eq("repositoryId", args.repositoryId))
+      .filter((q) => q.eq(q.field("filePath"), normalizedPath))
+      .first();
+
+    if (existingTrackedFile) {
+      const patchData: Record<string, unknown> = {
+        isActive: true,
+        pdfSourceType: args.pdfSourceType,
+      };
+
+      if (args.pdfSourceType === "compile") {
+        patchData.compiler = args.compiler ?? "pdflatex";
+      } else {
+        patchData.compiler = undefined;
+      }
+
+      await ctx.db.patch(existingTrackedFile._id, patchData);
+
+      const existingPaper = await ctx.db
+        .query("papers")
+        .withIndex("by_tracked_file", (q) => q.eq("trackedFileId", existingTrackedFile._id))
+        .first();
+
+      if (existingPaper) {
+        return { trackedFileId: existingTrackedFile._id, paperId: existingPaper._id };
+      }
+
+      const paperId = await ctx.db.insert("papers", {
+        repositoryId: args.repositoryId,
+        userId: repository.userId,
+        trackedFileId: existingTrackedFile._id,
+        title: args.title,
+        isPublic: false,
+        updatedAt: Date.now(),
+      });
+
+      return { trackedFileId: existingTrackedFile._id, paperId };
+    }
 
     // Create tracked file
     const trackedFileData: {
@@ -557,7 +600,7 @@ export const addTrackedFile = mutation({
       compiler?: "pdflatex" | "xelatex" | "lualatex";
     } = {
       repositoryId: args.repositoryId,
-      filePath: filePathValidation.normalized, // Use normalized path
+      filePath: normalizedPath, // Use normalized path
       fileType: fileType as "tex" | "pdf",
       pdfSourceType: args.pdfSourceType,
       isActive: true,

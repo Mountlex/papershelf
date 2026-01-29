@@ -233,7 +233,8 @@ export async function fetchUserPapersBase(
       .collect(),
   ]);
 
-  const papers = [...repoPapersArrays.flat(), ...directUploads];
+  const directUploadsOnly = directUploads.filter((paper) => !paper.repositoryId);
+  const papers = [...repoPapersArrays.flat(), ...directUploadsOnly];
 
   const trackedFileIds = [
     ...new Set(papers.filter((p) => p.trackedFileId).map((p) => p.trackedFileId!)),
