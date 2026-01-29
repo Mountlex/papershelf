@@ -27,7 +27,7 @@ interface RateLimitResult {
 
 // Shared rate limit record interface
 interface RateLimitRecord {
-  _id: Id<"emailRateLimits"> | Id<"userRateLimits">;
+  _id: Id<"emailRateLimits">;
   attempts: number;
   windowStart: number;
   lastAttempt: number;
@@ -39,7 +39,6 @@ interface RateLimitRecord {
  * Handles lockout checking, window expiration, and attempt incrementing.
  */
 async function checkRateLimitCore(
-  ctx: MutationCtx,
   config: RateLimitConfig,
   record: RateLimitRecord | null,
   createRecord: () => Promise<void>,
@@ -99,7 +98,6 @@ export async function checkRateLimit(
     .first();
 
   return checkRateLimitCore(
-    ctx,
     config,
     record,
     async () => {
@@ -151,28 +149,48 @@ export async function checkUserRateLimit(
   const config = USER_LIMITS[action];
   const now = Date.now();
 
-  const record = await ctx.db
-    .query("userRateLimits")
+  const lock = await ctx.db
+    .query("userRateLimitLocks")
     .withIndex("by_user_action", (q) =>
       q.eq("userId", userId).eq("action", action)
     )
     .first();
 
-  return checkRateLimitCore(
-    ctx,
-    config,
-    record,
-    async () => {
-      await ctx.db.insert("userRateLimits", {
+  if (lock?.lockedUntil && now < lock.lockedUntil) {
+    return { allowed: false, retryAfter: lock.lockedUntil - now };
+  }
+
+  if (lock?.lockedUntil && now >= lock.lockedUntil) {
+    await ctx.db.delete(lock._id);
+  }
+
+  const windowStart = now - config.windowMs;
+  const attempts = await ctx.db
+    .query("userRateLimitAttempts")
+    .withIndex("by_user_action_time", (q) =>
+      q.eq("userId", userId).eq("action", action).gte("attemptedAt", windowStart)
+    )
+    .collect();
+
+  if (attempts.length >= config.max) {
+    const lockedUntil = now + config.lockoutMs;
+    if (lock) {
+      await ctx.db.patch(lock._id, { lockedUntil });
+    } else {
+      await ctx.db.insert("userRateLimitLocks", {
         userId,
         action,
-        attempts: 1,
-        windowStart: now,
-        lastAttempt: now,
+        lockedUntil,
       });
-    },
-    async (id, updates) => {
-      await ctx.db.patch(id as Id<"userRateLimits">, updates);
     }
-  );
+    return { allowed: false, retryAfter: config.lockoutMs };
+  }
+
+  await ctx.db.insert("userRateLimitAttempts", {
+    userId,
+    action,
+    attemptedAt: now,
+  });
+
+  return { allowed: true, remaining: config.max - attempts.length - 1 };
 }

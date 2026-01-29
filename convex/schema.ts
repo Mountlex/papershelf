@@ -252,6 +252,28 @@ export default defineSchema({
   })
     .index("by_user_action", ["userId", "action"]),
 
+  userRateLimitAttempts: defineTable({
+    userId: v.id("users"),
+    action: v.union(
+      v.literal("refresh_repository"),
+      v.literal("build_paper"),
+      v.literal("refresh_all_repositories")
+    ),
+    attemptedAt: v.number(),
+  })
+    .index("by_user_action_time", ["userId", "action", "attemptedAt"]),
+
+  userRateLimitLocks: defineTable({
+    userId: v.id("users"),
+    action: v.union(
+      v.literal("refresh_repository"),
+      v.literal("build_paper"),
+      v.literal("refresh_all_repositories")
+    ),
+    lockedUntil: v.number(),
+  })
+    .index("by_user_action", ["userId", "action"]),
+
   // Password change codes for authenticated users
   passwordChangeCodes: defineTable({
     userId: v.id("users"),

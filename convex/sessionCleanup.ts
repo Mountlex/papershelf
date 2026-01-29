@@ -31,6 +31,9 @@ export const cleanupExpiredSessions = internalMutation({
       linkIntents: 0,
       passwordChangeCodes: 0,
       emailRateLimits: 0,
+      userRateLimits: 0,
+      userRateLimitAttempts: 0,
+      userRateLimitLocks: 0,
     };
 
     // Clean up old auth sessions (by _creationTime)
@@ -77,6 +80,30 @@ export const cleanupExpiredSessions = internalMutation({
       if (limit.windowStart < rateLimitCutoff) {
         await ctx.db.delete(limit._id);
         counts.emailRateLimits++;
+      }
+    }
+
+    const allUserRateLimits = await ctx.db.query("userRateLimits").collect();
+    for (const limit of allUserRateLimits) {
+      if (limit.windowStart < rateLimitCutoff) {
+        await ctx.db.delete(limit._id);
+        counts.userRateLimits++;
+      }
+    }
+
+    const allUserRateLimitAttempts = await ctx.db.query("userRateLimitAttempts").collect();
+    for (const attempt of allUserRateLimitAttempts) {
+      if (attempt.attemptedAt < rateLimitCutoff) {
+        await ctx.db.delete(attempt._id);
+        counts.userRateLimitAttempts++;
+      }
+    }
+
+    const allUserRateLimitLocks = await ctx.db.query("userRateLimitLocks").collect();
+    for (const lock of allUserRateLimitLocks) {
+      if (lock.lockedUntil < now) {
+        await ctx.db.delete(lock._id);
+        counts.userRateLimitLocks++;
       }
     }
 
