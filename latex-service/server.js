@@ -510,9 +510,11 @@ app.post("/git/refs", rateLimit, async (req, res) => {
         if (fetchResult.success) {
           // Get commit date, message, and author
           // Format: date, author name, author email, subject
+          // Use branch reference instead of SHA - in a bare repo after shallow fetch,
+          // the SHA may not be directly resolvable but the branch ref will be
           const logResult = await spawnAsync(
             "git",
-            ["log", "-1", "--format=%cI%n%an%n%ae%n%s", sha],
+            ["log", "-1", "--format=%cI%n%an%n%ae%n%s", `refs/heads/${targetBranch}`],
             { cwd: workDir, logger: req.log }
           );
 
