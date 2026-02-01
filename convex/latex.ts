@@ -270,10 +270,10 @@ export const compileLatexInternal = internalAction({
         }
       }
 
-      // If no dependencies detected, use just the target file as a minimal dependency
-      if (finalDependencies.length === 0) {
-        finalDependencies = [args.filePath];
-        console.log("No dependencies detected, using target file only");
+      // Always include the target file as a dependency (it might be missing from .fls parsing)
+      if (!finalDependencies.includes(args.filePath)) {
+        finalDependencies.push(args.filePath);
+        console.log(`Added target file ${args.filePath} to dependencies`);
       }
 
       // Store PDF

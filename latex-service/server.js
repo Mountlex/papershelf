@@ -303,20 +303,29 @@ app.post("/compile-from-git", rateLimit, async (req, res) => {
           for (const line of lines) {
             if (line.startsWith("INPUT ")) {
               const inputPath = line.substring(6).trim();
+              let fullPath = null;
               let relativePath = null;
-              if (inputPath.startsWith(flsPwd + "/")) {
-                relativePath = inputPath.substring(flsPwd.length + 1);
-              } else if (inputPath.startsWith(workDir + "/")) {
-                relativePath = inputPath.substring(workDir.length + 1);
+
+              // Resolve the full path based on how it's specified in .fls
+              if (inputPath.startsWith("/")) {
+                // Absolute path - use directly if it's within workDir
+                if (inputPath.startsWith(workDir + "/")) {
+                  fullPath = inputPath;
+                  relativePath = path.relative(workDir, inputPath);
+                }
+                // Skip absolute paths outside workDir (system files)
               } else if (inputPath.startsWith("./")) {
-                relativePath = inputPath.substring(2);
-              } else if (!inputPath.startsWith("/")) {
-                relativePath = inputPath;
+                // Relative to flsPwd (compilation directory)
+                fullPath = path.join(flsPwd, inputPath.substring(2));
+                relativePath = path.relative(workDir, fullPath);
+              } else {
+                // Plain relative path - relative to flsPwd
+                fullPath = path.join(flsPwd, inputPath);
+                relativePath = path.relative(workDir, fullPath);
               }
 
-              if (relativePath && !relativePath.match(/\.(aux|log|fls|fdb_latexmk|out|toc|lof|lot|bbl|blg|bcf|run\.xml)$/)) {
+              if (relativePath && !relativePath.startsWith("..") && !relativePath.match(/\.(aux|log|fls|fdb_latexmk|out|toc|lof|lot|bbl|blg|bcf|run\.xml)$/)) {
                 // Check if file exists in repo (not a system file)
-                const fullPath = path.join(workDir, relativePath);
                 try {
                   await fs.access(fullPath);
                   deps.add(relativePath);
