@@ -34,7 +34,7 @@ struct SettingsView: View {
                 if let user = viewModel.user {
                     HStack(spacing: 16) {
                         // Avatar
-                        if let avatarUrl = user.avatarUrl, let url = URL(string: avatarUrl) {
+                        if let imageUrl = user.image, let url = URL(string: imageUrl) {
                             AsyncImage(url: url) { phase in
                                 switch phase {
                                 case .success(let image):
@@ -57,15 +57,22 @@ struct SettingsView: View {
                                     .font(.headline)
                             }
 
-                            Text(user.email)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                            if let email = user.email {
+                                Text(email)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
 
-                            if !user.providers.isEmpty {
-                                HStack(spacing: 4) {
-                                    ForEach(user.providers, id: \.self) { provider in
-                                        ProviderBadge(provider: provider)
-                                    }
+                            // Show connected providers
+                            HStack(spacing: 4) {
+                                if user.hasGitHubToken == true {
+                                    ProviderBadge(provider: "github")
+                                }
+                                if user.hasGitLabToken == true {
+                                    ProviderBadge(provider: "gitlab")
+                                }
+                                if user.hasOverleafCredentials == true {
+                                    ProviderBadge(provider: "overleaf")
                                 }
                             }
                         }
@@ -104,7 +111,7 @@ struct SettingsView: View {
                 LabeledContent("Version", value: Bundle.main.appVersionString)
                 LabeledContent("Build", value: Bundle.main.buildNumber)
 
-                Link(destination: URL(string: "https://carrel.app")!) {
+                Link(destination: URL(string: "https://carrelapp.com")!) {
                     HStack {
                         Text("Website")
                         Spacer()
@@ -182,6 +189,7 @@ struct ProviderBadge: View {
         switch provider.lowercased() {
         case "github": return "GitHub"
         case "gitlab": return "GitLab"
+        case "overleaf": return "Overleaf"
         default: return provider.capitalized
         }
     }
@@ -190,6 +198,7 @@ struct ProviderBadge: View {
         switch provider.lowercased() {
         case "github": return "network"
         case "gitlab": return "server.rack"
+        case "overleaf": return "leaf"
         default: return "key"
         }
     }

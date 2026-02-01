@@ -9,9 +9,6 @@ final class SettingsViewModel {
     private(set) var error: String?
 
     private let authManager: AuthManager
-    private var client: ConvexClient {
-        ConvexClient(baseURL: AuthManager.baseURL, authManager: authManager)
-    }
 
     init(authManager: AuthManager) {
         self.authManager = authManager
@@ -22,7 +19,7 @@ final class SettingsViewModel {
         defer { isLoading = false }
 
         do {
-            user = try await client.user()
+            user = try await ConvexService.shared.getViewer()
         } catch {
             self.error = error.localizedDescription
         }

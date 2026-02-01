@@ -84,9 +84,9 @@ struct LoginView: View {
         }
         .sheet(isPresented: $showingOAuth) {
             if let provider = selectedProvider {
-                OAuthWebView(provider: provider) { tokens in
+                OAuthWebView(provider: provider) { token in
                     Task {
-                        await authManager.handleOAuthCallback(tokens: tokens)
+                        await authManager.handleOAuthCallback(token: token)
                     }
                     showingOAuth = false
                 }
@@ -128,63 +128,40 @@ struct EmailSignInView: View {
     @Environment(AuthManager.self) private var authManager
     @Environment(\.dismiss) private var dismiss
 
-    @State private var email = ""
-    @State private var password = ""
-    @State private var isSignUp = false
-    @State private var isLoading = false
-    @State private var errorMessage: String?
+    @State private var showingWebAuth = false
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    TextField("Email", text: $email)
-                        .textContentType(.emailAddress)
-                        .keyboardType(.emailAddress)
-                        .autocapitalization(.none)
-                        .autocorrectionDisabled()
+            VStack(spacing: 20) {
+                Spacer()
 
-                    SecureField("Password", text: $password)
-                        .textContentType(isSignUp ? .newPassword : .password)
-                }
+                Image(systemName: "envelope.fill")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.secondary)
 
-                if let errorMessage {
-                    Section {
-                        Text(errorMessage)
-                            .foregroundStyle(.red)
-                    }
-                }
+                Text("Sign in with Email")
+                    .font(.title2)
+                    .fontWeight(.semibold)
 
-                Section {
-                    Button {
-                        Task {
-                            await submit()
-                        }
-                    } label: {
-                        HStack {
-                            Spacer()
-                            if isLoading {
-                                ProgressView()
-                            } else {
-                                Text(isSignUp ? "Create Account" : "Sign In")
-                            }
-                            Spacer()
-                        }
-                    }
-                    .disabled(email.isEmpty || password.isEmpty || isLoading)
-                }
+                Text("You'll be redirected to sign in with your email and password securely.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
 
-                Section {
-                    Button {
-                        isSignUp.toggle()
-                        errorMessage = nil
-                    } label: {
-                        Text(isSignUp ? "Already have an account? Sign In" : "Don't have an account? Sign Up")
-                            .font(.footnote)
-                    }
+                Button {
+                    showingWebAuth = true
+                } label: {
+                    Text("Continue")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
                 }
+                .buttonStyle(.borderedProminent)
+                .padding(.horizontal, 40)
+
+                Spacer()
             }
-            .navigationTitle(isSignUp ? "Create Account" : "Sign In")
+            .navigationTitle("Email Sign In")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -193,27 +170,73 @@ struct EmailSignInView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showingWebAuth) {
+                // Use email provider through OAuth web view
+                EmailWebAuthView { token in
+                    Task {
+                        await authManager.handleOAuthCallback(token: token)
+                    }
+                    showingWebAuth = false
+                    dismiss()
+                }
+            }
         }
     }
+}
 
-    private func submit() async {
-        isLoading = true
-        errorMessage = nil
+/// Web view for email authentication through the mobile-auth page
+struct EmailWebAuthView: View {
+    let onSuccess: (String) -> Void
 
-        do {
-            if isSignUp {
-                try await authManager.signUpWithEmail(email: email, password: password)
-            } else {
-                try await authManager.signInWithEmail(email: email, password: password)
+    @Environment(\.dismiss) private var dismiss
+    @State private var isLoading = true
+    @State private var error: String?
+
+    private var emailAuthURL: URL {
+        var components = URLComponents(url: AuthManager.siteURL.appendingPathComponent("mobile-auth"), resolvingAgainstBaseURL: true)!
+        components.queryItems = [
+            URLQueryItem(name: "provider", value: "email")
+        ]
+        return components.url!
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                WebView(
+                    url: emailAuthURL,
+                    isLoading: $isLoading,
+                    onTokenReceived: { token in
+                        onSuccess(token)
+                    },
+                    onError: { errorMessage in
+                        error = errorMessage
+                    }
+                )
+
+                if isLoading {
+                    ProgressView()
+                        .scaleEffect(1.5)
+                }
             }
-            dismiss()
-        } catch let error as APIError {
-            errorMessage = error.localizedDescription
-        } catch {
-            errorMessage = error.localizedDescription
+            .navigationTitle("Sign In")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
+            .alert("Error", isPresented: .constant(error != nil)) {
+                Button("OK") {
+                    error = nil
+                    dismiss()
+                }
+            } message: {
+                Text(error ?? "Unknown error")
+            }
         }
-
-        isLoading = false
     }
 }
 

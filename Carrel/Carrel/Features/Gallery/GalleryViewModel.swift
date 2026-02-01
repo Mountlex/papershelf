@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 @Observable
 @MainActor
@@ -7,49 +8,139 @@ final class GalleryViewModel {
     private(set) var papers: [Paper] = []
     private(set) var isLoading = false
     private(set) var error: String?
-    private(set) var isRefreshing = false
 
-    private let authManager: AuthManager
-    private var client: ConvexClient {
-        ConvexClient(baseURL: AuthManager.baseURL, authManager: authManager)
-    }
+    /// Whether a "Check All Repositories" sync is in progress
+    private(set) var isSyncing = false
 
-    init(authManager: AuthManager) {
-        self.authManager = authManager
-    }
+    /// Whether a "Refresh All Papers" operation is in progress
+    private(set) var isRefreshingAll = false
 
-    func loadPapers() async {
-        guard !isLoading else { return }
+    /// Progress of the "Refresh All" operation (current, total)
+    private(set) var refreshProgress: (current: Int, total: Int)?
 
+    /// Current toast message to display
+    var toastMessage: ToastMessage?
+
+    private var subscriptionTask: Task<Void, Never>?
+    private var cancellables = Set<AnyCancellable>()
+
+    // MARK: - Subscription Lifecycle
+
+    /// Start subscribing to papers via Convex SDK for real-time updates
+    func startSubscription() {
+        // Cancel any existing subscription
+        stopSubscription()
+
+        print("GalleryViewModel: Starting papers subscription...")
+        print("GalleryViewModel: ConvexService isAuthenticated = \(ConvexService.shared.isAuthenticated)")
+
+        // Set loading state until first subscription update
         isLoading = true
-        error = nil
+
+        // Use async/await pattern as per Convex docs
+        subscriptionTask = Task {
+            do {
+                let papersPublisher = ConvexService.shared.subscribeToPapers()
+
+                for try await latestPapers in papersPublisher.values {
+                    await MainActor.run {
+                        // Only log if count changed
+                        if self.papers.count != latestPapers.count {
+                            print("GalleryViewModel: Papers count changed: \(self.papers.count) -> \(latestPapers.count)")
+                        }
+                        self.papers = latestPapers
+                        if self.isLoading {
+                            self.isLoading = false
+                        }
+                    }
+                }
+                print("GalleryViewModel: Subscription loop ended normally")
+            } catch {
+                print("GalleryViewModel: Subscription error: \(error)")
+                await MainActor.run {
+                    self.error = error.localizedDescription
+                    self.isLoading = false
+                }
+            }
+        }
+    }
+
+    /// Stop the papers subscription
+    func stopSubscription() {
+        subscriptionTask?.cancel()
+        subscriptionTask = nil
+        cancellables.removeAll()
+    }
+
+    // MARK: - Check All Repositories
+
+    /// Check all repositories for updates (equivalent to web app's "Check All")
+    func checkAllRepositories() async {
+        guard !isSyncing else { return }
+
+        isSyncing = true
+        defer { isSyncing = false }
 
         do {
-            papers = try await client.papers()
-        } catch let apiError as APIError {
-            error = apiError.localizedDescription
-            if apiError.isAuthError {
-                // Force re-authentication
-                await authManager.logout()
+            let result = try await ConvexService.shared.checkAllRepositories()
+
+            if result.failed > 0 {
+                toastMessage = ToastMessage(text: "\(result.failed) repos failed", type: .error)
+            } else if result.checked == 0 {
+                toastMessage = ToastMessage(text: "All repos recently checked", type: .info)
+            } else if result.updated > 0 {
+                toastMessage = ToastMessage(text: "\(result.updated) repos updated", type: .success)
+            } else {
+                toastMessage = ToastMessage(text: "All repos up to date", type: .info)
             }
         } catch {
-            self.error = error.localizedDescription
+            toastMessage = ToastMessage(text: "Failed to check repos", type: .error)
+        }
+    }
+
+    // MARK: - Refresh All Papers
+
+    /// Refresh all papers that need sync (equivalent to web app's "Refresh All")
+    func refreshAllPapers() async {
+        let outdated = papers.filter { $0.isUpToDate == false && $0.buildStatus != "building" }
+
+        guard !outdated.isEmpty else {
+            toastMessage = ToastMessage(text: "All papers up to date", type: .info)
+            return
         }
 
-        isLoading = false
+        isRefreshingAll = true
+        refreshProgress = (0, outdated.count)
+
+        var successCount = 0
+        var failCount = 0
+
+        for (index, paper) in outdated.enumerated() {
+            do {
+                try await ConvexService.shared.buildPaper(id: paper.id, force: false)
+                successCount += 1
+            } catch {
+                failCount += 1
+            }
+            refreshProgress = (index + 1, outdated.count)
+        }
+
+        isRefreshingAll = false
+        refreshProgress = nil
+
+        if failCount > 0 {
+            toastMessage = ToastMessage(text: "Refreshed \(successCount), \(failCount) failed", type: .error)
+        } else {
+            toastMessage = ToastMessage(text: "Refreshed \(successCount) papers", type: .success)
+        }
     }
 
-    func refresh() async {
-        isRefreshing = true
-        await loadPapers()
-        isRefreshing = false
-    }
+    // MARK: - Paper Operations
 
     func buildPaper(_ paper: Paper, force: Bool = false) async {
         do {
-            try await client.buildPaper(id: paper.id, force: force)
-            // Reload to get updated status
-            await loadPapers()
+            try await ConvexService.shared.buildPaper(id: paper.id, force: force)
+            // With subscriptions, the paper list will update automatically
         } catch {
             self.error = error.localizedDescription
         }
@@ -57,7 +148,7 @@ final class GalleryViewModel {
 
     func deletePaper(_ paper: Paper) async {
         do {
-            try await client.deletePaper(id: paper.id)
+            try await ConvexService.shared.deletePaper(id: paper.id)
             papers.removeAll { $0.id == paper.id }
         } catch {
             self.error = error.localizedDescription
@@ -66,5 +157,9 @@ final class GalleryViewModel {
 
     func clearError() {
         error = nil
+    }
+
+    func clearToast() {
+        toastMessage = nil
     }
 }

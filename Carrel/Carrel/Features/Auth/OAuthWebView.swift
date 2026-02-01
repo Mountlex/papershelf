@@ -3,7 +3,7 @@ import WebKit
 
 struct OAuthWebView: View {
     let provider: OAuthProvider
-    let onSuccess: (AuthTokens) -> Void
+    let onSuccess: (String) -> Void  // Now receives just the Convex Auth token
 
     @Environment(\.dismiss) private var dismiss
     @State private var isLoading = true
@@ -15,8 +15,8 @@ struct OAuthWebView: View {
                 WebView(
                     url: oauthURL,
                     isLoading: $isLoading,
-                    onTokenReceived: { tokens in
-                        onSuccess(tokens)
+                    onTokenReceived: { token in
+                        onSuccess(token)
                     },
                     onError: { errorMessage in
                         error = errorMessage
@@ -60,7 +60,7 @@ struct OAuthWebView: View {
 struct WebView: UIViewRepresentable {
     let url: URL
     @Binding var isLoading: Bool
-    let onTokenReceived: (AuthTokens) -> Void
+    let onTokenReceived: (String) -> Void  // Now receives just the Convex Auth token
     let onError: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -79,15 +79,21 @@ struct WebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
 
-        // Clear cookies to ensure fresh login
+        // Store URL for loading after cookie clear
+        let urlToLoad = url
+
+        // Clear cookies to ensure fresh login, then load
         let dataStore = WKWebsiteDataStore.default()
-        dataStore.fetchDataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes()) { records in
-            for record in records {
-                dataStore.removeData(ofTypes: record.dataTypes, for: [record]) {}
+        dataStore.removeData(
+            ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+            modifiedSince: Date.distantPast
+        ) {
+            print("WebView cookies cleared, loading URL: \(urlToLoad.absoluteString)")
+            DispatchQueue.main.async {
+                webView.load(URLRequest(url: urlToLoad))
             }
         }
 
-        webView.load(URLRequest(url: url))
         return webView
     }
 
@@ -113,37 +119,48 @@ struct WebView: UIViewRepresentable {
             parent.onError(error.localizedDescription)
         }
 
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            print("WebView didFailProvisionalNavigation: \(error)")
+            print("Failed URL: \(webView.url?.absoluteString ?? "unknown")")
+            parent.isLoading = false
+            parent.onError(error.localizedDescription)
+        }
+
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             // Check for custom scheme callback
             if let url = navigationAction.request.url,
                url.scheme == "carrel",
                url.host == "auth" {
-                // Parse tokens from URL
+                // Parse token from URL - now just a single Convex Auth token
                 if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
                    let queryItems = components.queryItems {
-                    var accessToken: String?
-                    var refreshToken: String?
-                    var expiresAt: Double?
-                    var refreshExpiresAt: Double?
-
-                    for item in queryItems {
-                        switch item.name {
-                        case "accessToken": accessToken = item.value
-                        case "refreshToken": refreshToken = item.value
-                        case "expiresAt": expiresAt = Double(item.value ?? "")
-                        case "refreshExpiresAt": refreshExpiresAt = Double(item.value ?? "")
-                        default: break
-                        }
+                    // Check for errors first
+                    if let errorItem = queryItems.first(where: { $0.name == "error" }),
+                       let errorMessage = errorItem.value {
+                        parent.onError(errorMessage)
+                        decisionHandler(.cancel)
+                        return
                     }
 
-                    if let accessToken = accessToken, let expiresAt = expiresAt {
-                        let tokens = AuthTokens(
-                            accessToken: accessToken,
-                            refreshToken: refreshToken,
-                            expiresAt: Date(timeIntervalSince1970: expiresAt / 1000),
-                            refreshExpiresAt: refreshExpiresAt.map { Date(timeIntervalSince1970: $0 / 1000) }
-                        )
-                        parent.onTokenReceived(tokens)
+                    // Check for cancelled
+                    if queryItems.contains(where: { $0.name == "cancelled" }) {
+                        parent.onError("Authentication cancelled")
+                        decisionHandler(.cancel)
+                        return
+                    }
+
+                    // Get the Convex Auth token (single token)
+                    if let tokenItem = queryItems.first(where: { $0.name == "token" }),
+                       let token = tokenItem.value {
+                        parent.onTokenReceived(token)
+                    } else {
+                        // Fallback: support legacy format with accessToken
+                        if let accessTokenItem = queryItems.first(where: { $0.name == "accessToken" }),
+                           let accessToken = accessTokenItem.value {
+                            parent.onTokenReceived(accessToken)
+                        } else {
+                            parent.onError("No authentication token received")
+                        }
                     }
                 }
 
@@ -166,22 +183,20 @@ struct WebView: UIViewRepresentable {
                 return
             }
 
-            guard let accessToken = body["accessToken"] as? String,
-                  let expiresAt = body["expiresAt"] as? Double else {
-                parent.onError("Invalid token response")
+            // Check for new format (single token)
+            if let token = body["token"] as? String {
+                parent.onTokenReceived(token)
                 return
             }
 
-            let refreshToken = body["refreshToken"] as? String
-            let refreshExpiresAt = body["refreshExpiresAt"] as? Double
+            // Fallback: support legacy format with accessToken
+            if let accessToken = body["accessToken"] as? String {
+                parent.onTokenReceived(accessToken)
+                return
+            }
 
-            let tokens = AuthTokens(
-                accessToken: accessToken,
-                refreshToken: refreshToken,
-                expiresAt: Date(timeIntervalSince1970: expiresAt / 1000),
-                refreshExpiresAt: refreshExpiresAt.map { Date(timeIntervalSince1970: $0 / 1000) }
-            )
-            parent.onTokenReceived(tokens)
+            parent.onError("Invalid token response")
         }
     }
 }
+

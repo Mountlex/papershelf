@@ -5,10 +5,42 @@ struct PaperDetailView: View {
     @State private var viewModel: PaperViewModel
     @State private var showingShareSheet = false
     @State private var showingEditSheet = false
+    @State private var shareFileURL: URL?
+    @State private var isPreparingShare = false
     @Environment(\.dismiss) private var dismiss
 
-    init(paper: Paper, authManager: AuthManager) {
-        _viewModel = State(initialValue: PaperViewModel(paper: paper, authManager: authManager))
+    init(paper: Paper) {
+        _viewModel = State(initialValue: PaperViewModel(paper: paper))
+    }
+
+    private func prepareShareFile() async {
+        guard let pdfUrlString = viewModel.paper.pdfUrl,
+              let pdfUrl = URL(string: pdfUrlString) else { return }
+
+        isPreparingShare = true
+        defer { isPreparingShare = false }
+
+        do {
+            // Download the PDF
+            let data = try await PDFCache.shared.fetchPDF(from: pdfUrl)
+
+            // Create filename from paper title
+            let title = viewModel.paper.title ?? "Paper"
+            let sanitizedTitle = title
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+            let filename = "\(sanitizedTitle).pdf"
+
+            // Save to temp directory
+            let tempDir = FileManager.default.temporaryDirectory
+            let fileURL = tempDir.appendingPathComponent(filename)
+            try data.write(to: fileURL)
+
+            shareFileURL = fileURL
+            showingShareSheet = true
+        } catch {
+            print("Failed to prepare share file: \(error)")
+        }
     }
 
     var body: some View {
@@ -32,11 +64,17 @@ struct PaperDetailView: View {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button {
-                        showingShareSheet = true
+                        Task {
+                            await prepareShareFile()
+                        }
                     } label: {
-                        Label("Share", systemImage: "square.and.arrow.up")
+                        if isPreparingShare {
+                            Label("Preparing...", systemImage: "ellipsis")
+                        } else {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
                     }
-                    .disabled(viewModel.paper.pdfUrl == nil)
+                    .disabled(viewModel.paper.pdfUrl == nil || isPreparingShare)
 
                     Button {
                         showingEditSheet = true
@@ -66,9 +104,15 @@ struct PaperDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingShareSheet) {
-            if let pdfUrl = viewModel.paper.pdfUrl, let url = URL(string: pdfUrl) {
-                ShareSheet(items: [url])
+        .sheet(isPresented: $showingShareSheet, onDismiss: {
+            // Clean up temp file after sharing
+            if let fileURL = shareFileURL {
+                try? FileManager.default.removeItem(at: fileURL)
+                shareFileURL = nil
+            }
+        }) {
+            if let fileURL = shareFileURL {
+                ShareSheet(items: [fileURL])
             }
         }
         .sheet(isPresented: $showingEditSheet) {
@@ -129,7 +173,8 @@ struct PaperDetailView: View {
                             .lineLimit(1)
                     }
                 } else {
-                    StatusBadge(status: viewModel.paper.status)
+                    // Use the rich status indicator for detail view
+                    PaperStatusIndicator(paper: viewModel.paper)
                 }
             }
 

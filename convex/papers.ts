@@ -52,6 +52,45 @@ export const list = query({
   },
 });
 
+// List all papers for the currently authenticated user (for mobile/SDK)
+export const listMine = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await auth.getUserId(ctx);
+    console.log("papers:listMine - userId:", userId);
+    if (!userId) {
+      console.log("papers:listMine - No authenticated user");
+      return [];
+    }
+
+    const { papers } = await fetchUserPapers(ctx, userId);
+    console.log("papers:listMine - Found", papers.length, "papers for user", userId);
+
+    // Transform to format expected by mobile app
+    return sortPapersByTime(papers.map(({ paper, repository, trackedFile, thumbnailUrl, pdfUrl, isUpToDate }) => ({
+      _id: paper._id,
+      _creationTime: paper._creationTime,
+      title: paper.title,
+      authors: paper.authors,
+      thumbnailUrl,
+      pdfUrl,
+      isUpToDate,
+      buildStatus: paper.buildStatus,
+      compilationProgress: paper.compilationProgress,
+      lastSyncError: paper.lastSyncError,
+      isPublic: paper.isPublic,
+      shareSlug: paper.shareSlug,
+      repositoryId: repository?._id ?? null,
+      trackedFileId: trackedFile?._id ?? null,
+      lastSyncedAt: paper.lastSyncedAt,
+      lastAffectedCommitTime: paper.lastAffectedCommitTime,
+      lastAffectedCommitAuthor: paper.lastAffectedCommitAuthor,
+      createdAt: paper._creationTime,
+      updatedAt: paper.updatedAt,
+    })));
+  },
+});
+
 // List all papers for a user with pagination (gallery)
 export const listPaginated = query({
   args: { userId: v.id("users"), paginationOpts: paginationOptsValidator },

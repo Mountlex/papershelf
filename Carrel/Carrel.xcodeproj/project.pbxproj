@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		8D6A511D2F2F40A400EE049B /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 8D6A511C2F2F40A400EE049B /* ConvexMobile */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		8D4413102F2E82EA002BAD78 /* Carrel.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Carrel.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -36,6 +40,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8D6A511D2F2F40A400EE049B /* ConvexMobile in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +83,7 @@
 			);
 			name = Carrel;
 			packageProductDependencies = (
+				8D6A511C2F2F40A400EE049B /* ConvexMobile */,
 			);
 			productName = Carrel;
 			productReference = 8D4413102F2E82EA002BAD78 /* Carrel.app */;
@@ -107,6 +113,9 @@
 			);
 			mainGroup = 8D4413072F2E82EA002BAD78;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				8D6A511B2F2F40A400EE049B /* XCRemoteSwiftPackageReference "convex-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8D4413112F2E82EA002BAD78 /* Products */;
 			projectDirPath = "";
@@ -343,6 +352,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		8D6A511B2F2F40A400EE049B /* XCRemoteSwiftPackageReference "convex-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/get-convex/convex-swift";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.7.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		8D6A511C2F2F40A400EE049B /* ConvexMobile */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8D6A511B2F2F40A400EE049B /* XCRemoteSwiftPackageReference "convex-swift" */;
+			productName = ConvexMobile;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 8D4413082F2E82EA002BAD78 /* Project object */;
 }

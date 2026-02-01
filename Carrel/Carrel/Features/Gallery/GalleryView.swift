@@ -1,10 +1,8 @@
 import SwiftUI
 
 struct GalleryView: View {
-    @Environment(AuthManager.self) private var authManager
     @State private var viewModel: GalleryViewModel?
     @State private var selectedPaper: Paper?
-    @State private var refreshRotation: Double = 0
 
     private let columns = [
         GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 16)
@@ -21,29 +19,67 @@ struct GalleryView: View {
         .navigationTitle("Papers")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                if viewModel?.isLoading == true && viewModel?.isRefreshing == false {
-                    ProgressView()
-                } else {
+                HStack(spacing: 12) {
+                    // Check All Repositories button
                     Button {
                         Task {
-                            await viewModel?.refresh()
+                            await viewModel?.checkAllRepositories()
                         }
                     } label: {
-                        Image(systemName: "arrow.clockwise")
+                        if viewModel?.isSyncing == true {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                        }
                     }
+                    .disabled(viewModel?.isSyncing == true)
+                    .help("Check all repositories for updates")
+
+                    // Refresh All Papers button
+                    Button {
+                        Task {
+                            await viewModel?.refreshAllPapers()
+                        }
+                    } label: {
+                        if let progress = viewModel?.refreshProgress {
+                            HStack(spacing: 4) {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                Text("\(progress.current)/\(progress.total)")
+                                    .font(.caption)
+                                    .monospacedDigit()
+                            }
+                        } else {
+                            Image(systemName: "play.fill")
+                        }
+                    }
+                    .disabled(viewModel?.isRefreshingAll == true)
+                    .help("Refresh all papers that need sync")
                 }
             }
         }
         .task {
             if viewModel == nil {
-                viewModel = GalleryViewModel(authManager: authManager)
+                viewModel = GalleryViewModel()
             }
-            await viewModel?.loadPapers()
+            // Start real-time subscription
+            viewModel?.startSubscription()
+        }
+        .onDisappear {
+            viewModel?.stopSubscription()
         }
         .sheet(item: $selectedPaper) { paper in
             NavigationStack {
-                PaperDetailView(paper: paper, authManager: authManager)
+                PaperDetailView(paper: paper)
             }
+        }
+        .overlay(alignment: .top) {
+            ToastContainer(message: Binding(
+                get: { viewModel?.toastMessage },
+                set: { viewModel?.toastMessage = $0 }
+            ))
+            .padding(.top, 8)
         }
     }
 
@@ -91,13 +127,7 @@ struct GalleryView: View {
                 .padding()
             }
             .refreshable {
-                await viewModel.refresh()
-            }
-            .overlay(alignment: .top) {
-                if viewModel.isRefreshing {
-                    RefreshIndicator(rotation: $refreshRotation)
-                        .padding(.top, 60)
-                }
+                await viewModel.checkAllRepositories()
             }
         }
     }
@@ -111,29 +141,8 @@ struct GalleryView: View {
     }
 }
 
-struct RefreshIndicator: View {
-    @Binding var rotation: Double
-
-    var body: some View {
-        Image(systemName: "arrow.clockwise")
-            .font(.title2)
-            .rotationEffect(.degrees(rotation))
-            .onAppear {
-                withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) {
-                    rotation = 360
-                }
-            }
-            .onDisappear {
-                rotation = 0
-            }
-            .padding(12)
-            .glassEffect(.regular, in: Circle())
-    }
-}
-
 #Preview {
     NavigationStack {
         GalleryView()
     }
-    .environment(AuthManager())
 }

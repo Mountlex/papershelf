@@ -1,39 +1,12 @@
 import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { useEffect, useState, useCallback } from "react";
-import { useConvexAuth, useMutation } from "convex/react";
-import { useAuthActions } from "@convex-dev/auth/react";
+import { useConvexAuth } from "convex/react";
+import { useAuthActions, useAuthToken } from "@convex-dev/auth/react";
 import { EmailPasswordForm } from "../components/auth/EmailPasswordForm";
 import { GitHubIcon, GitLabIcon } from "../components/icons";
-import { api } from "../../convex/_generated/api";
 
 // Mobile app callback URL scheme
 const MOBILE_CALLBACK_URL = "carrel://auth/callback";
-
-const DEVICE_ID_KEY = "carrel_mobile_device_id";
-
-function getOrCreateDeviceId() {
-  try {
-    const existing = localStorage.getItem(DEVICE_ID_KEY);
-    if (existing) return existing;
-    const generated = (crypto.randomUUID?.() ?? `webview-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
-    localStorage.setItem(DEVICE_ID_KEY, generated);
-    return generated;
-  } catch {
-    return `webview-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  }
-}
-
-// Get device info from user agent
-function getDeviceInfo() {
-  const ua = navigator.userAgent;
-  const isAndroid = /android/i.test(ua);
-  const isIOS = /iphone|ipad|ipod/i.test(ua);
-  return {
-    deviceId: getOrCreateDeviceId(),
-    deviceName: isAndroid ? "Android Device" : isIOS ? "iOS Device" : "Mobile Device",
-    platform: (isAndroid ? "android" : isIOS ? "ios" : "unknown") as "android" | "ios" | "unknown",
-  };
-}
 
 // Redirect back to mobile app
 function notifyCancel() {
@@ -56,34 +29,26 @@ export const Route = createFileRoute("/mobile-auth")({
 function MobileAuthPage() {
   const search = useSearch({ from: "/mobile-auth" });
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const authToken = useAuthToken();
   const { signIn } = useAuthActions();
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [authStarted, setAuthStarted] = useState(false);
   const [error] = useState<string | null>(search.error ?? null);
   const [tokenExchangeAttempted, setTokenExchangeAttempted] = useState(false);
 
-  // Convex mutation for generating mobile tokens
-  const generateMobileTokens = useMutation(api.mobileAuth.generateMobileTokens);
-
-  // Exchange session for tokens and redirect to mobile app
-  const exchangeAndNotify = useCallback(async () => {
-    try {
-      const deviceInfo = getDeviceInfo();
-      const tokens = await generateMobileTokens(deviceInfo);
-
-      // Redirect to mobile app with tokens in URL
-      const params = new URLSearchParams({
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        expiresAt: String(tokens.expiresAt),
-        refreshExpiresAt: String(tokens.refreshExpiresAt),
-      });
-      window.location.href = `${MOBILE_CALLBACK_URL}?${params.toString()}`;
-    } catch (err) {
-      console.error("[mobile-auth] Token exchange error:", err);
-      window.location.href = `${MOBILE_CALLBACK_URL}?error=${encodeURIComponent(String(err))}`;
+  // Get the Convex Auth token and redirect to mobile app
+  const exchangeAndNotify = useCallback(() => {
+    if (!authToken) {
+      window.location.href = `${MOBILE_CALLBACK_URL}?error=no_token`;
+      return;
     }
-  }, [generateMobileTokens]);
+
+    // Pass Convex Auth token to iOS - single token that works with Convex SDK
+    const params = new URLSearchParams({
+      token: authToken,
+    });
+    window.location.href = `${MOBILE_CALLBACK_URL}?${params.toString()}`;
+  }, [authToken]);
 
   // Auto-start OAuth flow if provider is specified
   useEffect(() => {
@@ -102,7 +67,8 @@ function MobileAuthPage() {
 
   // Redirect to mobile app after successful authentication
   useEffect(() => {
-    if (isAuthenticated && !isRedirecting && !tokenExchangeAttempted) {
+    // Wait for auth token to be available before redirecting
+    if (isAuthenticated && authToken && !isRedirecting && !tokenExchangeAttempted) {
       // Small delay to ensure session is fully established
       const timer = setTimeout(() => {
         setIsRedirecting(true);
@@ -113,7 +79,7 @@ function MobileAuthPage() {
 
       return () => clearTimeout(timer);
     }
-  }, [isAuthenticated, isRedirecting, tokenExchangeAttempted, exchangeAndNotify]);
+  }, [isAuthenticated, authToken, isRedirecting, tokenExchangeAttempted, exchangeAndNotify]);
 
   // Handle successful email auth
   const handleEmailAuthSuccess = () => {

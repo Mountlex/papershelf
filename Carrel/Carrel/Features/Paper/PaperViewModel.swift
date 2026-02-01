@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 @Observable
 @MainActor
@@ -10,14 +11,10 @@ final class PaperViewModel {
     private(set) var isBuilding = false
     private(set) var isTogglingPublic = false
 
-    private let authManager: AuthManager
-    private var client: ConvexClient {
-        ConvexClient(baseURL: AuthManager.baseURL, authManager: authManager)
-    }
+    private var buildSubscription: AnyCancellable?
 
-    init(paper: Paper, authManager: AuthManager) {
+    init(paper: Paper) {
         self.paper = paper
-        self.authManager = authManager
     }
 
     func refresh() async {
@@ -25,7 +22,7 @@ final class PaperViewModel {
         defer { isLoading = false }
 
         do {
-            paper = try await client.paper(id: paper.id)
+            paper = try await ConvexService.shared.getPaper(id: paper.id)
         } catch {
             self.error = error.localizedDescription
         }
@@ -34,46 +31,58 @@ final class PaperViewModel {
     func build(force: Bool = false) async {
         isBuilding = true
 
-        // Trigger the build (fire and forget - returns immediately)
+        // Trigger the build using ConvexService
         do {
-            try await client.buildPaper(id: paper.id, force: force)
+            try await ConvexService.shared.buildPaper(id: paper.id, force: force)
         } catch {
             self.error = error.localizedDescription
             isBuilding = false
             return
         }
 
-        // Poll for progress updates until build completes
-        var attempts = 0
-        let maxAttempts = 120 // 2 minutes max (120 * 1 second)
+        // Subscribe for real-time updates instead of polling
+        let paperId = paper.id
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            buildSubscription = ConvexService.shared.subscribeToPaper(id: paperId)
+                .receive(on: DispatchQueue.main)
+                .sink(
+                    receiveCompletion: { [weak self] completion in
+                        if case .failure(let error) = completion {
+                            print("PaperViewModel: Subscription error: \(error)")
+                            self?.error = error.localizedDescription
+                        }
+                        self?.buildSubscription = nil
+                        self?.isBuilding = false
+                        continuation.resume()
+                    },
+                    receiveValue: { [weak self] updatedPaper in
+                        guard let self = self else { return }
+                        self.paper = updatedPaper
+                        print("PaperViewModel: Update received - buildStatus=\(updatedPaper.buildStatus ?? "nil"), progress=\(updatedPaper.compilationProgress ?? "nil")")
 
-        while attempts < maxAttempts {
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-            attempts += 1
+                        // Check if build completed
+                        if updatedPaper.buildStatus != "building" && updatedPaper.compilationProgress == nil {
+                            self.buildSubscription?.cancel()
+                            self.buildSubscription = nil
+                            self.isBuilding = false
 
-            do {
-                let updatedPaper = try await client.paper(id: paper.id)
-                paper = updatedPaper
+                            // Trigger haptic based on final status
+                            print("PaperViewModel: Build finished, status=\(updatedPaper.status), isUpToDate=\(String(describing: updatedPaper.isUpToDate)), buildStatus=\(String(describing: updatedPaper.buildStatus))")
+                            switch updatedPaper.status {
+                            case .synced:
+                                print("PaperViewModel: Triggering success haptic")
+                                HapticManager.buildSuccess()
+                            case .error:
+                                print("PaperViewModel: Triggering error haptic")
+                                HapticManager.buildError()
+                            default:
+                                print("PaperViewModel: No haptic for status \(updatedPaper.status)")
+                            }
 
-                // Stop polling if build completed
-                if updatedPaper.buildStatus != "building" && updatedPaper.compilationProgress == nil {
-                    break
-                }
-            } catch {
-                // Ignore polling errors, keep trying
-            }
-        }
-
-        isBuilding = false
-
-        // Trigger haptic based on final status
-        switch paper.status {
-        case .synced:
-            HapticManager.buildSuccess()
-        case .error:
-            HapticManager.buildError()
-        default:
-            break
+                            continuation.resume()
+                        }
+                    }
+                )
         }
     }
 
@@ -82,7 +91,7 @@ final class PaperViewModel {
         defer { isLoading = false }
 
         do {
-            try await client.updatePaper(id: paper.id, title: title, authors: authors)
+            try await ConvexService.shared.updatePaper(id: paper.id, title: title, authors: authors)
             await refresh()
         } catch {
             self.error = error.localizedDescription
@@ -94,9 +103,8 @@ final class PaperViewModel {
         defer { isTogglingPublic = false }
 
         do {
-            let result = try await client.togglePaperPublic(id: paper.id)
+            _ = try await ConvexService.shared.togglePaperPublic(id: paper.id)
             await refresh()
-            _ = result // We refresh to get the full updated paper
         } catch {
             self.error = error.localizedDescription
         }
