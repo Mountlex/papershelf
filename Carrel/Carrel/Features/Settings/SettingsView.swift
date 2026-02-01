@@ -135,17 +135,16 @@ struct SettingsView: View {
                 }
             }
         }
-        .confirmationDialog(
+        .alert(
             "Sign Out",
-            isPresented: $showingLogoutConfirmation,
-            titleVisibility: .visible
+            isPresented: $showingLogoutConfirmation
         ) {
+            Button("Cancel", role: .cancel) {}
             Button("Sign Out", role: .destructive) {
                 Task {
                     await viewModel.logout()
                 }
             }
-            Button("Cancel", role: .cancel) {}
         } message: {
             Text("Are you sure you want to sign out?")
         }

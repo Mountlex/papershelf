@@ -2,13 +2,14 @@ import SwiftUI
 
 struct PaperCard: View {
     let paper: Paper
+    var isSyncing: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Thumbnail - content layer, no glass
             thumbnailView
                 .frame(height: 200)
-                .clipped()
+                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16))
 
             // Info section with glass backdrop
             VStack(alignment: .leading, spacing: 4) {
@@ -21,17 +22,16 @@ struct PaperCard: View {
 
                     Spacer()
 
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 8, height: 8)
-                        .padding(.top, 4)
-                }
-
-                if let authors = paper.authors, !authors.isEmpty {
-                    Text(authors)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    if isSyncing {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                            .padding(.top, 2)
+                    } else {
+                        Circle()
+                            .fill(statusColor)
+                            .frame(width: 8, height: 8)
+                            .padding(.top, 4)
+                    }
                 }
             }
             .padding(12)
@@ -138,7 +138,6 @@ extension Paper {
         {
             "_id": "1",
             "title": "A Long Paper Title That Might Wrap",
-            "authors": "John Doe, Jane Smith",
             "thumbnailUrl": null,
             "isUpToDate": true,
             "isPublic": false,
@@ -155,7 +154,6 @@ extension Paper {
         {
             "_id": "2",
             "title": "Paper with Error",
-            "authors": "Test Author",
             "thumbnailUrl": null,
             "buildStatus": "error",
             "isPublic": false,

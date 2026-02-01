@@ -1,6 +1,6 @@
+import Combine
 import Foundation
 import SwiftUI
-import Combine
 
 @Observable
 @MainActor
@@ -18,11 +18,13 @@ final class GalleryViewModel {
     /// Progress of the "Refresh All" operation (current, total)
     private(set) var refreshProgress: (current: Int, total: Int)?
 
+    /// ID of the paper currently being synced
+    private(set) var syncingPaperId: String?
+
     /// Current toast message to display
     var toastMessage: ToastMessage?
 
     private var subscriptionTask: Task<Void, Never>?
-    private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Subscription Lifecycle
 
@@ -69,7 +71,6 @@ final class GalleryViewModel {
     func stopSubscription() {
         subscriptionTask?.cancel()
         subscriptionTask = nil
-        cancellables.removeAll()
     }
 
     // MARK: - Check All Repositories
@@ -138,6 +139,9 @@ final class GalleryViewModel {
     // MARK: - Paper Operations
 
     func buildPaper(_ paper: Paper, force: Bool = false) async {
+        syncingPaperId = paper.id
+        defer { syncingPaperId = nil }
+
         do {
             try await ConvexService.shared.buildPaper(id: paper.id, force: force)
             // With subscriptions, the paper list will update automatically

@@ -172,17 +172,15 @@ final class ConvexService: ObservableObject {
     /// Delete a paper
     func deletePaper(id: String) async throws {
         // papers:deletePaper is the mutation to remove a paper
-        let _: EmptyResult? = try await client.mutation("papers:deletePaper", with: ["paperId": id])
+        let _: EmptyResult? = try await client.mutation("papers:deletePaper", with: ["id": id])
     }
 
     /// Update paper metadata
-    func updatePaper(id: String, title: String?, authors: String?) async throws {
-        // papers:update takes paperId, title, and authors
-        let args: [String: ConvexEncodable?] = [
-            "paperId": id,
-            "title": title,
-            "authors": authors
-        ]
+    func updatePaper(id: String, title: String?) async throws {
+        var args: [String: String] = ["id": id]
+        if let title = title {
+            args["title"] = title
+        }
         let _: EmptyResult? = try await client.mutation("papers:update", with: args)
     }
 
@@ -219,6 +217,79 @@ final class ConvexService: ObservableObject {
     func checkAllRepositories() async throws -> CheckAllResult {
         try await client.action("sync:refreshAllRepositories")
     }
+
+    // MARK: - Repositories
+
+    /// Subscribe to repositories list (requires userId from viewer)
+    func subscribeToRepositories(userId: String) -> AnyPublisher<[Repository], ClientError> {
+        client.subscribe(to: "repositories:list", with: ["userId": userId], yielding: [Repository].self)
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+
+    /// Delete a repository (cascades to papers and tracked files)
+    func deleteRepository(id: String) async throws {
+        let _: EmptyResult? = try await client.mutation("repositories:remove", with: ["id": id])
+    }
+
+    /// Refresh a single repository
+    func refreshRepository(id: String) async throws -> RefreshRepositoryResult {
+        try await client.action("sync:refreshRepository", with: ["repositoryId": id])
+    }
+
+    // MARK: - Repository Files
+
+    /// List files in a repository directory
+    func listRepositoryFiles(gitUrl: String, path: String?, branch: String?) async throws -> [RepositoryFile] {
+        var args: [String: String] = ["gitUrl": gitUrl]
+        if let path = path, !path.isEmpty {
+            args["path"] = path
+        }
+        if let branch = branch {
+            args["branch"] = branch
+        }
+        return try await client.action("git:listRepositoryFiles", with: args)
+    }
+
+    /// Add a tracked file and create paper
+    func addTrackedFile(
+        repositoryId: String,
+        filePath: String,
+        title: String,
+        pdfSourceType: String,
+        compiler: String?
+    ) async throws -> AddTrackedFileResult {
+        var args: [String: String] = [
+            "repositoryId": repositoryId,
+            "filePath": filePath,
+            "title": title,
+            "pdfSourceType": pdfSourceType
+        ]
+        if let compiler = compiler {
+            args["compiler"] = compiler
+        }
+        return try await client.mutation("papers:addTrackedFile", with: args)
+    }
+
+    /// List tracked files for a repository
+    func listTrackedFiles(repositoryId: String) async throws -> [TrackedFileInfo] {
+        try await withCheckedThrowingContinuation { continuation in
+            var cancellable: AnyCancellable?
+            cancellable = client.subscribe(to: "papers:listTrackedFiles", with: ["repositoryId": repositoryId], yielding: [TrackedFileInfo].self)
+                .first()
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure(let error) = completion {
+                            continuation.resume(throwing: error)
+                        }
+                        cancellable?.cancel()
+                    },
+                    receiveValue: { files in
+                        continuation.resume(returning: files)
+                    }
+                )
+        }
+    }
 }
 
 // MARK: - Result Types
@@ -235,4 +306,27 @@ struct CheckAllResult: Codable {
     let checked: Int
     let updated: Int
     let failed: Int
+}
+
+struct RefreshRepositoryResult: Codable {
+    let updated: Bool
+    let dateIsFallback: Bool?
+    let skipped: Bool?
+    let reason: String?
+    let commitHash: String?
+}
+
+struct AddTrackedFileResult: Codable {
+    let trackedFileId: String
+    let paperId: String
+}
+
+struct TrackedFileInfo: Codable, Identifiable {
+    let id: String
+    let filePath: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "_id"
+        case filePath
+    }
 }

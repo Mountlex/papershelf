@@ -94,22 +94,25 @@ struct ToastContainer: View {
             // Cancel any existing hide task
             hideTask?.cancel()
 
-            if newMessage != nil {
+            if let newMessage {
                 isVisible = true
 
                 // Schedule auto-hide
                 hideTask = Task {
                     try? await Task.sleep(for: .seconds(duration))
-                    if !Task.isCancelled {
-                        await MainActor.run {
-                            isVisible = false
-                            // Clear the message after animation completes
-                            Task {
-                                try? await Task.sleep(for: .milliseconds(300))
-                                if !Task.isCancelled && self.message?.id == newMessage?.id {
-                                    self.message = nil
-                                }
-                            }
+                    guard !Task.isCancelled else { return }
+
+                    await MainActor.run {
+                        isVisible = false
+                    }
+
+                    // Clear the message after animation completes
+                    try? await Task.sleep(for: .milliseconds(300))
+                    guard !Task.isCancelled else { return }
+
+                    await MainActor.run {
+                        if self.message?.id == newMessage.id {
+                            self.message = nil
                         }
                     }
                 }

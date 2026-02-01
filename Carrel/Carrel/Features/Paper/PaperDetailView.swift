@@ -9,6 +9,7 @@ struct PaperDetailView: View {
     @State private var shareFileURL: URL?
     @State private var isPreparingShare = false
     @State private var subscriptionTask: Task<Void, Never>?
+    @State private var pdfLoadError: String?
     @Environment(\.dismiss) private var dismiss
 
     init(paper: Paper) {
@@ -156,7 +157,16 @@ struct PaperDetailView: View {
     @ViewBuilder
     private var pdfViewer: some View {
         if let pdfUrl = viewModel.paper.pdfUrl, let url = URL(string: pdfUrl) {
-            PDFViewerContainer(url: url)
+            PDFViewerContainer(url: url) { error in
+                pdfLoadError = error
+            }
+            .alert("PDF Error", isPresented: .constant(pdfLoadError != nil)) {
+                Button("OK") {
+                    pdfLoadError = nil
+                }
+            } message: {
+                Text(pdfLoadError ?? "Failed to load PDF")
+            }
         } else {
             ContentUnavailableView {
                 Label("No PDF", systemImage: "doc.text.fill")
@@ -179,12 +189,6 @@ struct PaperDetailView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(viewModel.paper.title ?? "Untitled")
                         .font(.headline)
-
-                    if let authors = viewModel.paper.authors, !authors.isEmpty {
-                        Text(authors)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
                 }
 
                 Spacer()
@@ -234,31 +238,59 @@ struct PaperDetailView: View {
 
 struct PDFViewerContainer: UIViewRepresentable {
     let url: URL
+    var onError: ((String) -> Void)?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
 
     func makeUIView(context: Context) -> PDFView {
         let pdfView = PDFView()
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
-
-        // Load PDF asynchronously (with caching)
-        Task {
-            do {
-                let data = try await PDFCache.shared.fetchPDF(from: url)
-                if let document = PDFDocument(data: data) {
-                    await MainActor.run {
-                        pdfView.document = document
-                    }
-                }
-            } catch {
-                print("Failed to load PDF: \(error)")
-            }
-        }
-
         return pdfView
     }
 
-    func updateUIView(_ pdfView: PDFView, context: Context) {}
+    func updateUIView(_ pdfView: PDFView, context: Context) {
+        // Cancel any existing load task
+        context.coordinator.loadTask?.cancel()
+
+        let errorHandler = onError
+        // Start new load task
+        context.coordinator.loadTask = Task {
+            do {
+                guard !Task.isCancelled else { return }
+                let data = try await PDFCache.shared.fetchPDF(from: url)
+                guard !Task.isCancelled else { return }
+                if let document = PDFDocument(data: data) {
+                    await MainActor.run {
+                        guard !Task.isCancelled else { return }
+                        pdfView.document = document
+                    }
+                } else {
+                    await MainActor.run {
+                        errorHandler?("Unable to open PDF. The file may be corrupted.")
+                    }
+                }
+            } catch {
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        errorHandler?(error.localizedDescription)
+                    }
+                }
+            }
+        }
+    }
+
+    static func dismantleUIView(_ pdfView: PDFView, coordinator: Coordinator) {
+        coordinator.loadTask?.cancel()
+        coordinator.loadTask = nil
+    }
+
+    class Coordinator {
+        var loadTask: Task<Void, Never>?
+    }
 }
 
 struct EditPaperSheet: View {
@@ -266,14 +298,12 @@ struct EditPaperSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var title: String = ""
-    @State private var authors: String = ""
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Paper Details") {
                     TextField("Title", text: $title)
-                    TextField("Authors", text: $authors)
                 }
             }
             .navigationTitle("Edit Paper")
@@ -289,8 +319,7 @@ struct EditPaperSheet: View {
                     Button("Save") {
                         Task {
                             await viewModel.updateMetadata(
-                                title: title.isEmpty ? nil : title,
-                                authors: authors.isEmpty ? nil : authors
+                                title: title.isEmpty ? nil : title
                             )
                             dismiss()
                         }
@@ -300,7 +329,6 @@ struct EditPaperSheet: View {
             }
             .onAppear {
                 title = viewModel.paper.title ?? ""
-                authors = viewModel.paper.authors ?? ""
             }
         }
     }

@@ -3,7 +3,6 @@ import Foundation
 struct Paper: Codable, Identifiable, Equatable {
     let id: String
     let title: String?
-    let authors: String?
     let pdfUrl: String?
     let thumbnailUrl: String?
     let isUpToDate: Bool?
@@ -32,7 +31,7 @@ struct Paper: Codable, Identifiable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id = "_id"
-        case title, authors, pdfUrl, thumbnailUrl
+        case title, pdfUrl, thumbnailUrl
         case isUpToDate, buildStatus
         case isPublic, shareSlug, repositoryId, trackedFileId
         case compilationProgress, lastSyncError
@@ -44,7 +43,6 @@ struct Paper: Codable, Identifiable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         title = try container.decodeIfPresent(String.self, forKey: .title)
-        authors = try container.decodeIfPresent(String.self, forKey: .authors)
         pdfUrl = try container.decodeIfPresent(String.self, forKey: .pdfUrl)
         thumbnailUrl = try container.decodeIfPresent(String.self, forKey: .thumbnailUrl)
         isUpToDate = try container.decodeIfPresent(Bool.self, forKey: .isUpToDate)
@@ -88,7 +86,6 @@ struct Paper: Codable, Identifiable, Equatable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encodeIfPresent(title, forKey: .title)
-        try container.encodeIfPresent(authors, forKey: .authors)
         try container.encodeIfPresent(pdfUrl, forKey: .pdfUrl)
         try container.encodeIfPresent(thumbnailUrl, forKey: .thumbnailUrl)
         try container.encodeIfPresent(isUpToDate, forKey: .isUpToDate)

@@ -91,37 +91,42 @@ struct GalleryView: View {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 16) {
                     ForEach(viewModel.papers) { paper in
-                        PaperCard(paper: paper)
-                            .onTapGesture {
-                                selectedPaper = paper
+                        Button {
+                            selectedPaper = paper
+                        } label: {
+                            PaperCard(
+                                paper: paper,
+                                isSyncing: viewModel.syncingPaperId == paper.id
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button {
+                                Task {
+                                    await viewModel.buildPaper(paper)
+                                }
+                            } label: {
+                                Label("Sync", systemImage: "arrow.clockwise")
                             }
-                            .contextMenu {
-                                Button {
-                                    Task {
-                                        await viewModel.buildPaper(paper)
-                                    }
-                                } label: {
-                                    Label("Sync", systemImage: "arrow.clockwise")
-                                }
 
-                                Button {
-                                    Task {
-                                        await viewModel.buildPaper(paper, force: true)
-                                    }
-                                } label: {
-                                    Label("Force Rebuild", systemImage: "hammer")
+                            Button {
+                                Task {
+                                    await viewModel.buildPaper(paper, force: true)
                                 }
-
-                                Divider()
-
-                                Button(role: .destructive) {
-                                    Task {
-                                        await viewModel.deletePaper(paper)
-                                    }
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
+                            } label: {
+                                Label("Force Rebuild", systemImage: "hammer")
                             }
+
+                            Divider()
+
+                            Button(role: .destructive) {
+                                Task {
+                                    await viewModel.deletePaper(paper)
+                                }
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
                     }
                 }
                 .padding()

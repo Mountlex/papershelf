@@ -28,6 +28,13 @@ struct MainTabView: View {
             }
 
             NavigationStack {
+                RepositoryListView()
+            }
+            .tabItem {
+                Label("Repositories", systemImage: "folder.fill")
+            }
+
+            NavigationStack {
                 SettingsView()
             }
             .tabItem {

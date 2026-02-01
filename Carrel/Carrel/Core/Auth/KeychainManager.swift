@@ -72,14 +72,17 @@ actor KeychainManager {
         return result as? Data
     }
 
-    private func delete(key: String) {
+    @discardableResult
+    private func delete(key: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key
         ]
 
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        // Success if deleted or item didn't exist
+        return status == errSecSuccess || status == errSecItemNotFound
     }
 }
 
