@@ -11,6 +11,7 @@ coil = "2.7.0"
 securityCrypto = "1.1.0-alpha06"
 browser = "1.8.0"
 kotlinxSerialization = "1.7.3"
+convex = "0.4.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -35,6 +36,8 @@ ktor-client-logging = { group = "io.ktor", name = "ktor-client-logging", version
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+
+convex-android = { group = "dev.convex", name = "android-convexmobile", version.ref = "convex" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

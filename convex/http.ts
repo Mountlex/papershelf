@@ -327,6 +327,7 @@ async function verifyMobileAuth(
 ): Promise<{ userId: string; email: string; name?: string } | null> {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    console.log("[verifyMobileAuth] No Authorization header or wrong format");
     return null;
   }
 
@@ -335,9 +336,11 @@ async function verifyMobileAuth(
   const payload = await verifyJwt(accessToken, jwtSecret);
 
   if (!payload) {
+    console.log("[verifyMobileAuth] JWT verification failed - token:", accessToken.substring(0, 20) + "...");
     return null;
   }
 
+  console.log("[verifyMobileAuth] Success - userId:", payload.sub);
   return {
     userId: payload.sub as string,
     email: payload.email as string,
@@ -619,6 +622,327 @@ http.route({
       console.error("Toggle public error:", error);
       return jsonResponse(
         { error: error instanceof Error ? error.message : "Toggle failed" },
+        500,
+        origin
+      );
+    }
+  }),
+});
+
+// ==================== Repository Endpoints for Mobile ====================
+
+// GET /api/mobile/repositories - List repositories for authenticated mobile user
+http.route({
+  path: "/api/mobile/repositories",
+  method: "OPTIONS",
+  handler: httpAction(async (_, request) => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request.headers.get("Origin")),
+    });
+  }),
+});
+
+http.route({
+  path: "/api/mobile/repositories",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+
+    const user = await verifyMobileAuth(ctx, request);
+    if (!user) {
+      return jsonResponse({ error: "Unauthorized" }, 401, origin);
+    }
+
+    const repositories = await ctx.runQuery(internal.repositories.listForMobile, {
+      userId: user.userId,
+    });
+
+    return jsonResponse(repositories, 200, origin);
+  }),
+});
+
+// POST /api/mobile/repository/refresh - Refresh a single repository
+http.route({
+  path: "/api/mobile/repository/refresh",
+  method: "OPTIONS",
+  handler: httpAction(async (_, request) => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request.headers.get("Origin")),
+    });
+  }),
+});
+
+http.route({
+  path: "/api/mobile/repository/refresh",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+
+    const user = await verifyMobileAuth(ctx, request);
+    if (!user) {
+      return jsonResponse({ error: "Unauthorized" }, 401, origin);
+    }
+
+    try {
+      const body = await request.json();
+      const { repositoryId } = body;
+
+      if (!repositoryId) {
+        return jsonResponse({ error: "Missing repositoryId" }, 400, origin);
+      }
+
+      const result = await ctx.runAction(internal.sync.refreshRepositoryInternal, {
+        repositoryId,
+        userId: user.userId,
+      });
+
+      return jsonResponse(result, 200, origin);
+    } catch (error) {
+      console.error("Repository refresh error:", error);
+      return jsonResponse(
+        { error: error instanceof Error ? error.message : "Refresh failed" },
+        500,
+        origin
+      );
+    }
+  }),
+});
+
+// DELETE /api/mobile/repository - Delete a repository
+http.route({
+  path: "/api/mobile/repository",
+  method: "OPTIONS",
+  handler: httpAction(async (_, request) => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request.headers.get("Origin")),
+    });
+  }),
+});
+
+http.route({
+  path: "/api/mobile/repository",
+  method: "DELETE",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+
+    const user = await verifyMobileAuth(ctx, request);
+    if (!user) {
+      return jsonResponse({ error: "Unauthorized" }, 401, origin);
+    }
+
+    try {
+      const body = await request.json();
+      const { repositoryId } = body;
+
+      if (!repositoryId) {
+        return jsonResponse({ error: "Missing repositoryId" }, 400, origin);
+      }
+
+      await ctx.runMutation(internal.repositories.removeForMobile, {
+        repositoryId,
+        userId: user.userId,
+      });
+
+      return jsonResponse({ success: true }, 200, origin);
+    } catch (error) {
+      console.error("Delete repository error:", error);
+      return jsonResponse(
+        { error: error instanceof Error ? error.message : "Delete failed" },
+        500,
+        origin
+      );
+    }
+  }),
+});
+
+// POST /api/mobile/repositories/check-all - Check all repositories for updates
+http.route({
+  path: "/api/mobile/repositories/check-all",
+  method: "OPTIONS",
+  handler: httpAction(async (_, request) => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request.headers.get("Origin")),
+    });
+  }),
+});
+
+http.route({
+  path: "/api/mobile/repositories/check-all",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+
+    const user = await verifyMobileAuth(ctx, request);
+    if (!user) {
+      return jsonResponse({ error: "Unauthorized" }, 401, origin);
+    }
+
+    try {
+      const result = await ctx.runAction(internal.sync.refreshAllRepositoriesForMobile, {
+        userId: user.userId,
+      });
+
+      return jsonResponse(result, 200, origin);
+    } catch (error) {
+      console.error("Check all repositories error:", error);
+      return jsonResponse(
+        { error: error instanceof Error ? error.message : "Check failed" },
+        500,
+        origin
+      );
+    }
+  }),
+});
+
+// GET /api/mobile/repository/files - List files in a repository
+http.route({
+  path: "/api/mobile/repository/files",
+  method: "OPTIONS",
+  handler: httpAction(async (_, request) => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request.headers.get("Origin")),
+    });
+  }),
+});
+
+http.route({
+  path: "/api/mobile/repository/files",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+
+    const user = await verifyMobileAuth(ctx, request);
+    if (!user) {
+      return jsonResponse({ error: "Unauthorized" }, 401, origin);
+    }
+
+    const url = new URL(request.url);
+    const gitUrl = url.searchParams.get("gitUrl");
+    const path = url.searchParams.get("path") || undefined;
+    const branch = url.searchParams.get("branch") || undefined;
+
+    if (!gitUrl) {
+      return jsonResponse({ error: "Missing gitUrl" }, 400, origin);
+    }
+
+    try {
+      const files = await ctx.runAction(internal.git.listRepositoryFilesInternal, {
+        gitUrl,
+        path,
+        branch,
+        userId: user.userId,
+      });
+
+      return jsonResponse(files, 200, origin);
+    } catch (error) {
+      console.error("List repository files error:", error);
+      return jsonResponse(
+        { error: error instanceof Error ? error.message : "Failed to list files" },
+        500,
+        origin
+      );
+    }
+  }),
+});
+
+// GET /api/mobile/repository/tracked-files - List tracked files for a repository
+http.route({
+  path: "/api/mobile/repository/tracked-files",
+  method: "OPTIONS",
+  handler: httpAction(async (_, request) => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request.headers.get("Origin")),
+    });
+  }),
+});
+
+http.route({
+  path: "/api/mobile/repository/tracked-files",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+
+    const user = await verifyMobileAuth(ctx, request);
+    if (!user) {
+      return jsonResponse({ error: "Unauthorized" }, 401, origin);
+    }
+
+    const url = new URL(request.url);
+    const repositoryId = url.searchParams.get("repositoryId");
+
+    if (!repositoryId) {
+      return jsonResponse({ error: "Missing repositoryId" }, 400, origin);
+    }
+
+    try {
+      const trackedFiles = await ctx.runQuery(internal.repositories.listTrackedFilesForMobile, {
+        repositoryId,
+        userId: user.userId,
+      });
+
+      return jsonResponse(trackedFiles, 200, origin);
+    } catch (error) {
+      console.error("List tracked files error:", error);
+      return jsonResponse(
+        { error: error instanceof Error ? error.message : "Failed to list tracked files" },
+        500,
+        origin
+      );
+    }
+  }),
+});
+
+// POST /api/mobile/repository/add-tracked-file - Add a tracked file to a repository
+http.route({
+  path: "/api/mobile/repository/add-tracked-file",
+  method: "OPTIONS",
+  handler: httpAction(async (_, request) => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request.headers.get("Origin")),
+    });
+  }),
+});
+
+http.route({
+  path: "/api/mobile/repository/add-tracked-file",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+
+    const user = await verifyMobileAuth(ctx, request);
+    if (!user) {
+      return jsonResponse({ error: "Unauthorized" }, 401, origin);
+    }
+
+    try {
+      const body = await request.json();
+      const { repositoryId, filePath, title, pdfSourceType, compiler } = body;
+
+      if (!repositoryId || !filePath || !title || !pdfSourceType) {
+        return jsonResponse({ error: "Missing required fields" }, 400, origin);
+      }
+
+      const result = await ctx.runMutation(internal.repositories.addTrackedFileForMobile, {
+        repositoryId,
+        userId: user.userId,
+        filePath,
+        title,
+        pdfSourceType,
+        compiler,
+      });
+
+      return jsonResponse(result, 200, origin);
+    } catch (error) {
+      console.error("Add tracked file error:", error);
+      return jsonResponse(
+        { error: error instanceof Error ? error.message : "Failed to add tracked file" },
         500,
         origin
       );

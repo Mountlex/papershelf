@@ -19,6 +19,8 @@ class TokenStorage(context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
+    // MARK: - JWT Token Storage (for email/password login)
+
     fun save(tokens: AuthTokens) {
         prefs.edit()
             .putString(KEY_ACCESS_TOKEN, tokens.accessToken)
@@ -42,6 +44,33 @@ class TokenStorage(context: Context) {
     }
 
     fun clear() {
+        prefs.edit()
+            .remove(KEY_ACCESS_TOKEN)
+            .remove(KEY_REFRESH_TOKEN)
+            .remove(KEY_EXPIRES_AT)
+            .remove(KEY_REFRESH_EXPIRES_AT)
+            .apply()
+    }
+
+    // MARK: - Convex Auth Token Storage (for OAuth login)
+
+    fun saveConvexAuthToken(token: String) {
+        prefs.edit()
+            .putString(KEY_CONVEX_AUTH_TOKEN, token)
+            .apply()
+    }
+
+    fun loadConvexAuthToken(): String? {
+        return prefs.getString(KEY_CONVEX_AUTH_TOKEN, null)
+    }
+
+    fun clearConvexAuthToken() {
+        prefs.edit()
+            .remove(KEY_CONVEX_AUTH_TOKEN)
+            .apply()
+    }
+
+    fun clearAll() {
         prefs.edit().clear().apply()
     }
 
@@ -50,6 +79,7 @@ class TokenStorage(context: Context) {
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_EXPIRES_AT = "expires_at"
         private const val KEY_REFRESH_EXPIRES_AT = "refresh_expires_at"
+        private const val KEY_CONVEX_AUTH_TOKEN = "convex_auth_token"
     }
 }
 

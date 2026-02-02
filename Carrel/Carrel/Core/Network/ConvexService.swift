@@ -101,7 +101,9 @@ final class ConvexService: ObservableObject {
     // MARK: - Authentication
 
     /// Set the authentication token received from the OAuth flow
-    func setAuthToken(_ token: String?) async {
+    /// - Returns: `true` if authentication succeeded, `false` if it failed
+    @discardableResult
+    func setAuthToken(_ token: String?) async -> Bool {
         print("ConvexService: setAuthToken called, token exists: \(token != nil)")
         authToken = token
         if let token = token {
@@ -109,13 +111,39 @@ final class ConvexService: ObservableObject {
             // Trigger login to authenticate the client with the token
             do {
                 try await client.login()
-                print("ConvexService: Successfully authenticated with Convex")
+                print("ConvexService: client.login() completed, isAuthenticated = \(isAuthenticated)")
+
+                // Auth state is updated via the authState publisher observer
+                // By the time client.login() returns, isAuthenticated should reflect the result
+                if isAuthenticated {
+                    print("ConvexService: Successfully authenticated with Convex")
+                    return true
+                } else {
+                    // Give the auth state a moment to update (in case of race condition)
+                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                    print("ConvexService: After delay, isAuthenticated = \(isAuthenticated)")
+
+                    if isAuthenticated {
+                        print("ConvexService: Successfully authenticated with Convex (after delay)")
+                        return true
+                    } else {
+                        print("ConvexService: Auth state did not become authenticated")
+                        authToken = nil
+                        authProvider.setToken(nil)
+                        return false
+                    }
+                }
             } catch {
                 print("ConvexService: Failed to authenticate: \(error)")
+                // Clear the invalid token
+                authToken = nil
+                authProvider.setToken(nil)
+                return false
             }
         } else {
             authProvider.setToken(nil)
             try? await client.logout()
+            return false
         }
     }
 

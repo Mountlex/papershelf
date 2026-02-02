@@ -3,6 +3,7 @@ package com.carrel.app.features.gallery
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.staggeredgrid.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -14,17 +15,20 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carrel.app.core.auth.AuthManager
 import com.carrel.app.core.network.ConvexClient
+import com.carrel.app.core.network.ConvexService
 import com.carrel.app.core.network.models.Paper
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GalleryScreen(
     convexClient: ConvexClient,
+    convexService: ConvexService,
     authManager: AuthManager,
     onPaperClick: (String) -> Unit,
-    onSettingsClick: () -> Unit
+    onSettingsClick: () -> Unit,
+    onRepositoriesClick: () -> Unit
 ) {
-    val viewModel = remember { GalleryViewModel(convexClient, authManager) }
+    val viewModel = remember { GalleryViewModel(convexClient, convexService, authManager) }
     val uiState by viewModel.uiState.collectAsState()
 
     Scaffold(
@@ -41,6 +45,9 @@ fun GalleryScreen(
                         IconButton(onClick = { viewModel.refresh() }) {
                             Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                         }
+                    }
+                    IconButton(onClick = onRepositoriesClick) {
+                        Icon(Icons.Default.Folder, contentDescription = "Repositories")
                     }
                     IconButton(onClick = onSettingsClick) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")

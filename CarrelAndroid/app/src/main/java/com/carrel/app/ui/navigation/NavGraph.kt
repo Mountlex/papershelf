@@ -8,19 +8,34 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.carrel.app.core.di.AppContainer
+import com.carrel.app.core.network.models.Repository
 import com.carrel.app.features.auth.EmailLoginScreen
 import com.carrel.app.features.auth.LoginScreen
 import com.carrel.app.features.gallery.GalleryScreen
 import com.carrel.app.features.paper.PaperDetailScreen
+import com.carrel.app.features.repositories.AddPaperFromRepoScreen
+import com.carrel.app.features.repositories.RepositoryListScreen
 import com.carrel.app.features.settings.SettingsScreen
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.net.URLDecoder
+import java.net.URLEncoder
 
 sealed class Screen(val route: String) {
     data object Login : Screen("login")
     data object EmailLogin : Screen("email-login")
     data object Gallery : Screen("gallery")
     data object Settings : Screen("settings")
+    data object Repositories : Screen("repositories")
     data object PaperDetail : Screen("paper/{paperId}") {
         fun createRoute(paperId: String) = "paper/$paperId"
+    }
+    data object AddPaperFromRepo : Screen("add-paper/{repoJson}") {
+        fun createRoute(repository: Repository): String {
+            val json = Json.encodeToString(repository)
+            val encoded = URLEncoder.encode(json, "UTF-8")
+            return "add-paper/$encoded"
+        }
     }
 }
 
@@ -71,12 +86,16 @@ fun NavGraph(
         composable(Screen.Gallery.route) {
             GalleryScreen(
                 convexClient = container.convexClient,
+                convexService = container.convexService,
                 authManager = container.authManager,
                 onPaperClick = { paperId ->
                     navController.navigate(Screen.PaperDetail.createRoute(paperId))
                 },
                 onSettingsClick = {
                     navController.navigate(Screen.Settings.route)
+                },
+                onRepositoriesClick = {
+                    navController.navigate(Screen.Repositories.route)
                 }
             )
         }
@@ -91,6 +110,7 @@ fun NavGraph(
             PaperDetailScreen(
                 paperId = paperId,
                 convexClient = container.convexClient,
+                convexService = container.convexService,
                 onBackClick = { navController.popBackStack() }
             )
         }
@@ -100,6 +120,37 @@ fun NavGraph(
                 convexClient = container.convexClient,
                 authManager = container.authManager,
                 onBackClick = { navController.popBackStack() }
+            )
+        }
+
+        composable(Screen.Repositories.route) {
+            RepositoryListScreen(
+                convexClient = container.convexClient,
+                authManager = container.authManager,
+                onRepositoryClick = { repository ->
+                    navController.navigate(Screen.AddPaperFromRepo.createRoute(repository))
+                },
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = Screen.AddPaperFromRepo.route,
+            arguments = listOf(
+                navArgument("repoJson") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val repoJson = backStackEntry.arguments?.getString("repoJson") ?: return@composable
+            val decoded = URLDecoder.decode(repoJson, "UTF-8")
+            val repository = Json.decodeFromString<Repository>(decoded)
+            AddPaperFromRepoScreen(
+                repository = repository,
+                convexClient = container.convexClient,
+                onBackClick = { navController.popBackStack() },
+                onPaperAdded = {
+                    // Navigate back to gallery after adding paper
+                    navController.popBackStack(Screen.Gallery.route, inclusive = false)
+                }
             )
         }
     }

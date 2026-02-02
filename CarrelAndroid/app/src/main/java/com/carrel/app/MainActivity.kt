@@ -2,6 +2,7 @@ package com.carrel.app
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -11,9 +12,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import com.carrel.app.core.auth.OAuthCallbackResult
+import com.carrel.app.core.auth.OAuthHandler
 import com.carrel.app.ui.navigation.NavGraph
 import com.carrel.app.ui.theme.CarrelTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val container by lazy { (application as CarrelApplication).container }
@@ -27,9 +32,21 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val isAuthenticated by container.authManager.isAuthenticated.collectAsState()
+            val scope = rememberCoroutineScope()
 
+            // Load stored tokens and restore auth on startup
             LaunchedEffect(Unit) {
-                container.authManager.loadStoredTokens()
+                val convexToken = container.authManager.loadStoredTokens()
+                if (convexToken != null) {
+                    // Restore Convex Auth session
+                    Log.d(TAG, "Restoring Convex Auth session")
+                    val success = container.convexService.restoreAuthFromCache(convexToken)
+                    if (!success) {
+                        Log.w(TAG, "Failed to restore Convex Auth session, token may be invalid")
+                        // Token is invalid - will require re-login
+                        container.authManager.logout()
+                    }
+                }
             }
 
             CarrelTheme {
@@ -53,20 +70,49 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         val uri = intent?.data ?: return
-        if (uri.scheme == "carrel" && uri.host == "auth") {
-            val accessToken = uri.getQueryParameter("accessToken")
-            val refreshToken = uri.getQueryParameter("refreshToken")
-            val expiresAt = uri.getQueryParameter("expiresAt")?.toLongOrNull()
-            val refreshExpiresAt = uri.getQueryParameter("refreshExpiresAt")?.toLongOrNull()
+        if (uri.scheme != "carrel" || uri.host != "auth") return
 
-            if (accessToken != null && expiresAt != null) {
+        Log.d(TAG, "Handling OAuth callback: $uri")
+
+        when (val result = OAuthHandler.parseCallbackUri(uri)) {
+            is OAuthCallbackResult.ConvexAuth -> {
+                Log.d(TAG, "Received Convex Auth token")
+                // Handle OAuth login (GitHub/GitLab)
+                container.authManager.handleConvexAuthCallback(result.token)
+
+                // Set up ConvexService authentication
+                kotlinx.coroutines.MainScope().launch {
+                    val success = container.convexService.setAuthToken(result.token)
+                    if (success) {
+                        Log.d(TAG, "Convex Auth setup successful")
+                    } else {
+                        Log.e(TAG, "Convex Auth setup failed")
+                    }
+                }
+            }
+
+            is OAuthCallbackResult.JwtAuth -> {
+                Log.d(TAG, "Received JWT tokens (email login)")
+                // Handle email/password login (HTTP-based, no subscriptions)
                 container.authManager.handleOAuthCallback(
-                    accessToken = accessToken,
-                    refreshToken = refreshToken,
-                    expiresAt = expiresAt,
-                    refreshExpiresAt = refreshExpiresAt
+                    accessToken = result.accessToken,
+                    refreshToken = result.refreshToken,
+                    expiresAt = result.expiresAt,
+                    refreshExpiresAt = result.refreshExpiresAt
                 )
             }
+
+            is OAuthCallbackResult.Error -> {
+                Log.e(TAG, "OAuth error: ${result.message}")
+            }
+
+            null -> {
+                Log.w(TAG, "Failed to parse OAuth callback")
+            }
         }
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
     }
 }

@@ -1874,3 +1874,58 @@ export const refreshAllRepositories = action({
     };
   },
 });
+
+// Internal action for refreshing all repositories (mobile) - takes userId
+export const refreshAllRepositoriesForMobile = internalAction({
+  args: {
+    userId: v.id("users"),
+    force: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    // Fetch all repositories at once
+    const repositories = await ctx.runQuery(internal.sync.getUserRepositories, { userId: args.userId });
+
+    if (repositories.length === 0) {
+      return { checked: 0, updated: 0, failed: 0 };
+    }
+
+    // Filter repos that aren't already syncing and haven't been synced recently
+    const reposToCheck = repositories.filter((repo: Doc<"repositories">) => {
+      if (repo.syncStatus === "syncing") return false;
+      if (args.force) return true;
+      if (repo.lastSyncedAt && Date.now() - repo.lastSyncedAt < MIN_SYNC_INTERVAL) {
+        return false;
+      }
+      return true;
+    });
+
+    // Process all repos in parallel using the internal action
+    const results = await Promise.allSettled(
+      reposToCheck.map((repo: Doc<"repositories">) =>
+        ctx.runAction(internal.sync.refreshRepositoryInternal, {
+          repositoryId: repo._id,
+          userId: args.userId,
+        })
+      )
+    );
+
+    // Tally results
+    let updated = 0;
+    let failed = 0;
+
+    for (const result of results) {
+      if (result.status === "rejected") {
+        failed++;
+        console.error("Repository refresh failed:", result.reason);
+      } else if (!result.value.skipped && result.value.updated) {
+        updated++;
+      }
+    }
+
+    return {
+      checked: reposToCheck.length,
+      updated,
+      failed,
+    };
+  },
+});

@@ -26,10 +26,19 @@ final class AuthManager {
 
         if let token = await keychain.loadConvexAuthToken() {
             print("AuthManager: Found stored token, authenticating...")
-            convexAuthToken = token
-            await ConvexService.shared.setAuthToken(token)
-            isAuthenticated = true
-            print("AuthManager: Restored session, isAuthenticated = true")
+            let success = await ConvexService.shared.setAuthToken(token)
+
+            if success {
+                convexAuthToken = token
+                isAuthenticated = true
+                print("AuthManager: Restored session, isAuthenticated = true")
+            } else {
+                // Token is invalid/expired - clear it and require re-login
+                print("AuthManager: Stored token is invalid, clearing and requiring re-login")
+                convexAuthToken = nil
+                await keychain.clearConvexAuthToken()
+                isAuthenticated = false
+            }
         }
     }
 

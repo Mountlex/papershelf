@@ -33,3 +33,25 @@ data class ApiErrorResponse(
 data class SuccessResponse(
     val success: Boolean = true
 )
+
+@Serializable
+data class RefreshRepositoryResponse(
+    val updated: Boolean,
+    val dateIsFallback: Boolean? = null,
+    val skipped: Boolean? = null,
+    val reason: String? = null,
+    val commitHash: String? = null
+)
+
+@Serializable
+data class CheckAllResponse(
+    val checked: Int,
+    val updated: Int,
+    val failed: Int
+)
+
+@Serializable
+data class AddTrackedFileResponse(
+    val trackedFileId: String,
+    val paperId: String
+)

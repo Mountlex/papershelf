@@ -423,6 +423,31 @@ export const listRepositoryFiles = action({
   },
 });
 
+// List files in a repository for mobile (internal action, takes userId)
+export const listRepositoryFilesInternal = internalAction({
+  args: {
+    gitUrl: v.string(),
+    path: v.optional(v.string()),
+    branch: v.optional(v.string()),
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    // Get all self-hosted GitLab instances for this user
+    const selfHostedInstances = await getAllSelfHostedGitLabInstancesByUserId(ctx, args.userId);
+    const branch = args.branch || "main";
+
+    const { provider, owner, repo } = await getProvider(
+      ctx,
+      args.gitUrl,
+      selfHostedInstances,
+      createTokenGetters(),
+      args.userId
+    );
+
+    return provider.listFiles(owner, repo, branch, args.path);
+  },
+});
+
 // Internal action wrapper for fetchLatestCommit
 export const fetchLatestCommitInternal = internalAction({
   args: {

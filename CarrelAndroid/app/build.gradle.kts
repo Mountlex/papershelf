@@ -70,5 +70,8 @@ dependencies {
     // Image loading
     implementation(libs.coil.compose)
 
+    // Convex real-time backend
+    implementation(libs.convex.android)
+
     debugImplementation(libs.androidx.ui.tooling)
 }

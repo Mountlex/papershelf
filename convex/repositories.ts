@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalQuery, internalMutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { auth } from "./auth";
 import { validateFilePath, validateRepositoryNameOrThrow } from "./lib/validation";
@@ -376,5 +376,217 @@ export const removeTrackedFile = mutation({
     }
 
     await ctx.db.delete(args.id);
+  },
+});
+
+// ==================== Mobile Internal Queries/Mutations ====================
+
+// List repositories for mobile (with sync status) - no auth check, expects verified userId
+export const listForMobile = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = args.userId as Id<"users">;
+
+    const repositories = await ctx.db
+      .query("repositories")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+
+    // Batch-load all papers for all repositories upfront to avoid N+1 queries
+    const repoIds = repositories.map((r) => r._id);
+    const allPapersArrays = await Promise.all(
+      repoIds.map((id) =>
+        ctx.db
+          .query("papers")
+          .withIndex("by_repository", (q) => q.eq("repositoryId", id))
+          .collect()
+      )
+    );
+    const papersByRepo = new Map(repoIds.map((id, i) => [id, allPapersArrays[i]]));
+
+    // Enrich with sync status
+    const enrichedRepos = repositories.map((repo) => {
+      const papers = papersByRepo.get(repo._id) ?? [];
+
+      let paperSyncStatus: "no_papers" | "in_sync" | "needs_sync" | "never_synced" = "no_papers";
+
+      if (papers.length === 0) {
+        paperSyncStatus = "no_papers";
+      } else if (!repo.lastCommitHash) {
+        paperSyncStatus = "never_synced";
+      } else {
+        const allInSync = papers.every((paper) => {
+          if (!paper.pdfFileId) return false;
+          if (paper.needsSync === true) return false;
+          if (paper.needsSync === false) return true;
+          return paper.cachedCommitHash === repo.lastCommitHash;
+        });
+        paperSyncStatus = allInSync ? "in_sync" : "needs_sync";
+      }
+
+      const papersWithErrors = papers.filter((p) => p.lastSyncError).length;
+
+      return {
+        _id: repo._id,
+        name: repo.name,
+        gitUrl: repo.gitUrl,
+        provider: repo.provider,
+        defaultBranch: repo.defaultBranch,
+        syncStatus: repo.syncStatus,
+        paperSyncStatus,
+        paperCount: papers.length,
+        papersWithErrors,
+        lastSyncedAt: repo.lastSyncedAt,
+        lastCommitHash: repo.lastCommitHash,
+      };
+    });
+
+    return enrichedRepos;
+  },
+});
+
+// Delete repository for mobile - no auth check, expects verified userId
+export const removeForMobile = internalMutation({
+  args: {
+    repositoryId: v.string(),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const repositoryId = args.repositoryId as Id<"repositories">;
+    const userId = args.userId as Id<"users">;
+
+    const repository = await ctx.db.get(repositoryId);
+    if (!repository || repository.userId !== userId) {
+      throw new Error("Repository not found or unauthorized");
+    }
+
+    // Delete all papers associated with this repository
+    const papers = await ctx.db
+      .query("papers")
+      .withIndex("by_repository", (q) => q.eq("repositoryId", repositoryId))
+      .collect();
+
+    for (const paper of papers) {
+      await deletePaperAndAssociatedData(ctx, paper);
+    }
+
+    // Delete all tracked files for this repository
+    const trackedFiles = await ctx.db
+      .query("trackedFiles")
+      .withIndex("by_repository", (q) => q.eq("repositoryId", repositoryId))
+      .collect();
+
+    for (const file of trackedFiles) {
+      await ctx.db.delete(file._id);
+    }
+
+    // Delete the repository
+    await ctx.db.delete(repositoryId);
+  },
+});
+
+// List tracked files for mobile
+export const listTrackedFilesForMobile = internalQuery({
+  args: {
+    repositoryId: v.string(),
+    userId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const repositoryId = args.repositoryId as Id<"repositories">;
+    const userId = args.userId as Id<"users">;
+
+    const repository = await ctx.db.get(repositoryId);
+    if (!repository || repository.userId !== userId) {
+      throw new Error("Repository not found or unauthorized");
+    }
+
+    const trackedFiles = await ctx.db
+      .query("trackedFiles")
+      .withIndex("by_repository", (q) => q.eq("repositoryId", repositoryId))
+      .collect();
+
+    return trackedFiles.map((tf) => ({
+      _id: tf._id,
+      filePath: tf.filePath,
+      fileType: tf.fileType,
+      pdfSourceType: tf.pdfSourceType,
+      compiler: tf.compiler,
+      isActive: tf.isActive,
+    }));
+  },
+});
+
+// Add tracked file for mobile
+export const addTrackedFileForMobile = internalMutation({
+  args: {
+    repositoryId: v.string(),
+    userId: v.string(),
+    filePath: v.string(),
+    title: v.string(),
+    pdfSourceType: v.string(),
+    compiler: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const repositoryId = args.repositoryId as Id<"repositories">;
+    const userId = args.userId as Id<"users">;
+
+    const repository = await ctx.db.get(repositoryId);
+    if (!repository || repository.userId !== userId) {
+      throw new Error("Repository not found or unauthorized");
+    }
+
+    // Validate file path
+    const filePathValidation = validateFilePath(args.filePath);
+    if (!filePathValidation.valid) {
+      throw new Error(filePathValidation.error);
+    }
+
+    // Determine file type from extension
+    const fileType = args.filePath.endsWith(".tex") ? "tex" as const : "pdf" as const;
+    const pdfSourceType = args.pdfSourceType === "compile" ? "compile" as const : "committed" as const;
+
+    // Check if file is already tracked
+    const existingTrackedFile = await ctx.db
+      .query("trackedFiles")
+      .withIndex("by_repository", (q) => q.eq("repositoryId", repositoryId))
+      .filter((q) => q.eq(q.field("filePath"), filePathValidation.normalized))
+      .first();
+
+    if (existingTrackedFile) {
+      throw new Error("File already exists as a tracked paper");
+    }
+
+    const trackedFileData: {
+      repositoryId: Id<"repositories">;
+      filePath: string;
+      fileType: "tex" | "pdf";
+      pdfSourceType: "committed" | "compile";
+      isActive: boolean;
+      compiler?: "pdflatex" | "xelatex" | "lualatex";
+    } = {
+      repositoryId,
+      filePath: filePathValidation.normalized,
+      fileType,
+      pdfSourceType,
+      isActive: true,
+    };
+
+    if (pdfSourceType === "compile" && args.compiler) {
+      trackedFileData.compiler = args.compiler as "pdflatex" | "xelatex" | "lualatex";
+    }
+
+    const trackedFileId = await ctx.db.insert("trackedFiles", trackedFileData);
+
+    // Create a paper entry for this tracked file
+    const paperId = await ctx.db.insert("papers", {
+      repositoryId,
+      trackedFileId,
+      title: args.title,
+      isPublic: false,
+      updatedAt: Date.now(),
+      needsSync: true,
+    });
+
+    return { trackedFileId: trackedFileId, paperId: paperId };
   },
 });

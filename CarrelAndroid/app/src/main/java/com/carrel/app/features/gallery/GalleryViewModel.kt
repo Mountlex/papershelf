@@ -1,55 +1,149 @@
 package com.carrel.app.features.gallery
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.carrel.app.core.auth.AuthManager
-import com.carrel.app.core.network.ApiException
 import com.carrel.app.core.network.ConvexClient
+import com.carrel.app.core.network.ConvexService
 import com.carrel.app.core.network.models.Paper
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class GalleryUiState(
     val papers: List<Paper> = emptyList(),
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val isSubscribed: Boolean = false
 )
 
 class GalleryViewModel(
     private val convexClient: ConvexClient,
+    private val convexService: ConvexService,
     private val authManager: AuthManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(GalleryUiState())
     val uiState: StateFlow<GalleryUiState> = _uiState.asStateFlow()
 
+    private var subscriptionJob: Job? = null
+
     init {
-        loadPapers()
+        observeAuthState()
     }
 
-    fun loadPapers() {
-        if (_uiState.value.isLoading) return
+    /**
+     * Observe auth state and set up subscription or fallback accordingly.
+     */
+    private fun observeAuthState() {
+        viewModelScope.launch {
+            convexService.isAuthenticated.collect { isAuthenticated ->
+                Log.d(TAG, "ConvexService auth state: $isAuthenticated, hasConvexAuth: ${authManager.hasConvexAuth()}")
+
+                if (isAuthenticated && authManager.hasConvexAuth()) {
+                    // OAuth login with ConvexService authenticated - use real-time subscriptions
+                    startSubscription()
+                } else if (!isAuthenticated && authManager.hasConvexAuth()) {
+                    // OAuth login but ConvexService not yet authenticated - wait for it
+                    Log.d(TAG, "Waiting for ConvexService authentication...")
+                    _uiState.update { it.copy(isLoading = true) }
+                }
+            }
+        }
+
+        // Also observe AuthManager's auth state for email login
+        viewModelScope.launch {
+            authManager.isAuthenticated.collect { isAuthenticated ->
+                Log.d(TAG, "AuthManager auth state: $isAuthenticated, hasConvexAuth: ${authManager.hasConvexAuth()}")
+
+                if (isAuthenticated && !authManager.hasConvexAuth() && !_uiState.value.isSubscribed) {
+                    // Email login (no Convex Auth) - load via HTTP
+                    Log.d(TAG, "Email login detected, using HTTP")
+                    loadPapersViaHttp()
+                } else if (!isAuthenticated) {
+                    // Logged out - clear papers
+                    subscriptionJob?.cancel()
+                    _uiState.update { GalleryUiState() }
+                }
+            }
+        }
+    }
+
+    /**
+     * Start real-time subscription to papers.
+     * Used when authenticated via OAuth (Convex Auth).
+     */
+    private fun startSubscription() {
+        if (_uiState.value.isSubscribed) return
+
+        Log.d(TAG, "Starting papers subscription")
+        subscriptionJob?.cancel()
+        subscriptionJob = viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+
+            try {
+                convexService.subscribeToPapers().collect { papers ->
+                    Log.d(TAG, "Received ${papers.size} papers from subscription")
+                    _uiState.update { state ->
+                        state.copy(
+                            papers = papers,
+                            isLoading = false,
+                            isRefreshing = false,
+                            isSubscribed = true
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Subscription error: ${e.message}")
+                _uiState.update { state ->
+                    state.copy(
+                        error = e.message,
+                        isLoading = false,
+                        isRefreshing = false,
+                        isSubscribed = false
+                    )
+                }
+                // Fall back to HTTP
+                loadPapersViaHttp()
+            }
+        }
+    }
+
+    /**
+     * Load papers using HTTP client (authenticated).
+     * Used for email/password login or as fallback when subscriptions fail.
+     */
+    private fun loadPapersViaHttp() {
+        if (_uiState.value.isLoading && !_uiState.value.isRefreshing) return
 
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+            _uiState.update { it.copy(isLoading = true, error = null) }
 
             convexClient.papers()
                 .onSuccess { papers ->
-                    _uiState.value = _uiState.value.copy(
-                        papers = papers,
-                        isLoading = false,
-                        isRefreshing = false
-                    )
+                    Log.d(TAG, "Loaded ${papers.size} papers via HTTP")
+                    _uiState.update { state ->
+                        state.copy(
+                            papers = papers,
+                            isLoading = false,
+                            isRefreshing = false
+                        )
+                    }
                 }
                 .onError { exception ->
-                    _uiState.value = _uiState.value.copy(
-                        error = exception.message,
-                        isLoading = false,
-                        isRefreshing = false
-                    )
+                    Log.e(TAG, "HTTP error: ${exception.message}")
+                    _uiState.update { state ->
+                        state.copy(
+                            error = exception.message,
+                            isLoading = false,
+                            isRefreshing = false
+                        )
+                    }
 
                     if (exception.isAuthError) {
                         viewModelScope.launch { authManager.logout() }
@@ -58,40 +152,71 @@ class GalleryViewModel(
         }
     }
 
+    /**
+     * Manual refresh.
+     * For subscription mode, this does nothing (data is real-time).
+     * For HTTP mode, this triggers a reload.
+     */
     fun refresh() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isRefreshing = true)
-            loadPapers()
+            _uiState.update { it.copy(isRefreshing = true) }
+
+            if (_uiState.value.isSubscribed) {
+                // Subscription mode - data is already real-time
+                // Just clear the refreshing state after a brief delay
+                kotlinx.coroutines.delay(500)
+                _uiState.update { it.copy(isRefreshing = false) }
+            } else {
+                // HTTP mode - reload
+                loadPapersViaHttp()
+            }
         }
     }
 
     fun buildPaper(paper: Paper, force: Boolean = false) {
         viewModelScope.launch {
-            convexClient.buildPaper(paper.id, force)
+            // Use ConvexService for mutations (works with both auth modes)
+            convexService.buildPaper(paper.id, force)
                 .onSuccess {
-                    loadPapers()
+                    // If not subscribed, refresh manually
+                    if (!_uiState.value.isSubscribed) {
+                        loadPapersViaHttp()
+                    }
                 }
-                .onError { exception ->
-                    _uiState.value = _uiState.value.copy(error = exception.message)
+                .onFailure { exception ->
+                    _uiState.update { it.copy(error = exception.message) }
                 }
         }
     }
 
     fun deletePaper(paper: Paper) {
         viewModelScope.launch {
-            convexClient.deletePaper(paper.id)
-                .onSuccess {
-                    _uiState.value = _uiState.value.copy(
-                        papers = _uiState.value.papers.filter { it.id != paper.id }
-                    )
-                }
-                .onError { exception ->
-                    _uiState.value = _uiState.value.copy(error = exception.message)
+            // Optimistic update
+            _uiState.update { state ->
+                state.copy(papers = state.papers.filter { it.id != paper.id })
+            }
+
+            convexService.deletePaper(paper.id)
+                .onFailure { exception ->
+                    _uiState.update { it.copy(error = exception.message) }
+                    // Restore correct state on error (subscription will auto-update, or reload via HTTP)
+                    if (!_uiState.value.isSubscribed) {
+                        loadPapersViaHttp()
+                    }
                 }
         }
     }
 
     fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null)
+        _uiState.update { it.copy(error = null) }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        subscriptionJob?.cancel()
+    }
+
+    companion object {
+        private const val TAG = "GalleryViewModel"
     }
 }

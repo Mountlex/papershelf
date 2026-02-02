@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.carrel.app.core.network.ConvexClient
+import com.carrel.app.core.network.ConvexService
 import com.carrel.app.ui.components.StatusBadge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -37,9 +38,10 @@ import java.net.URL
 fun PaperDetailScreen(
     paperId: String,
     convexClient: ConvexClient,
+    convexService: ConvexService? = null,
     onBackClick: () -> Unit
 ) {
-    val viewModel = remember { PaperViewModel(paperId, convexClient) }
+    val viewModel = remember { PaperViewModel(paperId, convexClient, convexService) }
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
 

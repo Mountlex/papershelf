@@ -2,6 +2,7 @@ package com.carrel.app.core.network
 
 import com.carrel.app.core.auth.AuthManager
 import com.carrel.app.core.network.models.*
+import java.net.URLEncoder
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.android.*
@@ -70,6 +71,65 @@ class ConvexClient(
     suspend fun togglePaperPublic(id: String): ApiResult<TogglePublicResponse> {
         val token = authManager.getValidToken() ?: return ApiResult.Error(ApiException.TokenExpired)
         return post("$BASE_URL/api/mobile/paper/toggle-public", token, mapOf("paperId" to id))
+    }
+
+    // MARK: - Repositories
+
+    suspend fun repositories(): ApiResult<List<Repository>> {
+        val token = authManager.getValidToken() ?: return ApiResult.Error(ApiException.TokenExpired)
+        return get("$BASE_URL/api/mobile/repositories", token)
+    }
+
+    suspend fun refreshRepository(id: String): ApiResult<RefreshRepositoryResponse> {
+        val token = authManager.getValidToken() ?: return ApiResult.Error(ApiException.TokenExpired)
+        return post("$BASE_URL/api/mobile/repository/refresh", token, mapOf("repositoryId" to id))
+    }
+
+    suspend fun deleteRepository(id: String): ApiResult<SuccessResponse> {
+        val token = authManager.getValidToken() ?: return ApiResult.Error(ApiException.TokenExpired)
+        return delete("$BASE_URL/api/mobile/repository", token, mapOf("repositoryId" to id))
+    }
+
+    suspend fun checkAllRepositories(): ApiResult<CheckAllResponse> {
+        val token = authManager.getValidToken() ?: return ApiResult.Error(ApiException.TokenExpired)
+        return post("$BASE_URL/api/mobile/repositories/check-all", token, null)
+    }
+
+    suspend fun listRepositoryFiles(
+        gitUrl: String,
+        path: String?,
+        branch: String?
+    ): ApiResult<List<RepositoryFile>> {
+        val token = authManager.getValidToken() ?: return ApiResult.Error(ApiException.TokenExpired)
+        val params = buildString {
+            append("gitUrl=${java.net.URLEncoder.encode(gitUrl, "UTF-8")}")
+            path?.let { append("&path=${java.net.URLEncoder.encode(it, "UTF-8")}") }
+            branch?.let { append("&branch=${java.net.URLEncoder.encode(it, "UTF-8")}") }
+        }
+        return get("$BASE_URL/api/mobile/repository/files?$params", token)
+    }
+
+    suspend fun listTrackedFiles(repositoryId: String): ApiResult<List<TrackedFileInfo>> {
+        val token = authManager.getValidToken() ?: return ApiResult.Error(ApiException.TokenExpired)
+        return get("$BASE_URL/api/mobile/repository/tracked-files?repositoryId=$repositoryId", token)
+    }
+
+    suspend fun addTrackedFile(
+        repositoryId: String,
+        filePath: String,
+        title: String,
+        pdfSourceType: String,
+        compiler: String?
+    ): ApiResult<AddTrackedFileResponse> {
+        val token = authManager.getValidToken() ?: return ApiResult.Error(ApiException.TokenExpired)
+        val body = buildMap<String, Any> {
+            put("repositoryId", repositoryId)
+            put("filePath", filePath)
+            put("title", title)
+            put("pdfSourceType", pdfSourceType)
+            compiler?.let { put("compiler", it) }
+        }
+        return post("$BASE_URL/api/mobile/repository/add-tracked-file", token, body)
     }
 
     // MARK: - User
@@ -217,8 +277,8 @@ class ConvexClient(
     }
 
     companion object {
-        // Update this to your Convex deployment URL
-        const val BASE_URL = "https://earnest-beagle-217.convex.site"
+        // Production Convex deployment URL
+        const val BASE_URL = "https://kindhearted-bloodhound-95.convex.site"
         const val SITE_URL = "https://carrel.app"
     }
 }
