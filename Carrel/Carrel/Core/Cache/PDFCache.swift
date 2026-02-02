@@ -23,14 +23,23 @@ actor PDFCache {
 
     private let fileManager = FileManager.default
     private let cacheDirectory: URL
-    private let maxFileSize = 50 * 1024 * 1024 // 50MB
+    private let maxFileSize = 50 * 1024 * 1024 // 50MB per file
+    private let maxTotalSize: Int64 = 500 * 1024 * 1024 // 500MB total cache limit
 
     private init() {
-        let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        // Get caches directory, fallback to temp directory if unavailable (extremely rare on iOS)
+        let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? fileManager.temporaryDirectory
         cacheDirectory = caches.appendingPathComponent("PDFCache", isDirectory: true)
 
         // Create cache directory if needed
         try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+    }
+
+    // Check if a PDF is cached without loading it
+    func isCached(url: URL) -> Bool {
+        let cacheFile = cacheFileURL(for: url)
+        return fileManager.fileExists(atPath: cacheFile.path)
     }
 
     // Get cached PDF data if available
@@ -39,11 +48,21 @@ actor PDFCache {
         guard fileManager.fileExists(atPath: cacheFile.path) else {
             return nil
         }
+
+        // Update modification date for LRU tracking
+        try? fileManager.setAttributes(
+            [.modificationDate: Date()],
+            ofItemAtPath: cacheFile.path
+        )
+
         return try? Data(contentsOf: cacheFile)
     }
 
     // Cache PDF data
     func cachePDF(_ data: Data, for url: URL) {
+        // Evict old files if needed before caching new data
+        evictIfNeeded(bytesNeeded: Int64(data.count))
+
         let cacheFile = cacheFileURL(for: url)
         try? data.write(to: cacheFile)
     }
@@ -85,7 +104,7 @@ actor PDFCache {
                 }
             }
         }
-        throw PDFCacheError.networkError(underlying: lastError!)
+        throw PDFCacheError.networkError(underlying: lastError ?? URLError(.unknown))
     }
 
     // Clear all cached PDFs
@@ -114,5 +133,38 @@ actor PDFCache {
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "+", with: "-")
         return cacheDirectory.appendingPathComponent("\(hash).pdf")
+    }
+
+    // MARK: - LRU Eviction
+
+    /// Evict oldest files until cache is under the size limit
+    private func evictIfNeeded(bytesNeeded: Int64 = 0) {
+        let currentSize = cacheSize()
+        let targetSize = maxTotalSize - bytesNeeded
+
+        guard currentSize > targetSize else { return }
+
+        // Get all files with their modification dates
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: cacheDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]
+        ) else { return }
+
+        // Sort by modification date (oldest first) for LRU eviction
+        let sortedFiles = files.compactMap { url -> (url: URL, date: Date, size: Int64)? in
+            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+                  let date = values.contentModificationDate,
+                  let size = values.fileSize else { return nil }
+            return (url, date, Int64(size))
+        }.sorted { $0.date < $1.date }
+
+        var freedBytes: Int64 = 0
+        let bytesToFree = currentSize - targetSize
+
+        for file in sortedFiles {
+            guard freedBytes < bytesToFree else { break }
+            try? fileManager.removeItem(at: file.url)
+            freedBytes += file.size
+        }
     }
 }

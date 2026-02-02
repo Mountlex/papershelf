@@ -10,10 +10,19 @@ struct PaperDetailView: View {
     @State private var isPreparingShare = false
     @State private var subscriptionTask: Task<Void, Never>?
     @State private var pdfLoadError: String?
+    @State private var showCopiedToast = false
+    @State private var shareError: String?
     @Environment(\.dismiss) private var dismiss
 
     init(paper: Paper) {
         _viewModel = State(initialValue: PaperViewModel(paper: paper))
+    }
+
+    private func copyShareLink() {
+        guard let slug = viewModel.paper.shareSlug else { return }
+        UIPasteboard.general.string = "https://carrelapp.com/share/\(slug)"
+        showCopiedToast = true
+        HapticManager.success()
     }
 
     private func prepareShareFile() async {
@@ -42,7 +51,10 @@ struct PaperDetailView: View {
             shareFileURL = fileURL
             showingShareSheet = true
         } catch {
+            #if DEBUG
             print("Failed to prepare share file: \(error)")
+            #endif
+            shareError = error.localizedDescription
         }
     }
 
@@ -62,6 +74,8 @@ struct PaperDetailView: View {
                 Button("Done") {
                     dismiss()
                 }
+                .accessibilityLabel("Done")
+                .accessibilityHint("Close paper details")
             }
 
             ToolbarItem(placement: .primaryAction) {
@@ -74,7 +88,7 @@ struct PaperDetailView: View {
                         if isPreparingShare {
                             Label("Preparing...", systemImage: "ellipsis")
                         } else {
-                            Label("Share", systemImage: "square.and.arrow.up")
+                            Label("Share PDF", systemImage: "square.and.arrow.up")
                         }
                     }
                     .disabled(viewModel.paper.pdfUrl == nil || isPreparingShare)
@@ -83,6 +97,26 @@ struct PaperDetailView: View {
                         showingEditSheet = true
                     } label: {
                         Label("Edit Details", systemImage: "pencil")
+                    }
+
+                    Divider()
+
+                    if viewModel.paper.isPublic {
+                        Section("Public Link") {
+                            Button {
+                                copyShareLink()
+                            } label: {
+                                Label("Copy Link", systemImage: "link")
+                            }
+
+                            Button(role: .destructive) {
+                                Task {
+                                    await viewModel.togglePublic()
+                                }
+                            } label: {
+                                Label("Make Private", systemImage: "lock")
+                            }
+                        }
                     }
 
                     Divider()
@@ -105,6 +139,7 @@ struct PaperDetailView: View {
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
+                .accessibilityLabel("More options")
             }
         }
         .sheet(isPresented: $showingShareSheet, onDismiss: {
@@ -128,6 +163,33 @@ struct PaperDetailView: View {
         } message: {
             Text(viewModel.error ?? "Unknown error")
         }
+        .alert("Share Failed", isPresented: .constant(shareError != nil)) {
+            Button("OK") {
+                shareError = nil
+            }
+        } message: {
+            Text(shareError ?? "Failed to prepare PDF for sharing")
+        }
+        .overlay(alignment: .top) {
+            if showCopiedToast {
+                Text("Link copied!")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.regularMaterial, in: Capsule())
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            withAnimation {
+                                showCopiedToast = false
+                            }
+                        }
+                    }
+                    .padding(.top, 8)
+            }
+        }
+        .animation(.easeInOut, value: showCopiedToast)
         .task {
             await startSubscription()
         }
@@ -148,7 +210,9 @@ struct PaperDetailView: View {
                 }
             } catch {
                 if !Task.isCancelled {
+                    #if DEBUG
                     print("PaperDetailView: Subscription error: \(error)")
+                    #endif
                 }
             }
         }
@@ -157,7 +221,7 @@ struct PaperDetailView: View {
     @ViewBuilder
     private var pdfViewer: some View {
         if let pdfUrl = viewModel.paper.pdfUrl, let url = URL(string: pdfUrl) {
-            PDFViewerContainer(url: url) { error in
+            PDFViewerWithOfflineCheck(url: url) { error in
                 pdfLoadError = error
             }
             .alert("PDF Error", isPresented: .constant(pdfLoadError != nil)) {
@@ -187,8 +251,16 @@ struct PaperDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(viewModel.paper.title ?? "Untitled")
-                        .font(.headline)
+                    HStack(spacing: 6) {
+                        Text(viewModel.paper.title ?? "Untitled")
+                            .font(.headline)
+
+                        if viewModel.paper.isPublic {
+                            Image(systemName: "globe")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
 
                 Spacer()
@@ -233,6 +305,47 @@ struct PaperDetailView: View {
         }
         .padding(12)
         .glassEffect(.regular, in: Rectangle())
+    }
+}
+
+/// Wrapper that checks offline status before showing PDF
+struct PDFViewerWithOfflineCheck: View {
+    let url: URL
+    var onError: ((String) -> Void)?
+
+    @State private var showOfflineMessage = false
+
+    var body: some View {
+        Group {
+            if showOfflineMessage {
+                // Offline and not cached
+                ContentUnavailableView {
+                    Label("Not Available Offline", systemImage: "wifi.slash")
+                } description: {
+                    Text("This PDF hasn't been downloaded yet. Connect to the internet to view it.")
+                }
+            } else {
+                // Show the PDF viewer - it will call onError if offline and not cached
+                PDFViewerContainer(url: url) { error in
+                    // Check if this is a network error while offline
+                    if !NetworkMonitor.shared.isConnected {
+                        showOfflineMessage = true
+                    } else {
+                        onError?(error)
+                    }
+                }
+            }
+        }
+        .task {
+            // Pre-check: if offline and not cached, show message immediately
+            let isOffline = !NetworkMonitor.shared.isConnected
+            if isOffline {
+                let isCached = await PDFCache.shared.isCached(url: url)
+                if !isCached {
+                    showOfflineMessage = true
+                }
+            }
+        }
     }
 }
 

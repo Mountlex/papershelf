@@ -1,9 +1,10 @@
 package com.carrel.app.features.settings
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.carrel.app.core.auth.AuthManager
-import com.carrel.app.core.network.ConvexClient
+import com.carrel.app.core.network.ConvexService
 import com.carrel.app.core.network.models.User
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,7 +18,7 @@ data class SettingsUiState(
 )
 
 class SettingsViewModel(
-    private val convexClient: ConvexClient,
+    private val convexService: ConvexService,
     private val authManager: AuthManager
 ) : ViewModel() {
 
@@ -32,14 +33,16 @@ class SettingsViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
-            convexClient.user()
+            convexService.getCurrentUser()
                 .onSuccess { user ->
+                    Log.d(TAG, "Loaded user: ${user?.email}")
                     _uiState.value = _uiState.value.copy(
                         user = user,
                         isLoading = false
                     )
                 }
-                .onError { exception ->
+                .onFailure { exception ->
+                    Log.e(TAG, "Failed to load user: ${exception.message}")
                     _uiState.value = _uiState.value.copy(
                         error = exception.message,
                         isLoading = false
@@ -56,5 +59,9 @@ class SettingsViewModel(
 
     fun clearError() {
         _uiState.value = _uiState.value.copy(error = null)
+    }
+
+    companion object {
+        private const val TAG = "SettingsViewModel"
     }
 }

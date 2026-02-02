@@ -1,9 +1,9 @@
 package com.carrel.app.features.repositories
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.carrel.app.core.auth.AuthManager
-import com.carrel.app.core.network.ConvexClient
+import com.carrel.app.core.network.ConvexService
 import com.carrel.app.core.network.models.Repository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,8 +22,7 @@ data class RepositoryListUiState(
 )
 
 class RepositoryListViewModel(
-    private val convexClient: ConvexClient,
-    private val authManager: AuthManager
+    private val convexService: ConvexService
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(RepositoryListUiState())
@@ -35,8 +34,9 @@ class RepositoryListViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
-            convexClient.repositories()
+            convexService.getRepositories()
                 .onSuccess { repositories ->
+                    Log.d(TAG, "Loaded ${repositories.size} repositories")
                     _uiState.update { state ->
                         state.copy(
                             repositories = repositories,
@@ -45,16 +45,14 @@ class RepositoryListViewModel(
                         )
                     }
                 }
-                .onError { exception ->
+                .onFailure { exception ->
+                    Log.e(TAG, "Failed to load repositories: ${exception.message}")
                     _uiState.update { state ->
                         state.copy(
                             error = exception.message,
                             isLoading = false,
                             isRefreshing = false
                         )
-                    }
-                    if (exception.isAuthError) {
-                        viewModelScope.launch { authManager.logout() }
                     }
                 }
         }
@@ -73,7 +71,7 @@ class RepositoryListViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isCheckingAll = true) }
 
-            convexClient.checkAllRepositories()
+            convexService.checkAllRepositories()
                 .onSuccess { result ->
                     val message = when {
                         result.failed > 0 -> "${result.failed} repos failed"
@@ -84,7 +82,7 @@ class RepositoryListViewModel(
                     _uiState.update { it.copy(toastMessage = message, isCheckingAll = false) }
                     loadRepositories()
                 }
-                .onError { exception ->
+                .onFailure { exception ->
                     _uiState.update { it.copy(toastMessage = "Failed to check repos", isCheckingAll = false) }
                 }
         }
@@ -96,7 +94,7 @@ class RepositoryListViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(refreshingRepoId = repository.id) }
 
-            convexClient.refreshRepository(repository.id)
+            convexService.refreshRepository(repository.id)
                 .onSuccess { result ->
                     val message = when {
                         result.skipped == true -> "Already syncing"
@@ -106,7 +104,7 @@ class RepositoryListViewModel(
                     _uiState.update { it.copy(toastMessage = message, refreshingRepoId = null) }
                     loadRepositories()
                 }
-                .onError { exception ->
+                .onFailure { exception ->
                     val message = if (exception.message?.contains("Rate limit") == true) {
                         "Rate limited, try later"
                     } else {
@@ -124,11 +122,11 @@ class RepositoryListViewModel(
                 state.copy(repositories = state.repositories.filter { it.id != repository.id })
             }
 
-            convexClient.deleteRepository(repository.id)
+            convexService.deleteRepository(repository.id)
                 .onSuccess {
                     _uiState.update { it.copy(toastMessage = "Repository deleted") }
                 }
-                .onError { exception ->
+                .onFailure { exception ->
                     _uiState.update { it.copy(toastMessage = "Failed to delete", error = exception.message) }
                     loadRepositories()
                 }
@@ -141,5 +139,9 @@ class RepositoryListViewModel(
 
     fun clearToast() {
         _uiState.update { it.copy(toastMessage = null) }
+    }
+
+    companion object {
+        private const val TAG = "RepositoryListViewModel"
     }
 }

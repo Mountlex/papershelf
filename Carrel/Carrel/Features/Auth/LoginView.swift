@@ -74,12 +74,21 @@ struct LoginView: View {
     }
 
     private func signIn(with provider: OAuthProvider) {
-        var components = URLComponents(url: AuthManager.siteURL.appendingPathComponent("mobile-auth"), resolvingAgainstBaseURL: true)!
+        guard var components = URLComponents(
+            url: AuthManager.siteURL.appendingPathComponent("mobile-auth"),
+            resolvingAgainstBaseURL: true
+        ) else {
+            error = "Failed to build authentication URL"
+            return
+        }
         components.queryItems = [
             URLQueryItem(name: "provider", value: provider.rawValue)
         ]
 
-        guard let url = components.url else { return }
+        guard let url = components.url else {
+            error = "Failed to build authentication URL"
+            return
+        }
 
         let session = ASWebAuthenticationSession(
             url: url,
@@ -165,19 +174,6 @@ enum OAuthProvider: String {
         case .gitlab: return "server.rack"
         case .email: return "envelope.fill"
         }
-    }
-}
-
-/// Provides the presentation context for ASWebAuthenticationSession
-final class WebAuthContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
-    static let shared = WebAuthContextProvider()
-
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let window = scene.windows.first else {
-            return ASPresentationAnchor()
-        }
-        return window
     }
 }
 

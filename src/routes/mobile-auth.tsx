@@ -67,8 +67,11 @@ function MobileAuthPage() {
 
   // Redirect to mobile app after successful authentication
   useEffect(() => {
+    console.log("[mobile-auth] Auth state:", { isAuthenticated, hasToken: !!authToken, isRedirecting, tokenExchangeAttempted });
+
     // Wait for auth token to be available before redirecting
     if (isAuthenticated && authToken && !isRedirecting && !tokenExchangeAttempted) {
+      console.log("[mobile-auth] Token ready, redirecting to app...");
       // Small delay to ensure session is fully established
       const timer = setTimeout(() => {
         setIsRedirecting(true);
@@ -83,11 +86,10 @@ function MobileAuthPage() {
 
   // Handle successful email auth
   const handleEmailAuthSuccess = () => {
-    setIsRedirecting(true);
-    setTokenExchangeAttempted(true);
-    setTimeout(() => {
-      exchangeAndNotify();
-    }, 500);
+    console.log("[mobile-auth] Email auth success, waiting for token...");
+    // Don't set tokenExchangeAttempted here - let the useEffect handle it
+    // when authToken becomes available. The useEffect will trigger when
+    // isAuthenticated && authToken both become true.
   };
 
   // Show redirecting state - only when token is ready

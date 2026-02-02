@@ -6,8 +6,12 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class User(
     @SerialName("_id") val id: String,
-    val email: String,
+    @SerialName("_creationTime") val creationTime: Double? = null,
+    val email: String? = null,
     val name: String? = null,
-    val avatarUrl: String? = null,
-    val providers: List<String> = emptyList()
+    val image: String? = null,
+    val emailVerificationTime: Double? = null,
+    val hasOverleafCredentials: Boolean = false,
+    val hasGitHubToken: Boolean = false,
+    val hasGitLabToken: Boolean = false
 )

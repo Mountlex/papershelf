@@ -1,5 +1,8 @@
 package com.carrel.app.features.auth
 
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -9,22 +12,56 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.carrel.app.core.auth.AuthManager
 import com.carrel.app.core.auth.OAuthHandler
 import com.carrel.app.core.auth.OAuthProvider
+import com.carrel.app.core.network.ConvexService
+import kotlinx.coroutines.launch
 
 @Composable
 fun LoginScreen(
     oAuthHandler: OAuthHandler,
-    onEmailLoginClick: () -> Unit
+    authManager: AuthManager? = null,
+    convexService: ConvexService? = null,
+    useWebView: Boolean = true // Use WebView by default (works better in emulators)
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // Activity result launcher for WebView login
+    val webViewLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val token = result.data?.getStringExtra(WebViewLoginActivity.EXTRA_TOKEN)
+            if (token != null && authManager != null && convexService != null) {
+                // Handle the token
+                authManager.handleConvexAuthCallback(token)
+                scope.launch {
+                    convexService.setAuthToken(token)
+                }
+            }
+        }
+    }
+
+    fun launchLogin(provider: OAuthProvider) {
+        if (useWebView) {
+            val intent = WebViewLoginActivity.createIntent(context, provider.id)
+            webViewLauncher.launch(intent)
+        } else {
+            oAuthHandler.launchOAuth(provider)
+        }
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -71,11 +108,11 @@ fun LoginScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // Sign in buttons
+            // Sign in buttons - all use web flow for Convex Auth token
             SignInButton(
                 provider = OAuthProvider.EMAIL,
                 icon = Icons.Default.Email,
-                onClick = onEmailLoginClick
+                onClick = { launchLogin(OAuthProvider.EMAIL) }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -83,7 +120,7 @@ fun LoginScreen(
             SignInButton(
                 provider = OAuthProvider.GITHUB,
                 icon = Icons.Default.Cloud,
-                onClick = { oAuthHandler.launchOAuth(OAuthProvider.GITHUB) }
+                onClick = { launchLogin(OAuthProvider.GITHUB) }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -91,7 +128,7 @@ fun LoginScreen(
             SignInButton(
                 provider = OAuthProvider.GITLAB,
                 icon = Icons.Default.Code,
-                onClick = { oAuthHandler.launchOAuth(OAuthProvider.GITLAB) }
+                onClick = { launchLogin(OAuthProvider.GITLAB) }
             )
 
             Spacer(modifier = Modifier.height(60.dp))

@@ -4,15 +4,15 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.staggeredgrid.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carrel.app.core.auth.AuthManager
 import com.carrel.app.core.network.ConvexClient
 import com.carrel.app.core.network.ConvexService
@@ -31,21 +31,62 @@ fun GalleryScreen(
     val viewModel = remember { GalleryViewModel(convexClient, convexService, authManager) }
     val uiState by viewModel.uiState.collectAsState()
 
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Show toast messages
+    LaunchedEffect(uiState.toastMessage) {
+        uiState.toastMessage?.let { message ->
+            snackbarHostState.showSnackbar(message)
+            viewModel.clearToast()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Papers") },
                 actions = {
-                    if (uiState.isLoading && !uiState.isRefreshing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        IconButton(onClick = { viewModel.refresh() }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                    // Check All Repositories button
+                    IconButton(
+                        onClick = { viewModel.checkAllRepositories() },
+                        enabled = !uiState.isSyncing
+                    ) {
+                        if (uiState.isSyncing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(Icons.Default.Sync, contentDescription = "Check all repositories")
                         }
                     }
+
+                    // Refresh All Papers button
+                    IconButton(
+                        onClick = { viewModel.refreshAllPapers() },
+                        enabled = !uiState.isRefreshingAll
+                    ) {
+                        if (uiState.isRefreshingAll) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                uiState.refreshProgress?.let { (current, total) ->
+                                    Text(
+                                        text = "$current/$total",
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+                        } else {
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Refresh all papers")
+                        }
+                    }
+
                     IconButton(onClick = onRepositoriesClick) {
                         Icon(Icons.Default.Folder, contentDescription = "Repositories")
                     }
@@ -54,7 +95,8 @@ fun GalleryScreen(
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = uiState.isRefreshing,

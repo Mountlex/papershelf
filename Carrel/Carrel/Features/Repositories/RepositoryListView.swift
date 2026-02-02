@@ -1,72 +1,56 @@
 import SwiftUI
 
 struct RepositoryListView: View {
-    @State private var viewModel: RepositoryViewModel?
+    @State private var viewModel = RepositoryViewModel()
     @State private var repositoryToDelete: Repository?
 
     var body: some View {
-        Group {
-            if let viewModel = viewModel {
-                repositoryListContent(viewModel: viewModel)
-            } else {
-                ProgressView()
+        repositoryListContent(viewModel: viewModel)
+            .navigationTitle("Repositories")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task {
+                            await viewModel.checkAllRepositories()
+                        }
+                    } label: {
+                        if viewModel.isCheckingAll {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                        }
+                    }
+                    .disabled(viewModel.isCheckingAll)
+                    .help("Check all repositories for updates")
+                    .accessibilityLabel("Check repositories")
+                    .accessibilityHint("Check all repositories for updates")
+                }
             }
-        }
-        .navigationTitle("Repositories")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
+            .manageSubscription(viewModel)
+            .confirmationDialog(
+                "Delete Repository?",
+                isPresented: .init(
+                    get: { repositoryToDelete != nil },
+                    set: { if !$0 { repositoryToDelete = nil } }
+                ),
+                presenting: repositoryToDelete
+            ) { repo in
+                Button("Delete", role: .destructive) {
                     Task {
-                        await viewModel?.checkAllRepositories()
-                    }
-                } label: {
-                    if viewModel?.isCheckingAll == true {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    } else {
-                        Image(systemName: "arrow.triangle.2.circlepath")
+                        await viewModel.deleteRepository(repo)
                     }
                 }
-                .disabled(viewModel?.isCheckingAll == true)
-                .help("Check all repositories for updates")
-            }
-        }
-        .task {
-            if viewModel == nil {
-                viewModel = RepositoryViewModel()
-            }
-            // Start real-time subscription
-            viewModel?.startSubscription()
-        }
-        .onDisappear {
-            viewModel?.stopSubscription()
-        }
-        .confirmationDialog(
-            "Delete Repository?",
-            isPresented: .init(
-                get: { repositoryToDelete != nil },
-                set: { if !$0 { repositoryToDelete = nil } }
-            ),
-            presenting: repositoryToDelete
-        ) { repo in
-            Button("Delete", role: .destructive) {
-                Task {
-                    await viewModel?.deleteRepository(repo)
+                Button("Cancel", role: .cancel) {
+                    repositoryToDelete = nil
                 }
+            } message: { repo in
+                Text("This will also delete all \(repo.paperCount) tracked papers from \"\(repo.name)\". This action cannot be undone.")
             }
-            Button("Cancel", role: .cancel) {
-                repositoryToDelete = nil
+            .overlay(alignment: .top) {
+                ToastContainer(message: $viewModel.toastMessage)
+                    .padding(.top, 8)
             }
-        } message: { repo in
-            Text("This will also delete all \(repo.paperCount) tracked papers from \"\(repo.name)\". This action cannot be undone.")
-        }
-        .overlay(alignment: .top) {
-            ToastContainer(message: Binding(
-                get: { viewModel?.toastMessage },
-                set: { viewModel?.toastMessage = $0 }
-            ))
-            .padding(.top, 8)
-        }
     }
 
     @ViewBuilder
@@ -84,6 +68,7 @@ struct RepositoryListView: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("repository_card_\(repository.id)")
                         .contextMenu {
                             Button {
                                 Task {

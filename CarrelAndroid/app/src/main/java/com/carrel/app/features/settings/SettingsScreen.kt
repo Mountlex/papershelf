@@ -22,20 +22,30 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.carrel.app.core.auth.AuthManager
-import com.carrel.app.core.network.ConvexClient
+import com.carrel.app.core.cache.PDFCache
+import com.carrel.app.core.network.ConvexService
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    convexClient: ConvexClient,
+    convexService: ConvexService,
     authManager: AuthManager,
     onBackClick: () -> Unit
 ) {
-    val viewModel = remember { SettingsViewModel(convexClient, authManager) }
+    val viewModel = remember { SettingsViewModel(convexService, authManager) }
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var pdfCacheSize by remember { mutableLongStateOf(0L) }
+    val pdfCache = remember { PDFCache.getInstance(context) }
+
+    // Load cache size on launch
+    LaunchedEffect(Unit) {
+        pdfCacheSize = pdfCache.cacheSize()
+    }
 
     Scaffold(
         topBar = {
@@ -86,9 +96,9 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             // Avatar
-                            if (user.avatarUrl != null) {
+                            if (user.image != null) {
                                 AsyncImage(
-                                    model = user.avatarUrl,
+                                    model = user.image,
                                     contentDescription = "Profile picture",
                                     modifier = Modifier
                                         .size(56.dp)
@@ -119,18 +129,26 @@ fun SettingsScreen(
                                         style = MaterialTheme.typography.titleMedium
                                     )
                                 }
-                                Text(
-                                    text = user.email,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                user.email?.let { email ->
+                                    Text(
+                                        text = email,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
 
-                                if (user.providers.isNotEmpty()) {
+                                // Show provider badges
+                                val providers = buildList {
+                                    if (user.hasGitHubToken) add("github")
+                                    if (user.hasGitLabToken) add("gitlab")
+                                    if (user.hasOverleafCredentials) add("overleaf")
+                                }
+                                if (providers.isNotEmpty()) {
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Row(
                                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        user.providers.forEach { provider ->
+                                        providers.forEach { provider ->
                                             ProviderBadge(provider = provider)
                                         }
                                     }
@@ -185,6 +203,45 @@ fun SettingsScreen(
                         modifier = Modifier.clickable {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://carrel.app"))
                             context.startActivity(intent)
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Cache section
+            Text(
+                text = "Storage",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column {
+                    ListItem(
+                        headlineContent = { Text("PDF Cache") },
+                        supportingContent = { Text("Cached PDFs for offline viewing") },
+                        trailingContent = { Text(formatCacheSize(pdfCacheSize)) }
+                    )
+                    HorizontalDivider()
+                    ListItem(
+                        headlineContent = { Text("Clear Cache") },
+                        leadingContent = {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        },
+                        modifier = Modifier.clickable {
+                            scope.launch {
+                                pdfCache.clearCache()
+                                pdfCacheSize = 0L
+                            }
                         }
                     )
                 }
@@ -276,6 +333,15 @@ private fun ProviderBadge(provider: String) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+private fun formatCacheSize(bytes: Long): String {
+    return when {
+        bytes < 1024 -> "$bytes B"
+        bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+        bytes < 1024 * 1024 * 1024 -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
+        else -> String.format("%.1f GB", bytes / (1024.0 * 1024.0 * 1024.0))
     }
 }
 

@@ -15,19 +15,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.carrel.app.core.auth.AuthManager
-import com.carrel.app.core.network.ConvexClient
+import com.carrel.app.core.network.ConvexService
 import com.carrel.app.core.network.models.Repository
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RepositoryListScreen(
-    convexClient: ConvexClient,
-    authManager: AuthManager,
+    convexService: ConvexService,
     onRepositoryClick: (Repository) -> Unit,
     onBackClick: () -> Unit
 ) {
-    val viewModel = remember { RepositoryListViewModel(convexClient, authManager) }
+    val viewModel = remember { RepositoryListViewModel(convexService) }
     val uiState by viewModel.uiState.collectAsState()
 
     var repositoryToDelete by remember { mutableStateOf<Repository?>(null) }
@@ -115,7 +113,7 @@ fun RepositoryListScreen(
             onDismissRequest = { repositoryToDelete = null },
             title = { Text("Delete Repository?") },
             text = {
-                Text("This will also delete all ${repository.paperCount} tracked papers from \"${repository.name}\". This action cannot be undone.")
+                Text("This will also delete all ${repository.paperCountInt} tracked papers from \"${repository.name}\". This action cannot be undone.")
             },
             confirmButton = {
                 TextButton(

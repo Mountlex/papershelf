@@ -1,5 +1,6 @@
 package com.carrel.app.core.network
 
+import android.util.Log
 import com.carrel.app.core.auth.AuthManager
 import com.carrel.app.core.network.models.*
 import java.net.URLEncoder
@@ -233,6 +234,8 @@ class ConvexClient(
                 try {
                     ApiResult.Success(response.body())
                 } catch (e: Exception) {
+                    val bodyText = try { response.bodyAsText() } catch (_: Exception) { "unknown" }
+                    Log.e(TAG, "Failed to parse response: ${e.message}, body: $bodyText")
                     ApiResult.Error(ApiException.Unknown(response.status.value, "Failed to parse response"))
                 }
             }
@@ -277,8 +280,9 @@ class ConvexClient(
     }
 
     companion object {
+        private const val TAG = "ConvexClient"
         // Production Convex deployment URL
         const val BASE_URL = "https://kindhearted-bloodhound-95.convex.site"
-        const val SITE_URL = "https://carrel.app"
+        const val SITE_URL = "https://carrelapp.com"
     }
 }

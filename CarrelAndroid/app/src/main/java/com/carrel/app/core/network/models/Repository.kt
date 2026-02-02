@@ -11,14 +11,19 @@ data class Repository(
     val provider: RepositoryProvider,
     val defaultBranch: String,
     val syncStatus: RepositorySyncStatus,
-    val lastSyncedAt: Long? = null,
+    // Convex returns timestamps as doubles (milliseconds with decimal precision)
+    val lastSyncedAt: Double? = null,
     val lastCommitHash: String? = null,
-    val lastCommitTime: Long? = null,
+    val lastCommitTime: Double? = null,
     val lastCommitAuthor: String? = null,
     val paperSyncStatus: PaperSyncStatus,
-    val paperCount: Int,
-    val papersWithErrors: Int
-)
+    // Convex returns numbers as doubles
+    val paperCount: Double,
+    val papersWithErrors: Double
+) {
+    val paperCountInt: Int get() = paperCount.toInt()
+    val papersWithErrorsInt: Int get() = papersWithErrors.toInt()
+}
 
 @Serializable
 enum class RepositoryProvider {

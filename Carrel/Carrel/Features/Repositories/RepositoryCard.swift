@@ -72,6 +72,46 @@ struct RepositoryCard: View {
             .regular.interactive(),
             in: RoundedRectangle(cornerRadius: 16)
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint("Double tap to view papers and add tracked files")
+    }
+
+    /// Accessibility label for the entire card
+    private var accessibilityLabel: String {
+        var components: [String] = [repository.name]
+        components.append(repository.provider.displayName)
+        components.append("\(repository.paperCount) papers")
+
+        if repository.papersWithErrors > 0 {
+            components.append("\(repository.papersWithErrors) with errors")
+        }
+
+        if isRefreshing {
+            components.append("refreshing")
+        } else {
+            components.append(statusAccessibilityLabel)
+        }
+
+        return components.joined(separator: ", ")
+    }
+
+    /// Accessibility label for the status
+    private var statusAccessibilityLabel: String {
+        if repository.syncStatus == .error {
+            return "sync error"
+        }
+
+        switch repository.paperSyncStatus {
+        case .inSync:
+            return "all papers synced"
+        case .needsSync:
+            return "some papers need sync"
+        case .neverSynced:
+            return "never synced"
+        case .noPapers:
+            return "no papers tracked"
+        }
     }
 
     @ViewBuilder

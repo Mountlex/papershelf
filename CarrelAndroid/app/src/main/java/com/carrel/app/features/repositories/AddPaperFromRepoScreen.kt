@@ -21,7 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.carrel.app.core.network.ConvexClient
+import com.carrel.app.core.network.ConvexService
 import com.carrel.app.core.network.models.Repository
 import com.carrel.app.core.network.models.RepositoryFile
 
@@ -29,11 +29,11 @@ import com.carrel.app.core.network.models.RepositoryFile
 @Composable
 fun AddPaperFromRepoScreen(
     repository: Repository,
-    convexClient: ConvexClient,
+    convexService: ConvexService,
     onBackClick: () -> Unit,
     onPaperAdded: () -> Unit
 ) {
-    val viewModel = remember { AddPaperFromRepoViewModel(repository, convexClient) }
+    val viewModel = remember { AddPaperFromRepoViewModel(repository, convexService) }
     val uiState by viewModel.uiState.collectAsState()
 
     var selectedFilePath by remember { mutableStateOf<String?>(null) }
@@ -54,7 +54,7 @@ fun AddPaperFromRepoScreen(
             ConfigurePaperSheet(
                 repository = repository,
                 filePath = selectedFilePath!!,
-                convexClient = convexClient,
+                convexService = convexService,
                 onDismiss = { selectedFilePath = null },
                 onSuccess = {
                     selectedFilePath = null

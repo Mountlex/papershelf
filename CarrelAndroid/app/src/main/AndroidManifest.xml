@@ -29,7 +29,24 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="carrel" android:host="auth" />
             </intent-filter>
+
+            <!-- Explicit callback path handling -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="carrel"
+                    android:host="auth"
+                    android:pathPrefix="/callback" />
+            </intent-filter>
         </activity>
+
+        <!-- WebView-based login activity (fallback for emulators) -->
+        <activity
+            android:name=".features.auth.WebViewLoginActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Carrel" />
     </application>
 
 </manifest>

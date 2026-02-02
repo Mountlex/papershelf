@@ -25,13 +25,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.carrel.app.core.cache.PDFCache
 import com.carrel.app.core.network.ConvexClient
 import com.carrel.app.core.network.ConvexService
 import com.carrel.app.ui.components.StatusBadge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.net.URL
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -139,9 +138,7 @@ fun PaperDetailScreen(
                         // Info panel
                         PaperInfoPanel(
                             paper = uiState.paper!!,
-                            isBuilding = uiState.isBuilding,
-                            isTogglingPublic = uiState.isTogglingPublic,
-                            onTogglePublic = { viewModel.togglePublic() }
+                            isBuilding = uiState.isBuilding
                         )
                     }
                 }
@@ -195,9 +192,7 @@ private fun NoPdfPlaceholder(
 @Composable
 private fun PaperInfoPanel(
     paper: com.carrel.app.core.network.models.Paper,
-    isBuilding: Boolean,
-    isTogglingPublic: Boolean,
-    onTogglePublic: () -> Unit
+    isBuilding: Boolean
 ) {
     Surface(
         tonalElevation = 2.dp
@@ -231,79 +226,73 @@ private fun PaperInfoPanel(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Public/Private toggle
-                FilledTonalButton(
-                    onClick = onTogglePublic,
-                    enabled = !isTogglingPublic
+            // Build status or error
+            if (isBuilding || paper.compilationProgress != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (isTogglingPublic) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Icon(
-                            imageVector = if (paper.isPublic) Icons.Filled.Public else Icons.Default.Lock,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (paper.isPublic) "Public" else "Private")
+                    Text(
+                        text = paper.compilationProgress ?: "Building...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+            } else if (paper.lastSyncError != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = paper.lastSyncError.let { if (it.length > 50) it.take(50) + "..." else it },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 1
+                    )
+                }
+            }
 
-                if (isBuilding || paper.compilationProgress != null) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+            // Commit details
+            if (paper.lastAffectedCommitTime != null || paper.lastAffectedCommitAuthor != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AccountTree,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    paper.lastAffectedCommitTime?.let { timestamp ->
+                        val timeAgo = remember(timestamp) {
+                            formatTimeAgo(timestamp.toLong())
+                        }
                         Text(
-                            text = paper.compilationProgress ?: "Building...",
+                            text = timeAgo,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                }
-
-                paper.lastSyncError?.let { error ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Warning,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                    paper.lastAffectedCommitAuthor?.let { author ->
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = if (error.length > 50) error.take(50) + "..." else error,
+                            text = "by $author",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            maxLines = 1
+                            color = MaterialTheme.colorScheme.outline
                         )
                     }
-                }
-
-                Spacer(modifier = Modifier.weight(1f))
-
-                paper.lastSyncedAt?.let { timestamp ->
-                    val timeAgo = remember(timestamp) {
-                        formatTimeAgo(timestamp)
-                    }
-                    Text(
-                        text = "Synced $timeAgo",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
         }
@@ -317,27 +306,25 @@ private fun PdfViewer(
 ) {
     var pageBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var isCached by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var pageCount by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
+    val pdfCache = remember { PDFCache.getInstance(context) }
 
     LaunchedEffect(pdfUrl) {
         isLoading = true
+        isCached = pdfCache.isCached(pdfUrl)
         error = null
         pageBitmaps = emptyList()
         try {
             val bitmaps = withContext(Dispatchers.IO) {
-                // Download PDF to temp file
-                val tempFile = File.createTempFile("pdf", ".pdf", context.cacheDir)
-                URL(pdfUrl).openStream().use { input ->
-                    tempFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
+                // Fetch PDF (from cache or network)
+                val pdfFile = pdfCache.fetchPDF(pdfUrl).getOrThrow()
 
                 // Open PDF renderer
                 val fileDescriptor = ParcelFileDescriptor.open(
-                    tempFile,
+                    pdfFile,
                     ParcelFileDescriptor.MODE_READ_ONLY
                 )
                 val renderer = PdfRenderer(fileDescriptor)
@@ -360,7 +347,6 @@ private fun PdfViewer(
 
                 renderer.close()
                 fileDescriptor.close()
-                tempFile.delete()
 
                 result
             }
@@ -380,7 +366,10 @@ private fun PdfViewer(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator()
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("Loading PDF...", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        text = if (isCached) "Loading from cache..." else "Downloading PDF...",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
             error != null -> {

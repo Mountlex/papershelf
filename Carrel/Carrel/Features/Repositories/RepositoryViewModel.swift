@@ -4,10 +4,17 @@ import SwiftUI
 
 @Observable
 @MainActor
-final class RepositoryViewModel {
+final class RepositoryViewModel: SubscribableViewModel {
+    typealias SubscriptionData = [Repository]
+
     private(set) var repositories: [Repository] = []
-    private(set) var isLoading = false
-    private(set) var error: String?
+    var isLoading = false
+    var error: String?
+    var subscriptionTask: Task<Void, Never>?
+    var subscriptionStoppedAt: Date?
+
+    /// The current user's ID, needed for the repositories subscription
+    private var userId: String?
 
     /// ID of the repository currently being refreshed
     private(set) var refreshingRepoId: String?
@@ -18,63 +25,54 @@ final class RepositoryViewModel {
     /// Current toast message to display
     var toastMessage: ToastMessage?
 
-    private var subscriptionTask: Task<Void, Never>?
+    // MARK: - SubscribableViewModel
 
-    // MARK: - Subscription Lifecycle
-
-    /// Start subscribing to repositories via Convex SDK for real-time updates
-    func startSubscription() {
-        // Cancel any existing subscription
-        stopSubscription()
-
+    func setupBeforeSubscription() async throws {
+        #if DEBUG
         print("RepositoryViewModel: Starting repositories subscription...")
         print("RepositoryViewModel: ConvexService isAuthenticated = \(ConvexService.shared.isAuthenticated)")
+        #endif
 
-        // Set loading state until first subscription update
-        isLoading = true
-
-        subscriptionTask = Task {
-            do {
-                // First get the current user to get their userId
-                guard let user = try await ConvexService.shared.getViewer() else {
-                    await MainActor.run {
-                        self.error = "Not authenticated"
-                        self.isLoading = false
-                    }
-                    return
-                }
-
-                print("RepositoryViewModel: Got user ID: \(user.id)")
-
-                let repositoriesPublisher = ConvexService.shared.subscribeToRepositories(userId: user.id)
-
-                for try await latestRepositories in repositoriesPublisher.values {
-                    await MainActor.run {
-                        // Only log if count changed
-                        if self.repositories.count != latestRepositories.count {
-                            print("RepositoryViewModel: Repositories count changed: \(self.repositories.count) -> \(latestRepositories.count)")
-                        }
-                        self.repositories = latestRepositories
-                        if self.isLoading {
-                            self.isLoading = false
-                        }
-                    }
-                }
-                print("RepositoryViewModel: Subscription loop ended normally")
-            } catch {
-                print("RepositoryViewModel: Subscription error: \(error)")
-                await MainActor.run {
-                    self.error = error.localizedDescription
-                    self.isLoading = false
-                }
-            }
+        // Fetch the current user to get their userId
+        guard let user = try await ConvexService.shared.getViewer() else {
+            throw RepositoryViewModelError.notAuthenticated
         }
+
+        #if DEBUG
+        print("RepositoryViewModel: Got user ID: \(user.id)")
+        #endif
+        userId = user.id
     }
 
-    /// Stop the repositories subscription
-    func stopSubscription() {
-        subscriptionTask?.cancel()
-        subscriptionTask = nil
+    func createSubscriptionPublisher() -> AnyPublisher<[Repository], Error> {
+        guard let userId = userId else {
+            return Fail(error: RepositoryViewModelError.notAuthenticated)
+                .eraseToAnyPublisher()
+        }
+        return ConvexService.shared.subscribeToRepositories(userId: userId)
+            .mapError { $0 as Error }
+            .eraseToAnyPublisher()
+    }
+
+    func handleSubscriptionData(_ data: [Repository]) {
+        #if DEBUG
+        // Only log if count changed
+        if repositories.count != data.count {
+            print("RepositoryViewModel: Repositories count changed: \(repositories.count) -> \(data.count)")
+        }
+        #endif
+        repositories = data
+    }
+
+    private enum RepositoryViewModelError: Error, LocalizedError {
+        case notAuthenticated
+
+        var errorDescription: String? {
+            switch self {
+            case .notAuthenticated:
+                return "Not authenticated"
+            }
+        }
     }
 
     // MARK: - Check All Repositories

@@ -1,6 +1,7 @@
 package com.carrel.app.core.auth
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
 import com.carrel.app.core.network.ConvexClient
@@ -23,11 +24,38 @@ class OAuthHandler(private val context: Context) {
 
         val uri = uriBuilder.build()
 
-        val customTabsIntent = CustomTabsIntent.Builder()
-            .setShowTitle(true)
-            .build()
+        // Try Custom Tabs first, fall back to regular browser
+        try {
+            val customTabsIntent = CustomTabsIntent.Builder()
+                .setShowTitle(true)
+                .build()
 
-        customTabsIntent.launchUrl(context, uri)
+            // Add FLAG_ACTIVITY_NEW_TASK when using Application context
+            customTabsIntent.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            customTabsIntent.launchUrl(context, uri)
+        } catch (e: Exception) {
+            // Fallback to regular browser intent
+            val browserIntent = Intent(Intent.ACTION_VIEW, uri)
+            browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(browserIntent)
+        }
+    }
+
+    /**
+     * Launch OAuth using regular browser (useful for emulators where Custom Tabs may not work)
+     */
+    fun launchOAuthInBrowser(provider: OAuthProvider) {
+        val uriBuilder = Uri.parse("${ConvexClient.SITE_URL}/mobile-auth").buildUpon()
+
+        provider.id?.let {
+            uriBuilder.appendQueryParameter("provider", it)
+        }
+
+        val uri = uriBuilder.build()
+
+        val browserIntent = Intent(Intent.ACTION_VIEW, uri)
+        browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(browserIntent)
     }
 
     companion object {

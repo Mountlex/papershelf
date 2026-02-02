@@ -1,8 +1,9 @@
 package com.carrel.app.features.repositories
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.carrel.app.core.network.ConvexClient
+import com.carrel.app.core.network.ConvexService
 import com.carrel.app.core.network.models.Repository
 import com.carrel.app.core.network.models.RepositoryFile
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,7 +25,7 @@ data class AddPaperFromRepoUiState(
 
 class AddPaperFromRepoViewModel(
     private val repository: Repository,
-    private val convexClient: ConvexClient
+    private val convexService: ConvexService
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AddPaperFromRepoUiState())
@@ -41,13 +42,13 @@ class AddPaperFromRepoViewModel(
             val loadPath = path ?: _uiState.value.currentPath
 
             // Fetch files
-            convexClient.listRepositoryFiles(
+            convexService.listRepositoryFiles(
                 gitUrl = repository.gitUrl,
                 path = loadPath.ifEmpty { null },
                 branch = repository.defaultBranch
             ).onSuccess { fetchedFiles ->
                 // Then fetch tracked files
-                convexClient.listTrackedFiles(repository.id)
+                convexService.listTrackedFiles(repository.id)
                     .onSuccess { trackedFiles ->
                         val trackedPaths = trackedFiles.map { it.filePath }.toSet()
 
@@ -64,7 +65,8 @@ class AddPaperFromRepoViewModel(
                             )
                         }
                     }
-                    .onError { exception ->
+                    .onFailure { exception ->
+                        Log.w(TAG, "Failed to load tracked files: ${exception.message}")
                         // If tracked files fail, still show the files
                         val sortedFiles = fetchedFiles
                             .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
@@ -78,7 +80,8 @@ class AddPaperFromRepoViewModel(
                             )
                         }
                     }
-            }.onError { exception ->
+            }.onFailure { exception ->
+                Log.e(TAG, "Failed to load files: ${exception.message}")
                 _uiState.update { state ->
                     state.copy(
                         loadError = exception.message ?: "Failed to load files",
@@ -87,6 +90,10 @@ class AddPaperFromRepoViewModel(
                 }
             }
         }
+    }
+
+    companion object {
+        private const val TAG = "AddPaperFromRepoVM"
     }
 
     fun navigateToFolder(folder: RepositoryFile) {

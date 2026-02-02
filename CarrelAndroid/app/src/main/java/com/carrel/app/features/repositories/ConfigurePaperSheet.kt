@@ -13,7 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.carrel.app.core.network.ConvexClient
+import com.carrel.app.core.network.ConvexService
 import com.carrel.app.core.network.models.Compiler
 import com.carrel.app.core.network.models.Repository
 import kotlinx.coroutines.launch
@@ -23,7 +23,7 @@ import kotlinx.coroutines.launch
 fun ConfigurePaperSheet(
     repository: Repository,
     filePath: String,
-    convexClient: ConvexClient,
+    convexService: ConvexService,
     onDismiss: () -> Unit,
     onSuccess: () -> Unit
 ) {
@@ -165,7 +165,7 @@ fun ConfigurePaperSheet(
                         val pdfSourceType = if (isTexFile) "compile" else "committed"
                         val compilerValue = if (isTexFile) selectedCompiler.value else null
 
-                        convexClient.addTrackedFile(
+                        convexService.addTrackedFile(
                             repositoryId = repository.id,
                             filePath = filePath,
                             title = title,
@@ -174,10 +174,10 @@ fun ConfigurePaperSheet(
                         ).onSuccess { result ->
                             // Trigger build in background
                             launch {
-                                convexClient.buildPaper(result.paperId)
+                                convexService.buildPaper(result.paperId)
                             }
                             onSuccess()
-                        }.onError { exception ->
+                        }.onFailure { exception ->
                             errorMessage = if (exception.message?.contains("already exists") == true) {
                                 "File already tracked"
                             } else {

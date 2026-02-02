@@ -1,5 +1,6 @@
 package com.carrel.app.core.auth
 
+import android.util.Log
 import com.carrel.app.core.network.ConvexClient
 import com.carrel.app.core.network.models.AuthTokens
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,6 +14,11 @@ class AuthManager(
 ) {
     private val _isAuthenticated = MutableStateFlow(false)
     val isAuthenticated: StateFlow<Boolean> = _isAuthenticated.asStateFlow()
+
+    private fun setAuthenticated(value: Boolean, source: String) {
+        Log.d(TAG, "setAuthenticated($value) from $source", Exception("Stack trace"))
+        _isAuthenticated.value = value
+    }
 
     // JWT tokens (for email/password login - HTTP only, no subscriptions)
     private var accessToken: String? = null
@@ -40,14 +46,14 @@ class AuthManager(
         val storedConvexToken = tokenStorage.loadConvexAuthToken()
         if (storedConvexToken != null) {
             convexAuthToken = storedConvexToken
-            _isAuthenticated.value = true
+            setAuthenticated(true, "loadStoredTokens:convexToken")
             return storedConvexToken
         }
 
         // Fall back to JWT tokens (email/password login)
         val stored = tokenStorage.load()
         if (stored == null) {
-            _isAuthenticated.value = false
+            setAuthenticated(false, "loadStoredTokens:noTokens")
             return null
         }
 
@@ -56,7 +62,8 @@ class AuthManager(
         accessTokenExpiry = stored.accessTokenExpiry
         refreshTokenExpiry = stored.refreshTokenExpiry
 
-        _isAuthenticated.value = stored.isAccessTokenValid || stored.isRefreshTokenValid
+        val isValid = stored.isAccessTokenValid || stored.isRefreshTokenValid
+        setAuthenticated(isValid, "loadStoredTokens:jwtTokens(valid=$isValid)")
         return null
     }
 
@@ -77,7 +84,7 @@ class AuthManager(
         refreshTokenExpiry = null
         tokenStorage.clear()
 
-        _isAuthenticated.value = true
+        setAuthenticated(true, "handleConvexAuthCallback")
     }
 
     /**
@@ -120,7 +127,7 @@ class AuthManager(
             )
         )
 
-        _isAuthenticated.value = true
+        setAuthenticated(true, "handleOAuthCallback")
     }
 
     suspend fun getValidToken(): String? {
@@ -186,6 +193,10 @@ class AuthManager(
         convexAuthToken = null
         tokenStorage.clearConvexAuthToken()
 
-        _isAuthenticated.value = false
+        setAuthenticated(false, "logout")
+    }
+
+    companion object {
+        private const val TAG = "AuthManager"
     }
 }

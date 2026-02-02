@@ -4,10 +4,20 @@ import SwiftUI
 
 @Observable
 @MainActor
-final class GalleryViewModel {
+final class GalleryViewModel: SubscribableViewModel {
+    typealias SubscriptionData = [Paper]
+
     private(set) var papers: [Paper] = []
-    private(set) var isLoading = false
-    private(set) var error: String?
+    var isLoading = false
+    var error: String?
+    var subscriptionTask: Task<Void, Never>?
+    var subscriptionStoppedAt: Date?
+
+    init() {
+        #if DEBUG
+        print("GalleryViewModel: init called")
+        #endif
+    }
 
     /// Whether a "Check All Repositories" sync is in progress
     private(set) var isSyncing = false
@@ -24,53 +34,23 @@ final class GalleryViewModel {
     /// Current toast message to display
     var toastMessage: ToastMessage?
 
-    private var subscriptionTask: Task<Void, Never>?
+    // MARK: - SubscribableViewModel
 
-    // MARK: - Subscription Lifecycle
-
-    /// Start subscribing to papers via Convex SDK for real-time updates
-    func startSubscription() {
-        // Cancel any existing subscription
-        stopSubscription()
-
+    func createSubscriptionPublisher() -> AnyPublisher<[Paper], Error> {
+        #if DEBUG
         print("GalleryViewModel: Starting papers subscription...")
         print("GalleryViewModel: ConvexService isAuthenticated = \(ConvexService.shared.isAuthenticated)")
-
-        // Set loading state until first subscription update
-        isLoading = true
-
-        // Use async/await pattern as per Convex docs
-        subscriptionTask = Task {
-            do {
-                let papersPublisher = ConvexService.shared.subscribeToPapers()
-
-                for try await latestPapers in papersPublisher.values {
-                    await MainActor.run {
-                        // Only log if count changed
-                        if self.papers.count != latestPapers.count {
-                            print("GalleryViewModel: Papers count changed: \(self.papers.count) -> \(latestPapers.count)")
-                        }
-                        self.papers = latestPapers
-                        if self.isLoading {
-                            self.isLoading = false
-                        }
-                    }
-                }
-                print("GalleryViewModel: Subscription loop ended normally")
-            } catch {
-                print("GalleryViewModel: Subscription error: \(error)")
-                await MainActor.run {
-                    self.error = error.localizedDescription
-                    self.isLoading = false
-                }
-            }
-        }
+        #endif
+        return ConvexService.shared.subscribeToPapers()
+            .mapError { $0 as Error }
+            .eraseToAnyPublisher()
     }
 
-    /// Stop the papers subscription
-    func stopSubscription() {
-        subscriptionTask?.cancel()
-        subscriptionTask = nil
+    func handleSubscriptionData(_ data: [Paper]) {
+        #if DEBUG
+        print("GalleryViewModel: Received \(data.count) papers")
+        #endif
+        papers = data
     }
 
     // MARK: - Check All Repositories

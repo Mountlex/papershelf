@@ -63,13 +63,18 @@ final class ConvexService: ObservableObject {
     @Published private(set) var isAuthenticated = false
 
     private var authStateCancellable: AnyCancellable?
-
     private var webSocketCancellable: AnyCancellable?
+
+    /// Convex deployment URL from Info.plist (with fallback)
+    private static var deploymentURL: String {
+        Bundle.main.object(forInfoDictionaryKey: "ConvexDeploymentURL") as? String
+            ?? "https://kindhearted-bloodhound-95.convex.cloud"
+    }
 
     private init() {
         // Initialize with the Convex deployment URL and our custom auth provider
         client = ConvexClientWithAuth(
-            deploymentUrl: "https://kindhearted-bloodhound-95.convex.cloud",
+            deploymentUrl: Self.deploymentURL,
             authProvider: authProvider
         )
 
@@ -77,7 +82,9 @@ final class ConvexService: ObservableObject {
         authStateCancellable = client.authState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
+                #if DEBUG
                 print("ConvexService: Auth state changed to: \(state)")
+                #endif
                 switch state {
                 case .authenticated:
                     self?.isAuthenticated = true
@@ -90,11 +97,18 @@ final class ConvexService: ObservableObject {
                 }
             }
 
-        // Monitor WebSocket connection state
+        // Monitor WebSocket connection state (only log on state changes)
+        var lastState: String?
         webSocketCancellable = client.watchWebSocketState()
             .receive(on: DispatchQueue.main)
             .sink { state in
-                print("ConvexService: WebSocket state: \(state)")
+                #if DEBUG
+                let stateStr = "\(state)"
+                if stateStr != lastState {
+                    print("ConvexService: WebSocket state: \(state)")
+                    lastState = stateStr
+                }
+                #endif
             }
     }
 
@@ -104,37 +118,41 @@ final class ConvexService: ObservableObject {
     /// - Returns: `true` if authentication succeeded, `false` if it failed
     @discardableResult
     func setAuthToken(_ token: String?) async -> Bool {
+        #if DEBUG
         print("ConvexService: setAuthToken called, token exists: \(token != nil)")
+        #endif
         authToken = token
         if let token = token {
             authProvider.setToken(token)
             // Trigger login to authenticate the client with the token
             do {
                 try await client.login()
+                #if DEBUG
                 print("ConvexService: client.login() completed, isAuthenticated = \(isAuthenticated)")
+                #endif
 
                 // Auth state is updated via the authState publisher observer
-                // By the time client.login() returns, isAuthenticated should reflect the result
-                if isAuthenticated {
-                    print("ConvexService: Successfully authenticated with Convex")
-                    return true
-                } else {
-                    // Give the auth state a moment to update (in case of race condition)
-                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-                    print("ConvexService: After delay, isAuthenticated = \(isAuthenticated)")
-
-                    if isAuthenticated {
-                        print("ConvexService: Successfully authenticated with Convex (after delay)")
-                        return true
-                    } else {
+                // If not yet authenticated, wait for the auth state to change (with timeout)
+                if !isAuthenticated {
+                    let authenticated = await waitForAuthentication(timeout: 5.0)
+                    if !authenticated {
+                        #if DEBUG
                         print("ConvexService: Auth state did not become authenticated")
+                        #endif
                         authToken = nil
                         authProvider.setToken(nil)
                         return false
                     }
                 }
+
+                #if DEBUG
+                print("ConvexService: Successfully authenticated with Convex")
+                #endif
+                return true
             } catch {
+                #if DEBUG
                 print("ConvexService: Failed to authenticate: \(error)")
+                #endif
                 // Clear the invalid token
                 authToken = nil
                 authProvider.setToken(nil)
@@ -145,6 +163,49 @@ final class ConvexService: ObservableObject {
             try? await client.logout()
             return false
         }
+    }
+
+    /// Wait for authentication state to become authenticated
+    /// - Parameter timeout: Maximum time to wait in seconds
+    /// - Returns: `true` if authenticated within timeout, `false` otherwise
+    private func waitForAuthentication(timeout: TimeInterval) async -> Bool {
+        // Check current state first
+        if isAuthenticated { return true }
+
+        // Use a simple polling approach with exponential backoff
+        // This is more reliable than complex Combine continuations
+        let checkIntervals: [UInt64] = [50, 100, 200, 500, 1000] // milliseconds
+        var totalWaited: UInt64 = 0
+        let timeoutMs = UInt64(timeout * 1000)
+
+        for interval in checkIntervals {
+            if totalWaited >= timeoutMs { break }
+
+            try? await Task.sleep(for: .milliseconds(interval))
+            totalWaited += interval
+
+            if isAuthenticated {
+                #if DEBUG
+                print("ConvexService: Authentication confirmed after \(totalWaited)ms")
+                #endif
+                return true
+            }
+        }
+
+        // Continue with 1 second intervals until timeout
+        while totalWaited < timeoutMs {
+            try? await Task.sleep(for: .seconds(1))
+            totalWaited += 1000
+
+            if isAuthenticated {
+                #if DEBUG
+                print("ConvexService: Authentication confirmed after \(totalWaited)ms")
+                #endif
+                return true
+            }
+        }
+
+        return false
     }
 
     /// Clear authentication state
@@ -159,9 +220,10 @@ final class ConvexService: ObservableObject {
 
     /// Subscribe to the list of papers (real-time updates)
     func subscribeToPapers() -> AnyPublisher<[Paper], ClientError> {
+        #if DEBUG
         print("ConvexService: Creating subscription to papers:listMine")
+        #endif
         return client.subscribe(to: "papers:listMine", yielding: [Paper].self)
-            .removeDuplicates()
             .eraseToAnyPublisher()
     }
 

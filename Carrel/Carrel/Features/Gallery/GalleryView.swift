@@ -1,96 +1,96 @@
 import SwiftUI
 
 struct GalleryView: View {
-    @State private var viewModel: GalleryViewModel?
+    @State private var viewModel = GalleryViewModel()
     @State private var selectedPaper: Paper?
+    @State private var searchText = ""
 
     private let columns = [
         GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 16)
     ]
 
-    var body: some View {
-        Group {
-            if let viewModel = viewModel {
-                galleryContent(viewModel: viewModel)
-            } else {
-                ProgressView()
-            }
+    /// Papers filtered by search text
+    private var filteredPapers: [Paper] {
+        if searchText.isEmpty {
+            return viewModel.papers
         }
-        .navigationTitle("Papers")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                HStack(spacing: 12) {
-                    // Check All Repositories button
-                    Button {
-                        Task {
-                            await viewModel?.checkAllRepositories()
-                        }
-                    } label: {
-                        if viewModel?.isSyncing == true {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        } else {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                        }
-                    }
-                    .disabled(viewModel?.isSyncing == true)
-                    .help("Check all repositories for updates")
+        return viewModel.papers.filter { paper in
+            paper.title?.localizedCaseInsensitiveContains(searchText) ?? false
+        }
+    }
 
-                    // Refresh All Papers button
-                    Button {
-                        Task {
-                            await viewModel?.refreshAllPapers()
-                        }
-                    } label: {
-                        if let progress = viewModel?.refreshProgress {
-                            HStack(spacing: 4) {
-                                ProgressView()
-                                    .scaleEffect(0.7)
-                                Text("\(progress.current)/\(progress.total)")
-                                    .font(.caption)
-                                    .monospacedDigit()
+    var body: some View {
+        galleryContent(viewModel: viewModel)
+            .navigationTitle("Papers")
+            .searchable(text: $searchText, prompt: "Search papers")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    HStack(spacing: 12) {
+                        // Check All Repositories button
+                        Button {
+                            Task {
+                                await viewModel.checkAllRepositories()
                             }
-                        } else {
-                            Image(systemName: "play.fill")
+                        } label: {
+                            if viewModel.isSyncing {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                            }
                         }
+                        .disabled(viewModel.isSyncing)
+                        .help("Check all repositories for updates")
+                        .accessibilityLabel("Check repositories")
+                        .accessibilityHint("Check all repositories for updates")
+
+                        // Refresh All Papers button
+                        Button {
+                            Task {
+                                await viewModel.refreshAllPapers()
+                            }
+                        } label: {
+                            if let progress = viewModel.refreshProgress {
+                                HStack(spacing: 4) {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                    Text("\(progress.current)/\(progress.total)")
+                                        .font(.caption)
+                                        .monospacedDigit()
+                                }
+                            } else {
+                                Image(systemName: "play.fill")
+                            }
+                        }
+                        .disabled(viewModel.isRefreshingAll)
+                        .help("Refresh all papers that need sync")
+                        .accessibilityLabel("Refresh papers")
+                        .accessibilityHint("Refresh all papers that need sync")
                     }
-                    .disabled(viewModel?.isRefreshingAll == true)
-                    .help("Refresh all papers that need sync")
                 }
             }
-        }
-        .task {
-            if viewModel == nil {
-                viewModel = GalleryViewModel()
+            .manageSubscription(viewModel)
+            .sheet(item: $selectedPaper) { paper in
+                NavigationStack {
+                    PaperDetailView(paper: paper)
+                }
             }
-            // Start real-time subscription
-            viewModel?.startSubscription()
-        }
-        .onDisappear {
-            viewModel?.stopSubscription()
-        }
-        .sheet(item: $selectedPaper) { paper in
-            NavigationStack {
-                PaperDetailView(paper: paper)
+            .overlay(alignment: .top) {
+                ToastContainer(message: $viewModel.toastMessage)
+                    .padding(.top, 8)
             }
-        }
-        .overlay(alignment: .top) {
-            ToastContainer(message: Binding(
-                get: { viewModel?.toastMessage },
-                set: { viewModel?.toastMessage = $0 }
-            ))
-            .padding(.top, 8)
-        }
     }
 
     @ViewBuilder
     private func galleryContent(viewModel: GalleryViewModel) -> some View {
         if viewModel.papers.isEmpty && !viewModel.isLoading {
             emptyState
+        } else if filteredPapers.isEmpty && !searchText.isEmpty {
+            ContentUnavailableView.search(text: searchText)
         } else {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(viewModel.papers) { paper in
+                    ForEach(filteredPapers) { paper in
                         Button {
                             selectedPaper = paper
                         } label: {
@@ -100,6 +100,7 @@ struct GalleryView: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("gallery_paper_card_\(paper.id)")
                         .contextMenu {
                             Button {
                                 Task {

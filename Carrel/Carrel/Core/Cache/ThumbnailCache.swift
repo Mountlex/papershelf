@@ -7,9 +7,12 @@ actor ThumbnailCache {
     private let fileManager = FileManager.default
     private let cacheDirectory: URL
     private let memoryCache = NSCache<NSString, UIImage>()
+    private let maxTotalDiskSize: Int64 = 100 * 1024 * 1024 // 100MB disk cache limit
 
     private init() {
-        let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        // Get caches directory, fallback to temp directory if unavailable (extremely rare on iOS)
+        let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? fileManager.temporaryDirectory
         cacheDirectory = caches.appendingPathComponent("ThumbnailCache", isDirectory: true)
 
         // Create cache directory if needed
@@ -31,6 +34,11 @@ actor ThumbnailCache {
         if fileManager.fileExists(atPath: cacheFile.path),
            let data = try? Data(contentsOf: cacheFile),
            let image = UIImage(data: data) {
+            // Update modification date for LRU tracking
+            try? fileManager.setAttributes(
+                [.modificationDate: Date()],
+                ofItemAtPath: cacheFile.path
+            )
             memoryCache.setObject(image, forKey: cacheKey)
             return image
         }
@@ -41,6 +49,9 @@ actor ThumbnailCache {
         guard let image = UIImage(data: data) else {
             throw ThumbnailError.invalidImageData
         }
+
+        // Evict old files if needed before caching new data
+        evictIfNeeded(bytesNeeded: Int64(data.count))
 
         // Cache to disk
         try? data.write(to: cacheFile)
@@ -94,7 +105,40 @@ actor ThumbnailCache {
                 }
             }
         }
-        throw ThumbnailError.networkError(underlying: lastError!)
+        throw ThumbnailError.networkError(underlying: lastError ?? URLError(.unknown))
+    }
+
+    // MARK: - LRU Eviction
+
+    /// Evict oldest files until cache is under the size limit
+    private func evictIfNeeded(bytesNeeded: Int64 = 0) {
+        let currentSize = cacheSize()
+        let targetSize = maxTotalDiskSize - bytesNeeded
+
+        guard currentSize > targetSize else { return }
+
+        // Get all files with their modification dates
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: cacheDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]
+        ) else { return }
+
+        // Sort by modification date (oldest first) for LRU eviction
+        let sortedFiles = files.compactMap { url -> (url: URL, date: Date, size: Int64)? in
+            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+                  let date = values.contentModificationDate,
+                  let size = values.fileSize else { return nil }
+            return (url, date, Int64(size))
+        }.sorted { $0.date < $1.date }
+
+        var freedBytes: Int64 = 0
+        let bytesToFree = currentSize - targetSize
+
+        for file in sortedFiles {
+            guard freedBytes < bytesToFree else { break }
+            try? fileManager.removeItem(at: file.url)
+            freedBytes += file.size
+        }
     }
 }
 

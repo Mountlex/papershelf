@@ -4,12 +4,26 @@ struct PaperCard: View {
     let paper: Paper
     var isSyncing: Bool = false
 
+    @State private var isCached: Bool?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Thumbnail - content layer, no glass
             thumbnailView
                 .frame(height: 200)
                 .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16))
+                .overlay(alignment: .topTrailing) {
+                    // Show "not cached" indicator (checked once on appear)
+                    if let isCached = isCached, !isCached, paper.pdfUrl != nil {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.caption)
+                            .foregroundStyle(.white)
+                            .padding(6)
+                            .background(.black.opacity(0.5), in: Circle())
+                            .padding(8)
+                    }
+                }
+                .accessibilityHidden(true)
 
             // Info section with glass backdrop
             VStack(alignment: .leading, spacing: 4) {
@@ -26,11 +40,13 @@ struct PaperCard: View {
                         ProgressView()
                             .scaleEffect(0.6)
                             .padding(.top, 2)
+                            .accessibilityLabel("Syncing")
                     } else {
                         Circle()
                             .fill(statusColor)
                             .frame(width: 8, height: 8)
                             .padding(.top, 4)
+                            .accessibilityLabel(statusAccessibilityLabel)
                     }
                 }
             }
@@ -40,6 +56,41 @@ struct PaperCard: View {
             .regular.interactive(),
             in: RoundedRectangle(cornerRadius: 16)
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint("Double tap to view paper details")
+        .task {
+            // Check if PDF is cached
+            if let pdfUrlString = paper.pdfUrl, let pdfUrl = URL(string: pdfUrlString) {
+                isCached = await PDFCache.shared.isCached(url: pdfUrl)
+            } else {
+                isCached = nil // No PDF to cache
+            }
+        }
+    }
+
+    /// Accessibility label for the entire card
+    private var accessibilityLabel: String {
+        let title = paper.title ?? "Untitled"
+        let status = isSyncing ? "syncing" : statusAccessibilityLabel
+        let cacheStatus = (isCached == false && paper.pdfUrl != nil) ? ", not downloaded" : ""
+        return "\(title), \(status)\(cacheStatus)"
+    }
+
+    /// Accessibility label for the status indicator
+    private var statusAccessibilityLabel: String {
+        switch paper.status {
+        case .synced:
+            return "up to date"
+        case .pending:
+            return "needs sync"
+        case .building:
+            return "building"
+        case .error:
+            return "error"
+        case .uploaded, .unknown:
+            return "status unknown"
+        }
     }
 
     @ViewBuilder

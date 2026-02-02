@@ -30,12 +30,11 @@ fun RepositoryCard(
     isRefreshing: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    Card(
+    Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 1.dp
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -48,13 +47,13 @@ fun RepositoryCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
                     ProviderIcon(provider = repository.provider)
 
-                    Column {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
                             text = repository.name,
                             style = MaterialTheme.typography.titleMedium,
@@ -69,6 +68,8 @@ fun RepositoryCard(
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.width(8.dp))
 
                 if (isRefreshing) {
                     CircularProgressIndicator(
@@ -91,7 +92,7 @@ fun RepositoryCard(
             ) {
                 // Paper count
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -101,16 +102,16 @@ fun RepositoryCard(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "${repository.paperCount}",
+                        text = "${repository.paperCountInt}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
                 // Error count (if any)
-                if (repository.papersWithErrors > 0) {
+                if (repository.papersWithErrorsInt > 0) {
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
@@ -120,7 +121,7 @@ fun RepositoryCard(
                             tint = MaterialTheme.colorScheme.error
                         )
                         Text(
-                            text = "${repository.papersWithErrors}",
+                            text = "${repository.papersWithErrorsInt}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -132,9 +133,9 @@ fun RepositoryCard(
                 // Latest commit time
                 repository.lastCommitTime?.let { timestamp ->
                     Text(
-                        text = formatTimestamp(timestamp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        text = formatTimestamp(timestamp.toLong()),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                     )
                 }
             }
@@ -152,18 +153,26 @@ private fun ProviderIcon(provider: RepositoryProvider) {
         RepositoryProvider.GENERIC -> "Git"
     }
 
+    val backgroundColor = when (provider) {
+        RepositoryProvider.GITHUB -> Color(0xFF24292E)
+        RepositoryProvider.GITLAB -> Color(0xFFFC6D26)
+        RepositoryProvider.SELFHOSTED_GITLAB -> Color(0xFFFC6D26)
+        RepositoryProvider.OVERLEAF -> Color(0xFF47A141)
+        RepositoryProvider.GENERIC -> MaterialTheme.colorScheme.primary
+    }
+
     Box(
         modifier = Modifier
-            .size(28.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .size(36.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(backgroundColor),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = iconText,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = Color.White
         )
     }
 }
@@ -176,22 +185,22 @@ private fun StatusBadge(
     val (color, text) = when {
         syncStatus == RepositorySyncStatus.ERROR -> Color(0xFFEF4444) to "Error"
         paperSyncStatus == PaperSyncStatus.IN_SYNC -> Color(0xFF22C55E) to paperSyncStatus.displayText
-        paperSyncStatus == PaperSyncStatus.NEEDS_SYNC -> Color(0xFFEAB308) to paperSyncStatus.displayText
+        paperSyncStatus == PaperSyncStatus.NEEDS_SYNC -> Color(0xFFF59E0B) to paperSyncStatus.displayText
         else -> MaterialTheme.colorScheme.onSurfaceVariant to paperSyncStatus.displayText
     }
 
     Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = color.copy(alpha = 0.15f)
+        shape = CircleShape,
+        color = color.copy(alpha = 0.12f)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(8.dp)
+                    .size(6.dp)
                     .clip(CircleShape)
                     .background(color)
             )
@@ -206,7 +215,23 @@ private fun StatusBadge(
 }
 
 private fun formatTimestamp(timestamp: Long): String {
-    val date = Date(timestamp)
-    val formatter = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
-    return formatter.format(date)
+    val now = System.currentTimeMillis()
+    val diff = now - timestamp
+
+    val seconds = diff / 1000
+    val minutes = seconds / 60
+    val hours = minutes / 60
+    val days = hours / 24
+
+    return when {
+        seconds < 60 -> "just now"
+        minutes < 60 -> "${minutes}m ago"
+        hours < 24 -> "${hours}h ago"
+        days < 7 -> "${days}d ago"
+        else -> {
+            val date = Date(timestamp)
+            val formatter = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
+            formatter.format(date)
+        }
+    }
 }

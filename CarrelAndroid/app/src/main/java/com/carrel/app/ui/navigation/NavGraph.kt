@@ -9,7 +9,6 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.carrel.app.core.di.AppContainer
 import com.carrel.app.core.network.models.Repository
-import com.carrel.app.features.auth.EmailLoginScreen
 import com.carrel.app.features.auth.LoginScreen
 import com.carrel.app.features.gallery.GalleryScreen
 import com.carrel.app.features.paper.PaperDetailScreen
@@ -23,7 +22,6 @@ import java.net.URLEncoder
 
 sealed class Screen(val route: String) {
     data object Login : Screen("login")
-    data object EmailLogin : Screen("email-login")
     data object Gallery : Screen("gallery")
     data object Settings : Screen("settings")
     data object Repositories : Screen("repositories")
@@ -69,17 +67,8 @@ fun NavGraph(
         composable(Screen.Login.route) {
             LoginScreen(
                 oAuthHandler = container.oAuthHandler,
-                onEmailLoginClick = {
-                    navController.navigate(Screen.EmailLogin.route)
-                }
-            )
-        }
-
-        composable(Screen.EmailLogin.route) {
-            EmailLoginScreen(
-                convexClient = container.convexClient,
                 authManager = container.authManager,
-                onBackClick = { navController.popBackStack() }
+                convexService = container.convexService
             )
         }
 
@@ -117,7 +106,7 @@ fun NavGraph(
 
         composable(Screen.Settings.route) {
             SettingsScreen(
-                convexClient = container.convexClient,
+                convexService = container.convexService,
                 authManager = container.authManager,
                 onBackClick = { navController.popBackStack() }
             )
@@ -125,8 +114,7 @@ fun NavGraph(
 
         composable(Screen.Repositories.route) {
             RepositoryListScreen(
-                convexClient = container.convexClient,
-                authManager = container.authManager,
+                convexService = container.convexService,
                 onRepositoryClick = { repository ->
                     navController.navigate(Screen.AddPaperFromRepo.createRoute(repository))
                 },
@@ -145,7 +133,7 @@ fun NavGraph(
             val repository = Json.decodeFromString<Repository>(decoded)
             AddPaperFromRepoScreen(
                 repository = repository,
-                convexClient = container.convexClient,
+                convexService = container.convexService,
                 onBackClick = { navController.popBackStack() },
                 onPaperAdded = {
                     // Navigate back to gallery after adding paper

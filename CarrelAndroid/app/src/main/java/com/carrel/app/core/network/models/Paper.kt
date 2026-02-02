@@ -19,10 +19,12 @@ data class Paper(
     val repositoryId: String? = null,
     val trackedFileId: String? = null,
     val pdfSourceType: String? = null,
-    val lastAffectedCommitTime: Long? = null,
-    val lastSyncedAt: Long? = null,
-    val createdAt: Long? = null,
-    val updatedAt: Long? = null
+    // Convex returns timestamps as doubles (milliseconds with decimal precision)
+    val lastAffectedCommitTime: Double? = null,
+    val lastAffectedCommitAuthor: String? = null,
+    val lastSyncedAt: Double? = null,
+    val createdAt: Double? = null,
+    val updatedAt: Double? = null
 ) {
     // Derive status from isUpToDate and buildStatus
     val status: PaperStatus

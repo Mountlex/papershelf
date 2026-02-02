@@ -3,7 +3,6 @@ package com.carrel.app.core.network
 import android.content.Context
 import android.util.Log
 import com.carrel.app.core.auth.ConvexAuthTokenProvider
-import com.carrel.app.core.auth.TokenStorage
 import com.carrel.app.core.network.models.*
 import dev.convex.android.AuthState
 import dev.convex.android.ConvexClientWithAuth
@@ -30,7 +29,6 @@ class ConvexService(
 ) {
     private val authProvider = ConvexAuthTokenProvider()
     private val client = ConvexClientWithAuth(DEPLOYMENT_URL, authProvider)
-    private val tokenStorage = TokenStorage(context)
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -124,6 +122,30 @@ class ConvexService(
         return setAuthToken(token)
     }
 
+    // MARK: - User
+
+    /**
+     * Get the current authenticated user.
+     */
+    suspend fun getCurrentUser(): Result<User?> {
+        return runCatching {
+            var user: User? = null
+            client.subscribe<User?>("users:viewer")
+                .collect { result ->
+                    user = result.getOrNull()
+                    throw FirstValueReceivedException(user)
+                }
+            user
+        }.recoverCatching { e ->
+            if (e is FirstValueReceivedException) {
+                @Suppress("UNCHECKED_CAST")
+                e.value as User?
+            } else {
+                throw e
+            }
+        }
+    }
+
     // MARK: - Papers (Subscriptions)
 
     /**
@@ -139,12 +161,15 @@ class ConvexService(
                     Log.d(TAG, "Subscription received ${papers.size} papers")
                     papers
                 } else {
-                    Log.e(TAG, "Subscription result failure: ${result.exceptionOrNull()?.message}")
+                    val error = result.exceptionOrNull()
+                    Log.e(TAG, "Subscription result failure: ${error?.message}", error)
+                    // Return empty list on error, subscription will retry automatically
                     emptyList()
                 }
             }
             .catch { e ->
                 Log.e(TAG, "Error in papers subscription: ${e.message}", e)
+                // Don't throw - emit empty and let subscription reconnect
                 emit(emptyList())
             }
     }
@@ -171,6 +196,33 @@ class ConvexService(
                 Log.e(TAG, "Error in repositories subscription: ${e.message}")
                 emit(emptyList())
             }
+    }
+
+    /**
+     * Get repositories for the current user.
+     */
+    suspend fun getRepositories(): Result<List<Repository>> {
+        // First get the current user to get their ID
+        val userResult = getCurrentUser()
+        val user = userResult.getOrNull()
+            ?: return Result.failure(Exception("Not authenticated"))
+
+        return runCatching {
+            var repos: List<Repository> = emptyList()
+            client.subscribe<List<Repository>>("repositories:list", mapOf("userId" to user.id))
+                .collect { result ->
+                    repos = result.getOrDefault(emptyList())
+                    throw FirstValueReceivedException(repos)
+                }
+            repos
+        }.recoverCatching { e ->
+            if (e is FirstValueReceivedException) {
+                @Suppress("UNCHECKED_CAST")
+                e.value as List<Repository>
+            } else {
+                throw e
+            }
+        }
     }
 
     // MARK: - Mutations & Actions

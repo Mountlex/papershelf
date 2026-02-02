@@ -104,6 +104,7 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(pdfCacheSize == 0 && thumbnailCacheSize == 0)
+                .accessibilityHint("Removes all cached PDFs and thumbnails")
             }
 
             // About section
@@ -111,13 +112,15 @@ struct SettingsView: View {
                 LabeledContent("Version", value: Bundle.main.appVersionString)
                 LabeledContent("Build", value: Bundle.main.buildNumber)
 
-                Link(destination: URL(string: "https://carrelapp.com")!) {
-                    HStack {
-                        Text("Website")
-                        Spacer()
-                        Image(systemName: "arrow.up.right")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                if let websiteURL = URL(string: "https://carrelapp.com") {
+                    Link(destination: websiteURL) {
+                        HStack {
+                            Text("Website")
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 }
             }
@@ -133,6 +136,7 @@ struct SettingsView: View {
                         Spacer()
                     }
                 }
+                .accessibilityHint("Sign out of your account")
             }
         }
         .alert(

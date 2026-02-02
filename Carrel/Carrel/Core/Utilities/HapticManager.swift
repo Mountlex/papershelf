@@ -2,9 +2,13 @@ import UIKit
 
 @MainActor
 enum HapticManager {
-    static func buildSuccess() {
+    static func success() {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
+    }
+
+    static func buildSuccess() {
+        success()
     }
 
     static func buildError() {
