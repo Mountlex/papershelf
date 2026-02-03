@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AuthenticationServices
+import UIKit
 
 @Observable
 @MainActor
@@ -8,16 +9,16 @@ final class AuthManager {
     private(set) var isAuthenticated = false
     private(set) var isLoading = false
 
-    /// Whether a token refresh is needed (token expiring soon)
-    private(set) var needsTokenRefresh = false
+    /// Whether a token refresh is in progress
+    private var isRefreshing = false
 
-    /// The current Convex Auth token
-    private var convexAuthToken: String?
+    /// The current access token (JWT)
+    private var accessToken: String?
 
     private let keychain = KeychainManager.shared
 
-    /// How long before expiration to trigger a refresh (5 minutes)
-    private let refreshThreshold: TimeInterval = 5 * 60
+    /// How long before expiration to trigger a refresh (7 days)
+    private let refreshThreshold: TimeInterval = 7 * 24 * 60 * 60
 
     /// Base URL for the web app. Configure this for your deployment.
     /// Uses Info.plist value if available, otherwise falls back to default.
@@ -30,85 +31,181 @@ final class AuthManager {
         return URL(string: "https://carrelapp.com")!
     }()
 
+    /// Convex HTTP endpoint URL (uses .site domain, not .cloud)
+    private static var convexHTTPURL: URL {
+        if let urlString = Bundle.main.object(forInfoDictionaryKey: "ConvexDeploymentURL") as? String {
+            // Convert .cloud to .site for HTTP endpoints
+            let siteUrl = urlString.replacingOccurrences(of: ".convex.cloud", with: ".convex.site")
+            if let url = URL(string: siteUrl) {
+                return url
+            }
+        }
+        return URL(string: "https://kindhearted-bloodhound-95.convex.site")!
+    }
+
     init() {}
 
     // MARK: - Public API
 
-    /// Load stored Convex Auth token and configure ConvexService
+    /// Load stored tokens and configure ConvexService
     func loadStoredTokens() async {
         isLoading = true
         defer { isLoading = false }
 
-        if let token = await keychain.loadConvexAuthToken() {
-            // Check if token is expired before trying to use it
-            if isTokenExpired(token) {
-                #if DEBUG
-                print("AuthManager: Stored token is expired, attempting refresh...")
-                #endif
-
-                // Try to refresh the token automatically
-                let refreshed = await refreshToken()
-                if !refreshed {
-                    #if DEBUG
-                    print("AuthManager: Token refresh failed, requiring re-login")
-                    #endif
-                    convexAuthToken = nil
-                    await keychain.clearConvexAuthToken()
-                    isAuthenticated = false
-                }
-                return
-            }
-
-            // Check if token is expiring soon - set flag for background refresh
-            if isTokenExpiringSoon(token) {
-                #if DEBUG
-                print("AuthManager: Token expiring soon, will refresh in background")
-                #endif
-                needsTokenRefresh = true
-            }
-
+        guard let token = await keychain.loadConvexAuthToken() else {
             #if DEBUG
-            print("AuthManager: Found stored token, authenticating...")
+            print("AuthManager: No stored token found")
             #endif
-            let success = await ConvexService.shared.setAuthToken(token)
+            return
+        }
 
-            if success {
-                convexAuthToken = token
-                isAuthenticated = true
-                #if DEBUG
-                print("AuthManager: Restored session, isAuthenticated = true")
-                #endif
+        // Check if token is expired
+        if isTokenExpired(token) {
+            #if DEBUG
+            print("AuthManager: Stored token is expired, attempting silent refresh...")
+            #endif
 
-                // If token is expiring soon, refresh it in the background
-                if needsTokenRefresh {
-                    Task {
-                        _ = await refreshToken()
-                    }
-                }
-            } else {
-                // Token is invalid/expired - clear it and require re-login
+            // Try to refresh using refresh token
+            let refreshed = await refreshTokenSilently()
+            if !refreshed {
                 #if DEBUG
-                print("AuthManager: Stored token is invalid, clearing and requiring re-login")
+                print("AuthManager: Silent refresh failed, clearing tokens")
                 #endif
-                convexAuthToken = nil
-                await keychain.clearConvexAuthToken()
+                await keychain.clearAllTokens()
+                isAuthenticated = false
+            }
+            return
+        }
+
+        // Check if token is expiring soon - refresh in background
+        if isTokenExpiringSoon(token) {
+            #if DEBUG
+            print("AuthManager: Token expiring soon, will refresh in background")
+            #endif
+            Task {
+                _ = await refreshTokenSilently()
+            }
+        }
+
+        #if DEBUG
+        print("AuthManager: Found stored token, authenticating...")
+        #endif
+
+        let success = await ConvexService.shared.setAuthToken(token)
+
+        if success {
+            accessToken = token
+            isAuthenticated = true
+            #if DEBUG
+            print("AuthManager: Restored session, isAuthenticated = true")
+            #endif
+        } else {
+            #if DEBUG
+            print("AuthManager: Stored token is invalid, attempting silent refresh...")
+            #endif
+            let refreshed = await refreshTokenSilently()
+            if !refreshed {
+                await keychain.clearAllTokens()
                 isAuthenticated = false
             }
         }
     }
 
-    // MARK: - Token Refresh
+    // MARK: - Silent Token Refresh
 
-    /// Attempt to refresh the token by re-authenticating
-    /// Returns the new token if successful, nil otherwise
-    func refreshToken() async -> Bool {
+    /// Refresh the access token using the stored refresh token (no user interaction)
+    /// Returns true if refresh succeeded, false otherwise
+    func refreshTokenSilently() async -> Bool {
+        // Prevent concurrent refresh attempts
+        guard !isRefreshing else {
+            #if DEBUG
+            print("AuthManager: Refresh already in progress, skipping")
+            #endif
+            return false
+        }
+
+        guard let refreshToken = await keychain.loadRefreshToken() else {
+            #if DEBUG
+            print("AuthManager: No refresh token available")
+            #endif
+            return false
+        }
+
+        isRefreshing = true
+        defer { isRefreshing = false }
+
         #if DEBUG
-        print("AuthManager: Attempting token refresh...")
+        print("AuthManager: Attempting silent token refresh...")
+        #endif
+
+        // Call the refresh endpoint
+        let url = Self.convexHTTPURL.appendingPathComponent("api/mobile/refresh")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body = ["refreshToken": refreshToken]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                #if DEBUG
+                print("AuthManager: Invalid response from refresh endpoint")
+                #endif
+                return false
+            }
+
+            if httpResponse.statusCode == 200 {
+                let result = try JSONDecoder().decode(TokenResponse.self, from: data)
+
+                // Save the new Convex Auth-compatible token
+                try await keychain.saveConvexAuthToken(result.accessToken)
+
+                // Configure ConvexService with new token
+                let success = await ConvexService.shared.setAuthToken(result.accessToken)
+                if success {
+                    accessToken = result.accessToken
+                    isAuthenticated = true
+
+                    #if DEBUG
+                    let daysRemaining = (result.expiresAt - Date().timeIntervalSince1970 * 1000) / (1000 * 60 * 60 * 24)
+                    print("AuthManager: Silent refresh successful, token expires in \(Int(daysRemaining)) days")
+                    #endif
+                    return true
+                } else {
+                    #if DEBUG
+                    print("AuthManager: Convex rejected the refreshed token")
+                    #endif
+                    return false
+                }
+            } else {
+                #if DEBUG
+                let responseBody = String(data: data, encoding: .utf8) ?? "no body"
+                print("AuthManager: Refresh failed with status \(httpResponse.statusCode): \(responseBody)")
+                #endif
+                // Clear invalid refresh token
+                await keychain.clearRefreshToken()
+                return false
+            }
+        } catch {
+            #if DEBUG
+            print("AuthManager: Refresh request failed: \(error)")
+            #endif
+            return false
+        }
+    }
+
+    // MARK: - Interactive Token Refresh (Fallback)
+
+    /// Attempt to refresh the token via web authentication (requires user interaction)
+    func refreshTokenInteractive() async -> Bool {
+        #if DEBUG
+        print("AuthManager: Attempting interactive token refresh...")
         #endif
 
         return await withCheckedContinuation { continuation in
-            // Open mobile-auth without a provider - if user has a valid web session,
-            // they'll get a new token automatically. Otherwise, they'll see the login screen.
             let url = Self.siteURL.appendingPathComponent("mobile-auth")
 
             let session = ASWebAuthenticationSession(
@@ -122,7 +219,7 @@ final class AuthManager {
 
                 if error != nil {
                     #if DEBUG
-                    print("AuthManager: Token refresh failed: \(error!.localizedDescription)")
+                    print("AuthManager: Interactive refresh failed: \(error!.localizedDescription)")
                     #endif
                     continuation.resume(returning: false)
                     return
@@ -139,9 +236,8 @@ final class AuthManager {
 
                 Task { @MainActor in
                     await self.handleOAuthCallback(token: token)
-                    self.needsTokenRefresh = false
                     #if DEBUG
-                    print("AuthManager: Token refresh successful")
+                    print("AuthManager: Interactive refresh successful")
                     #endif
                     continuation.resume(returning: true)
                 }
@@ -195,6 +291,8 @@ final class AuthManager {
         #if DEBUG
         if remaining <= 0 {
             print("AuthManager: Token expired at \(expirationDate)")
+        } else if remaining > 24 * 60 * 60 {
+            print("AuthManager: Token valid, expires in \(Int(remaining / (24 * 60 * 60))) days")
         } else {
             print("AuthManager: Token valid, expires in \(Int(remaining / 60)) minutes")
         }
@@ -204,40 +302,107 @@ final class AuthManager {
     }
 
     /// Handle OAuth callback with the Convex Auth token
+    /// Exchanges the short-lived Convex Auth token for a 90-day token + refresh token
     func handleOAuthCallback(token: String) async {
         #if DEBUG
-        print("AuthManager: handleOAuthCallback called with token length: \(token.count)")
+        print("AuthManager: handleOAuthCallback called, exchanging for 90-day token...")
         #endif
-        convexAuthToken = token
 
-        // Save to keychain
+        // Exchange the Convex Auth token for a 90-day Convex Auth-compatible token + refresh token
+        let url = Self.convexHTTPURL.appendingPathComponent("api/mobile/exchange")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let deviceId = await UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
+        let deviceName = await UIDevice.current.name
+        let body: [String: Any] = [
+            "convexToken": token,
+            "deviceId": deviceId,
+            "deviceName": deviceName,
+            "platform": "ios"
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                #if DEBUG
+                print("AuthManager: Token exchange failed - no HTTP response, using original token")
+                #endif
+                await useTokenDirectly(token)
+                return
+            }
+
+            if httpResponse.statusCode != 200 {
+                #if DEBUG
+                let responseBody = String(data: data, encoding: .utf8) ?? "no body"
+                print("AuthManager: Token exchange failed - status \(httpResponse.statusCode): \(responseBody)")
+                #endif
+                await useTokenDirectly(token)
+                return
+            }
+
+            let result = try JSONDecoder().decode(TokenResponse.self, from: data)
+
+            // Save the 90-day access token
+            try await keychain.saveConvexAuthToken(result.accessToken)
+
+            // Save the refresh token
+            if let refreshToken = result.refreshToken {
+                try await keychain.saveRefreshToken(refreshToken)
+            }
+
+            // Configure ConvexService with the 90-day token
+            let success = await ConvexService.shared.setAuthToken(result.accessToken)
+            if success {
+                accessToken = result.accessToken
+                isAuthenticated = true
+
+                #if DEBUG
+                let daysRemaining = (result.expiresAt - Date().timeIntervalSince1970 * 1000) / (1000 * 60 * 60 * 24)
+                print("AuthManager: Token exchange successful, token expires in \(Int(daysRemaining)) days")
+                #endif
+            } else {
+                #if DEBUG
+                print("AuthManager: Convex rejected the exchanged token, using original")
+                #endif
+                await useTokenDirectly(token)
+            }
+        } catch {
+            #if DEBUG
+            print("AuthManager: Token exchange error: \(error), using original token")
+            #endif
+            await useTokenDirectly(token)
+        }
+    }
+
+    /// Fallback: use the original Convex Auth token directly
+    private func useTokenDirectly(_ token: String) async {
         do {
             try await keychain.saveConvexAuthToken(token)
-            #if DEBUG
-            print("AuthManager: Token saved to keychain")
-            #endif
         } catch {
             #if DEBUG
             print("AuthManager: Failed to save token to Keychain: \(error)")
             #endif
         }
 
-        // Configure ConvexService and wait for authentication to complete
-        #if DEBUG
-        print("AuthManager: Configuring ConvexService with token")
-        #endif
-        await ConvexService.shared.setAuthToken(token)
-        isAuthenticated = true
-        #if DEBUG
-        print("AuthManager: isAuthenticated = true")
-        #endif
+        let success = await ConvexService.shared.setAuthToken(token)
+        if success {
+            accessToken = token
+            isAuthenticated = true
+            #if DEBUG
+            print("AuthManager: Using original Convex Auth token (expires in ~1 hour)")
+            #endif
+        }
     }
 
     /// Logout and clear all auth state
     func logout() async {
-        convexAuthToken = nil
+        accessToken = nil
         await ConvexService.shared.clearAuth()
-        await keychain.clearConvexAuthToken()
+        await keychain.clearAllTokens()
 
         // Clear user data caches for security
         await PDFCache.shared.clearCache()
@@ -245,4 +410,14 @@ final class AuthManager {
 
         isAuthenticated = false
     }
+}
+
+// MARK: - Token Response
+
+private struct TokenResponse: Decodable {
+    let accessToken: String
+    let refreshToken: String?
+    let expiresAt: Double
+    let refreshExpiresAt: Double?
+    let tokenType: String?
 }

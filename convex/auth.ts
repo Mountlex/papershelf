@@ -25,10 +25,9 @@ interface GitLabProfile {
 }
 
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
-  // Session duration: 30 days for mobile app convenience
-  // Users will need to re-login after 30 days of inactivity
+  // Session duration: 90 days for mobile app convenience
   session: {
-    totalDurationMs: 30 * 24 * 60 * 60 * 1000, // 30 days
+    totalDurationMs: 90 * 24 * 60 * 60 * 1000, // 90 days
   },
   providers: [
     GitHub({

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Backup rules for Android 11 and below.
+    Excludes sensitive auth tokens from backup.
+-->
+<full-backup-content>
+    <!-- Exclude encrypted shared preferences (contains auth tokens) -->
+    <exclude domain="sharedpref" path="carrel_secure_prefs.xml"/>
+    <exclude domain="sharedpref" path="carrel_secure_prefs.xml.bak"/>
+</full-backup-content>

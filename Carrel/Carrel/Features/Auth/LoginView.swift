@@ -141,8 +141,11 @@ struct SignInButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Image(systemName: provider.iconName)
-                    .font(.title3)
+                // Only show icon for email
+                if provider == .email {
+                    Image(systemName: provider.iconName)
+                        .font(.title3)
+                }
 
                 Text("Sign in with \(provider.displayName)")
                     .font(.headline)

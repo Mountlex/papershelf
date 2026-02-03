@@ -54,9 +54,14 @@ class TokenStorage(context: Context) {
 
     // MARK: - Convex Auth Token Storage (for OAuth login)
 
-    fun saveConvexAuthToken(token: String) {
+    fun saveConvexAuthToken(token: String, expiresAt: Long? = null) {
         prefs.edit()
             .putString(KEY_CONVEX_AUTH_TOKEN, token)
+            .apply {
+                if (expiresAt != null) {
+                    putLong(KEY_CONVEX_AUTH_EXPIRES_AT, expiresAt)
+                }
+            }
             .apply()
     }
 
@@ -64,9 +69,32 @@ class TokenStorage(context: Context) {
         return prefs.getString(KEY_CONVEX_AUTH_TOKEN, null)
     }
 
+    fun loadConvexAuthExpiresAt(): Long {
+        return prefs.getLong(KEY_CONVEX_AUTH_EXPIRES_AT, 0L)
+    }
+
     fun clearConvexAuthToken() {
         prefs.edit()
             .remove(KEY_CONVEX_AUTH_TOKEN)
+            .remove(KEY_CONVEX_AUTH_EXPIRES_AT)
+            .apply()
+    }
+
+    // MARK: - Convex Refresh Token Storage
+
+    fun saveConvexRefreshToken(token: String) {
+        prefs.edit()
+            .putString(KEY_CONVEX_REFRESH_TOKEN, token)
+            .apply()
+    }
+
+    fun loadConvexRefreshToken(): String? {
+        return prefs.getString(KEY_CONVEX_REFRESH_TOKEN, null)
+    }
+
+    fun clearConvexRefreshToken() {
+        prefs.edit()
+            .remove(KEY_CONVEX_REFRESH_TOKEN)
             .apply()
     }
 
@@ -80,6 +108,8 @@ class TokenStorage(context: Context) {
         private const val KEY_EXPIRES_AT = "expires_at"
         private const val KEY_REFRESH_EXPIRES_AT = "refresh_expires_at"
         private const val KEY_CONVEX_AUTH_TOKEN = "convex_auth_token"
+        private const val KEY_CONVEX_AUTH_EXPIRES_AT = "convex_auth_expires_at"
+        private const val KEY_CONVEX_REFRESH_TOKEN = "convex_refresh_token"
     }
 }
 

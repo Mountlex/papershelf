@@ -3,6 +3,7 @@ import SwiftUI
 struct PaperCard: View {
     let paper: Paper
     var isSyncing: Bool = false
+    var isOffline: Bool = false
 
     @State private var isCached: Bool?
 
@@ -13,13 +14,12 @@ struct PaperCard: View {
                 .frame(height: 200)
                 .clipShape(UnevenRoundedRectangle(topLeadingRadius: 16, topTrailingRadius: 16))
                 .overlay(alignment: .topTrailing) {
-                    // Show "not cached" indicator (checked once on appear)
-                    if let isCached = isCached, !isCached, paper.pdfUrl != nil {
-                        Image(systemName: "arrow.down.circle")
-                            .font(.caption)
-                            .foregroundStyle(.white)
-                            .padding(6)
-                            .background(.black.opacity(0.5), in: Circle())
+                    // Show "available offline" indicator when offline and paper is cached
+                    if isOffline, let isCached = isCached, isCached {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.body)
+                            .foregroundStyle(.white.opacity(0.9))
+                            .shadow(color: .black.opacity(0.3), radius: 2)
                             .padding(8)
                     }
                 }
@@ -73,8 +73,8 @@ struct PaperCard: View {
     private var accessibilityLabel: String {
         let title = paper.title ?? "Untitled"
         let status = isSyncing ? "syncing" : statusAccessibilityLabel
-        let cacheStatus = (isCached == false && paper.pdfUrl != nil) ? ", not downloaded" : ""
-        return "\(title), \(status)\(cacheStatus)"
+        let offlineAvailable = (isOffline && isCached == true) ? ", available offline" : ""
+        return "\(title), \(status)\(offlineAvailable)"
     }
 
     /// Accessibility label for the status indicator

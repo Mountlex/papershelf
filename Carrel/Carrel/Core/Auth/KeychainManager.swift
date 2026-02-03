@@ -8,6 +8,7 @@ actor KeychainManager {
 
     private enum Keys {
         static let convexAuthToken = "convex_auth_token"
+        static let refreshToken = "refresh_token"
     }
 
     private init() {}
@@ -31,6 +32,32 @@ actor KeychainManager {
 
     func clearConvexAuthToken() {
         delete(key: Keys.convexAuthToken)
+    }
+
+    // MARK: - Refresh Token
+
+    func saveRefreshToken(_ token: String) throws {
+        guard let data = token.data(using: .utf8) else {
+            throw KeychainError.saveFailed(errSecParam)
+        }
+        try save(key: Keys.refreshToken, data: data)
+    }
+
+    func loadRefreshToken() -> String? {
+        guard let data = load(key: Keys.refreshToken),
+              let token = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return token
+    }
+
+    func clearRefreshToken() {
+        delete(key: Keys.refreshToken)
+    }
+
+    func clearAllTokens() {
+        clearConvexAuthToken()
+        clearRefreshToken()
     }
 
     // MARK: - Generic Keychain Operations

@@ -6,9 +6,11 @@ import {
   hashToken,
   generateSecureToken,
   createJwt,
+  createConvexAuthJwt,
   verifyJwt,
   ACCESS_TOKEN_EXPIRY_MS,
   REFRESH_TOKEN_EXPIRY_MS,
+  CONVEX_AUTH_TOKEN_EXPIRY_MS,
 } from "./mobileAuth";
 
 const http = httpRouter();
@@ -193,6 +195,7 @@ http.route({
 });
 
 // POST /api/mobile/refresh - Refresh access token using refresh token
+// Returns a Convex Auth-compatible JWT (RS256) that works with real-time subscriptions
 http.route({
   path: "/api/mobile/refresh",
   method: "POST",
@@ -218,9 +221,6 @@ http.route({
         return jsonResponse({ error: "Invalid or expired refresh token" }, 401, origin);
       }
 
-      // Get JWT secret
-      const jwtSecret = await ctx.runQuery(internal.mobileAuth.getJwtSecret);
-
       // Get user
       const user = await ctx.runQuery(internal.mobileAuth.getUserById, {
         userId: tokenRecord.userId,
@@ -235,21 +235,17 @@ http.route({
         tokenId: tokenRecord._id,
       });
 
-      // Generate new access token
+      // Generate a Convex Auth-compatible JWT (RS256, 90 days)
+      // This token will work with Convex's real-time subscriptions
       const now = Date.now();
-      const accessTokenExpiry = now + ACCESS_TOKEN_EXPIRY_MS;
+      const accessTokenExpiry = now + CONVEX_AUTH_TOKEN_EXPIRY_MS;
 
-      const accessToken = await createJwt(
-        {
-          iss: "carrel-mobile",
-          sub: user._id,
-          email: user.email,
-          name: user.name,
-          iat: Math.floor(now / 1000),
-          exp: Math.floor(accessTokenExpiry / 1000),
-        },
-        jwtSecret
+      const accessToken = await createConvexAuthJwt(
+        user._id,
+        CONVEX_AUTH_TOKEN_EXPIRY_MS
       );
+
+      console.log(`[refresh] Created Convex Auth JWT for user ${user._id}, expires in 90 days`);
 
       return jsonResponse(
         {
@@ -313,6 +309,99 @@ http.route({
       console.error("Token revocation error:", error);
       return jsonResponse(
         { error: "Internal server error" },
+        500,
+        origin
+      );
+    }
+  }),
+});
+
+// OPTIONS /api/mobile/exchange - CORS preflight
+http.route({
+  path: "/api/mobile/exchange",
+  method: "OPTIONS",
+  handler: httpAction(async (_, request) => {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders(request.headers.get("Origin")),
+    });
+  }),
+});
+
+// POST /api/mobile/exchange - Exchange Convex Auth token for mobile tokens
+// Returns a Convex Auth-compatible JWT (RS256, 90 days) + refresh token
+http.route({
+  path: "/api/mobile/exchange",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin");
+
+    try {
+      const body = await request.json();
+      const { convexToken, deviceId, deviceName, platform } = body;
+
+      if (!convexToken) {
+        return jsonResponse({ error: "Missing convexToken" }, 400, origin);
+      }
+
+      // Validate the Convex Auth session token by querying the user
+      const identity = await ctx.runQuery(internal.mobileAuth.validateConvexToken, {
+        token: convexToken,
+      });
+
+      if (!identity || !identity.userId) {
+        return jsonResponse({ error: "Invalid or expired session token" }, 401, origin);
+      }
+
+      // Get user details
+      const user = await ctx.runQuery(internal.mobileAuth.getUserById, {
+        userId: identity.userId,
+      });
+
+      if (!user) {
+        return jsonResponse({ error: "User not found" }, 404, origin);
+      }
+
+      // Generate tokens
+      const now = Date.now();
+      const accessTokenExpiry = now + CONVEX_AUTH_TOKEN_EXPIRY_MS; // 90 days
+      const refreshToken = generateSecureToken();
+      const refreshTokenExpiry = now + REFRESH_TOKEN_EXPIRY_MS;
+
+      // Create Convex Auth-compatible JWT (RS256, works with real-time subscriptions)
+      const accessToken = await createConvexAuthJwt(
+        identity.userId,
+        CONVEX_AUTH_TOKEN_EXPIRY_MS
+      );
+
+      // Store refresh token hash
+      const refreshTokenHash = await hashToken(refreshToken);
+      await ctx.runMutation(internal.mobileAuth.createMobileTokenRecord, {
+        userId: identity.userId,
+        refreshTokenHash,
+        deviceId: deviceId || "unknown",
+        deviceName: deviceName || "iOS Device",
+        platform: platform || "ios",
+        expiresAt: refreshTokenExpiry,
+      });
+
+      console.log(`[exchange] Created Convex Auth JWT for user ${identity.userId}, expires in 90 days`);
+
+      return jsonResponse(
+        {
+          accessToken,
+          refreshToken,
+          expiresAt: accessTokenExpiry,
+          refreshExpiresAt: refreshTokenExpiry,
+          tokenType: "Bearer",
+        },
+        200,
+        origin
+      );
+    } catch (error) {
+      console.error("Token exchange error:", error);
+      return jsonResponse(
+        { error: "Token exchange failed" },
         500,
         origin
       );

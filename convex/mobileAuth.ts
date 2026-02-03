@@ -3,8 +3,9 @@ import { mutation, query, internalMutation, internalQuery } from "./_generated/s
 import { auth } from "./auth";
 
 // Token configuration
-const ACCESS_TOKEN_EXPIRY_MS = 15 * 60 * 1000; // 15 minutes
-const REFRESH_TOKEN_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const ACCESS_TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days - longer for mobile convenience
+const REFRESH_TOKEN_EXPIRY_MS = 90 * 24 * 60 * 60 * 1000; // 90 days - users rarely need to re-login
+const CONVEX_AUTH_TOKEN_EXPIRY_MS = 90 * 24 * 60 * 60 * 1000; // 90 days for Convex Auth tokens
 
 // Simple hash function for refresh tokens (using Web Crypto API compatible approach)
 async function hashToken(token: string): Promise<string> {
@@ -54,6 +55,72 @@ async function createJwt(
   );
 
   const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(message));
+  const signatureB64 = base64UrlEncode(
+    String.fromCharCode(...new Uint8Array(signature))
+  );
+
+  return `${message}.${signatureB64}`;
+}
+
+// Create a Convex Auth-compatible JWT (signed with RSA-256)
+// This token will be accepted by Convex for real-time subscriptions
+async function createConvexAuthJwt(
+  userId: string,
+  expiresInMs: number = CONVEX_AUTH_TOKEN_EXPIRY_MS
+): Promise<string> {
+  const privateKeyPem = process.env.JWT_PRIVATE_KEY;
+  if (!privateKeyPem) {
+    throw new Error("JWT_PRIVATE_KEY environment variable is not set");
+  }
+
+  // Convex deployment URL for issuer
+  const issuer = process.env.CONVEX_SITE_URL || "https://kindhearted-bloodhound-95.convex.site";
+
+  const now = Math.floor(Date.now() / 1000);
+  const exp = Math.floor((Date.now() + expiresInMs) / 1000);
+
+  // Create a session-like subject (userId|randomSessionId)
+  const sessionId = generateSecureToken().substring(0, 32);
+  const subject = `${userId}|${sessionId}`;
+
+  const header = { alg: "RS256", typ: "JWT" };
+  const payload = {
+    sub: subject,
+    iat: now,
+    iss: issuer,
+    aud: "convex",
+    exp: exp,
+  };
+
+  const headerB64 = base64UrlEncode(JSON.stringify(header));
+  const payloadB64 = base64UrlEncode(JSON.stringify(payload));
+  const message = `${headerB64}.${payloadB64}`;
+
+  // Parse PEM and import RSA private key
+  const pemContents = privateKeyPem
+    .replace(/-----BEGIN PRIVATE KEY-----/, "")
+    .replace(/-----END PRIVATE KEY-----/, "")
+    .replace(/-----BEGIN RSA PRIVATE KEY-----/, "")
+    .replace(/-----END RSA PRIVATE KEY-----/, "")
+    .replace(/\s/g, "");
+
+  const binaryKey = Uint8Array.from(atob(pemContents), (c) => c.charCodeAt(0));
+
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    binaryKey,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+
+  const encoder = new TextEncoder();
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    encoder.encode(message)
+  );
+
   const signatureB64 = base64UrlEncode(
     String.fromCharCode(...new Uint8Array(signature))
   );
@@ -119,6 +186,71 @@ export const getJwtSecret = internalQuery({
       throw new Error("JWT_SECRET environment variable is not set");
     }
     return secret;
+  },
+});
+
+// Internal query to validate a Convex Auth session token and get user ID
+// The Convex Auth token is a JWT signed with RSA - we decode it to get the subject (user ID)
+export const validateConvexToken = internalQuery({
+  args: {
+    token: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ userId: string } | null> => {
+    try {
+      // Decode the JWT payload (Convex Auth tokens are standard JWTs)
+      const parts = args.token.split(".");
+      if (parts.length !== 3) {
+        console.log("validateConvexToken: Invalid JWT format");
+        return null;
+      }
+
+      // Decode the payload (base64url encoded)
+      let base64 = parts[1]
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+
+      // Add padding if needed
+      while (base64.length % 4 !== 0) {
+        base64 += "=";
+      }
+
+      const payloadJson = atob(base64);
+      const payload = JSON.parse(payloadJson);
+
+      // Check expiration
+      if (payload.exp && payload.exp * 1000 < Date.now()) {
+        console.log("validateConvexToken: Token expired");
+        return null;
+      }
+
+      // Get the subject (user ID) - Convex Auth uses 'sub' claim
+      const subject = payload.sub;
+      if (!subject) {
+        console.log("validateConvexToken: No subject in token");
+        return null;
+      }
+
+      // The subject format in Convex Auth is typically the user ID or a compound ID
+      // Try to extract the user ID and verify the user exists
+      // Format might be "userId" or "userId|sessionId"
+      const userId = subject.includes("|") ? subject.split("|")[0] : subject;
+
+      // Verify the user exists in our database
+      try {
+        const user = await ctx.db.get(userId as any);
+        if (!user) {
+          console.log("validateConvexToken: User not found:", userId);
+          return null;
+        }
+        return { userId };
+      } catch {
+        console.log("validateConvexToken: Invalid user ID format:", userId);
+        return null;
+      }
+    } catch (error) {
+      console.error("validateConvexToken: Error decoding token:", error);
+      return null;
+    }
   },
 });
 
@@ -459,7 +591,9 @@ export {
   hashToken,
   generateSecureToken,
   createJwt,
+  createConvexAuthJwt,
   verifyJwt,
   ACCESS_TOKEN_EXPIRY_MS,
   REFRESH_TOKEN_EXPIRY_MS,
+  CONVEX_AUTH_TOKEN_EXPIRY_MS,
 };

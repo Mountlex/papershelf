@@ -222,7 +222,7 @@ function RootComponent() {
             </nav>
           </div>
         </header>
-        <main className="container mx-auto px-4 py-8 md:px-6">
+        <main className="container mx-auto min-h-[calc(100vh-8rem)] px-4 py-8 md:px-6">
           {linkError && (
             <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-950">
               <p className="text-sm font-normal text-red-800 dark:text-red-200">Failed to link accounts</p>
@@ -370,6 +370,16 @@ function RootComponent() {
             </div>
           )}
         </main>
+        <footer className="border-t border-gray-100 bg-white py-6 dark:border-gray-800 dark:bg-gray-900">
+          <div className="container mx-auto flex flex-col items-center justify-between gap-4 px-4 text-sm text-gray-500 dark:text-gray-400 sm:flex-row md:px-6">
+            <p>&copy; {new Date().getFullYear()} Carrel. All rights reserved.</p>
+            <nav className="flex gap-6">
+              <Link to="/privacy" className="hover:text-gray-900 dark:hover:text-gray-100">
+                Privacy Policy
+              </Link>
+            </nav>
+          </div>
+        </footer>
         {import.meta.env.DEV && <TanStackRouterDevtools position="bottom-right" />}
       </div>
     </RootDocument>

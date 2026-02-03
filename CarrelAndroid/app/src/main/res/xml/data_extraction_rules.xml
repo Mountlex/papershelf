@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Data extraction rules for Android 12+ backup.
+    Excludes sensitive auth tokens from device-to-device transfer and cloud backup.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Exclude encrypted shared preferences (contains auth tokens) -->
+        <exclude domain="sharedpref" path="carrel_secure_prefs.xml"/>
+        <exclude domain="sharedpref" path="carrel_secure_prefs.xml.bak"/>
+        <!-- Exclude any keystore data -->
+        <exclude domain="file" path="shared_prefs/"/>
+    </cloud-backup>
+    <device-transfer>
+        <!-- Exclude encrypted shared preferences from device transfer -->
+        <exclude domain="sharedpref" path="carrel_secure_prefs.xml"/>
+        <exclude domain="sharedpref" path="carrel_secure_prefs.xml.bak"/>
+        <exclude domain="file" path="shared_prefs/"/>
+    </device-transfer>
+</data-extraction-rules>

@@ -4,6 +4,7 @@ struct GalleryView: View {
     @State private var viewModel = GalleryViewModel()
     @State private var selectedPaper: Paper?
     @State private var searchText = ""
+    @State private var isOffline = false
 
     private let columns = [
         GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 16)
@@ -79,6 +80,14 @@ struct GalleryView: View {
                 ToastContainer(message: $viewModel.toastMessage)
                     .padding(.top, 8)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .networkStatusChanged)) { notification in
+                if let connected = notification.object as? Bool {
+                    isOffline = !connected
+                }
+            }
+            .onAppear {
+                isOffline = !NetworkMonitor.shared.isConnected
+            }
     }
 
     @ViewBuilder
@@ -96,7 +105,8 @@ struct GalleryView: View {
                         } label: {
                             PaperCard(
                                 paper: paper,
-                                isSyncing: viewModel.syncingPaperId == paper.id
+                                isSyncing: viewModel.syncingPaperId == paper.id,
+                                isOffline: isOffline
                             )
                         }
                         .buttonStyle(.plain)

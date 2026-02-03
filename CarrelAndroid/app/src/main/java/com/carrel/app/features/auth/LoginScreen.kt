@@ -4,18 +4,17 @@ import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -33,22 +32,25 @@ fun LoginScreen(
     oAuthHandler: OAuthHandler,
     authManager: AuthManager? = null,
     convexService: ConvexService? = null,
-    useWebView: Boolean = true // Use WebView by default (works better in emulators)
+    useWebView: Boolean = true
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Activity result launcher for WebView login
     val webViewLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             val token = result.data?.getStringExtra(WebViewLoginActivity.EXTRA_TOKEN)
             if (token != null && authManager != null && convexService != null) {
-                // Handle the token
-                authManager.handleConvexAuthCallback(token)
+                // Exchange token for 90-day token + refresh token, then set up ConvexService
                 scope.launch {
-                    convexService.setAuthToken(token)
+                    authManager.handleConvexAuthCallback(token)
+                    // Use the exchanged token (or original if exchange failed)
+                    val tokenToUse = authManager.getConvexAuthToken()
+                    if (tokenToUse != null) {
+                        convexService.setAuthToken(tokenToUse)
+                    }
                 }
             }
         }
@@ -62,17 +64,11 @@ fun LoginScreen(
             oAuthHandler.launchOAuth(provider)
         }
     }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF1A1A2E),
-                        Color(0xFF25253D)
-                    )
-                )
-            )
+            .background(MaterialTheme.colorScheme.background)
     ) {
         Column(
             modifier = Modifier
@@ -84,52 +80,77 @@ fun LoginScreen(
             Spacer(modifier = Modifier.weight(1f))
 
             // Logo and title
-            Icon(
-                imageVector = Icons.Default.Cloud,
-                contentDescription = null,
-                modifier = Modifier.size(80.dp),
-                tint = Color.White
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
             Text(
                 text = "Carrel",
                 fontSize = 42.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = MaterialTheme.colorScheme.onBackground
             )
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             Text(
                 text = "Your paper gallery",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.7f)
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
             )
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // Sign in buttons - all use web flow for Convex Auth token
-            SignInButton(
-                provider = OAuthProvider.EMAIL,
-                icon = Icons.Default.Email,
-                onClick = { launchLogin(OAuthProvider.EMAIL) }
-            )
+            // Glass-like container for buttons
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                tonalElevation = 0.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // GitHub button
+                    GlassButton(
+                        text = "Sign in with GitHub",
+                        onClick = { launchLogin(OAuthProvider.GITHUB) }
+                    )
 
-            Spacer(modifier = Modifier.height(16.dp))
+                    // GitLab button
+                    GlassButton(
+                        text = "Sign in with GitLab",
+                        onClick = { launchLogin(OAuthProvider.GITLAB) }
+                    )
 
-            SignInButton(
-                provider = OAuthProvider.GITHUB,
-                icon = Icons.Default.Cloud,
-                onClick = { launchLogin(OAuthProvider.GITHUB) }
-            )
+                    // Divider with "or"
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        HorizontalDivider(
+                            modifier = Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+                        )
+                        Text(
+                            text = "or",
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+                        )
+                    }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            SignInButton(
-                provider = OAuthProvider.GITLAB,
-                icon = Icons.Default.Code,
-                onClick = { launchLogin(OAuthProvider.GITLAB) }
-            )
+                    // Email button (with icon)
+                    GlassButton(
+                        text = "Sign in with Email",
+                        icon = Icons.Default.Email,
+                        onClick = { launchLogin(OAuthProvider.EMAIL) }
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(60.dp))
         }
@@ -137,31 +158,38 @@ fun LoginScreen(
 }
 
 @Composable
-private fun SignInButton(
-    provider: OAuthProvider,
-    icon: ImageVector,
+private fun GlassButton(
+    text: String,
+    icon: ImageVector? = null,
     onClick: () -> Unit
 ) {
-    FilledTonalButton(
+    OutlinedButton(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp),
+            .height(52.dp),
         shape = RoundedCornerShape(16.dp),
-        colors = ButtonDefaults.filledTonalButtonColors(
-            containerColor = Color.White.copy(alpha = 0.1f),
-            contentColor = Color.White
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
+            brush = androidx.compose.ui.graphics.SolidColor(
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+            )
         )
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.width(12.dp))
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+        }
         Text(
-            text = "Sign in with ${provider.displayName}",
-            style = MaterialTheme.typography.titleMedium
+            text = text,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
         )
     }
 }
