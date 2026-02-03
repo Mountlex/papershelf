@@ -346,6 +346,17 @@ struct PDFViewerWithOfflineCheck: View {
                 }
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .networkStatusChanged)) { notification in
+            guard let isConnected = notification.object as? Bool else { return }
+            Task { @MainActor in
+                if isConnected {
+                    showOfflineMessage = false
+                } else {
+                    let isCached = await PDFCache.shared.isCached(url: url)
+                    showOfflineMessage = !isCached
+                }
+            }
+        }
     }
 }
 

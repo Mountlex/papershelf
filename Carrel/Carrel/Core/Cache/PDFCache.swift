@@ -5,6 +5,8 @@ enum PDFCacheError: Error, LocalizedError {
     case invalidURL
     case fileTooLarge(size: Int)
     case networkError(underlying: Error)
+    case invalidResponse
+    case badStatusCode(Int)
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +16,21 @@ enum PDFCacheError: Error, LocalizedError {
             return "PDF file too large: \(size / 1024 / 1024)MB exceeds 50MB limit"
         case .networkError(let error):
             return "Network error: \(error.localizedDescription)"
+        case .invalidResponse:
+            return "Invalid response from server"
+        case .badStatusCode(let statusCode):
+            return "Server returned status \(statusCode)"
+        }
+    }
+
+    var isRetryable: Bool {
+        switch self {
+        case .badStatusCode(let statusCode):
+            return (500...599).contains(statusCode)
+        case .invalidResponse, .fileTooLarge, .invalidURL:
+            return false
+        case .networkError:
+            return true
         }
     }
 }
@@ -92,9 +109,18 @@ actor PDFCache {
         var lastError: Error?
         for attempt in 0..<maxRetries {
             do {
-                let (data, _) = try await URLSession.shared.data(from: url)
+                let (data, response) = try await URLSession.shared.data(from: url)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw PDFCacheError.invalidResponse
+                }
+                guard (200...299).contains(httpResponse.statusCode) else {
+                    throw PDFCacheError.badStatusCode(httpResponse.statusCode)
+                }
                 return data
             } catch {
+                if let cacheError = error as? PDFCacheError, !cacheError.isRetryable {
+                    throw cacheError
+                }
                 lastError = error
                 // Don't retry on cancellation
                 if Task.isCancelled { throw error }

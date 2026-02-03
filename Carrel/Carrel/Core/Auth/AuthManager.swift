@@ -68,6 +68,12 @@ final class AuthManager {
             // Try to refresh using refresh token
             let refreshed = await refreshTokenSilently()
             if !refreshed {
+                if isRefreshing {
+                    #if DEBUG
+                    print("AuthManager: Refresh already in progress, waiting for result")
+                    #endif
+                    return
+                }
                 #if DEBUG
                 print("AuthManager: Silent refresh failed, clearing tokens")
                 #endif
@@ -105,6 +111,12 @@ final class AuthManager {
             #endif
             let refreshed = await refreshTokenSilently()
             if !refreshed {
+                if isRefreshing {
+                    #if DEBUG
+                    print("AuthManager: Refresh already in progress, waiting for result")
+                    #endif
+                    return
+                }
                 await keychain.clearAllTokens()
                 isAuthenticated = false
             }

@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { auth } from "./auth";
 
 // Token configuration
@@ -237,7 +238,7 @@ export const validateConvexToken = internalQuery({
 
       // Verify the user exists in our database
       try {
-        const user = await ctx.db.get(userId as any);
+        const user = await ctx.db.get(userId as Id<"users">);
         if (!user) {
           console.log("validateConvexToken: User not found:", userId);
           return null;

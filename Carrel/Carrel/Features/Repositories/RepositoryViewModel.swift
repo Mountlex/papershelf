@@ -25,6 +25,12 @@ final class RepositoryViewModel: SubscribableViewModel {
     /// Current toast message to display
     var toastMessage: ToastMessage?
 
+    deinit {
+        Task { @MainActor [weak self] in
+            self?.stopSubscription()
+        }
+    }
+
     // MARK: - SubscribableViewModel
 
     func setupBeforeSubscription() async throws {

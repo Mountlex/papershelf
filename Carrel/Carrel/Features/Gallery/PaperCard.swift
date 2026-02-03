@@ -44,7 +44,7 @@ struct PaperCard: View {
                     } else {
                         Circle()
                             .fill(statusColor)
-                            .frame(width: 8, height: 8)
+                            .frame(width: 10, height: 10)
                             .padding(.top, 4)
                             .accessibilityLabel(statusAccessibilityLabel)
                     }

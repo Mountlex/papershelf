@@ -93,9 +93,18 @@ actor ThumbnailCache {
         var lastError: Error?
         for attempt in 0..<maxRetries {
             do {
-                let (data, _) = try await URLSession.shared.data(from: url)
+                let (data, response) = try await URLSession.shared.data(from: url)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw ThumbnailError.invalidResponse
+                }
+                guard (200...299).contains(httpResponse.statusCode) else {
+                    throw ThumbnailError.badStatusCode(httpResponse.statusCode)
+                }
                 return data
             } catch {
+                if let cacheError = error as? ThumbnailError, !cacheError.isRetryable {
+                    throw cacheError
+                }
                 lastError = error
                 // Don't retry on cancellation
                 if Task.isCancelled { throw error }
@@ -145,6 +154,8 @@ actor ThumbnailCache {
 enum ThumbnailError: Error, LocalizedError {
     case invalidImageData
     case networkError(underlying: Error)
+    case invalidResponse
+    case badStatusCode(Int)
 
     var errorDescription: String? {
         switch self {
@@ -152,6 +163,21 @@ enum ThumbnailError: Error, LocalizedError {
             return "Invalid image data"
         case .networkError(let error):
             return "Network error: \(error.localizedDescription)"
+        case .invalidResponse:
+            return "Invalid response from server"
+        case .badStatusCode(let statusCode):
+            return "Server returned status \(statusCode)"
+        }
+    }
+
+    var isRetryable: Bool {
+        switch self {
+        case .badStatusCode(let statusCode):
+            return (500...599).contains(statusCode)
+        case .invalidResponse, .invalidImageData:
+            return false
+        case .networkError:
+            return true
         }
     }
 }

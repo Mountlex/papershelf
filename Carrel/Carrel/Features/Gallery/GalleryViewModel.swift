@@ -19,6 +19,12 @@ final class GalleryViewModel: SubscribableViewModel {
         #endif
     }
 
+    deinit {
+        Task { @MainActor [weak self] in
+            self?.stopSubscription()
+        }
+    }
+
     /// Whether a "Check All Repositories" sync is in progress
     private(set) var isSyncing = false
 

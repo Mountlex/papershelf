@@ -59,15 +59,22 @@ extension SubscribableViewModel {
         subscriptionStoppedAt = nil
         isLoading = true
 
-        subscriptionTask = Task {
+        subscriptionTask = Task { [weak self] in
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.subscriptionTask = nil
+                }
+            }
+
             do {
                 // Run async setup first (e.g., fetch user ID)
-                try await setupBeforeSubscription()
+                try await self?.setupBeforeSubscription()
 
-                let publisher = createSubscriptionPublisher()
+                guard let publisher = self?.createSubscriptionPublisher() else { return }
 
                 for try await data in publisher.values {
                     guard !Task.isCancelled else { break }
+                    guard let self = self else { break }
                     await MainActor.run {
                         self.handleSubscriptionData(data)
                         if self.isLoading {
@@ -77,9 +84,9 @@ extension SubscribableViewModel {
                 }
             } catch {
                 if !Task.isCancelled {
-                    await MainActor.run {
-                        self.error = error.localizedDescription
-                        self.isLoading = false
+                    await MainActor.run { [weak self] in
+                        self?.error = error.localizedDescription
+                        self?.isLoading = false
                     }
                 }
             }
