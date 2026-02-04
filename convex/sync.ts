@@ -8,6 +8,9 @@ import { sleep, type DependencyHash } from "./lib/http";
 import { isFileNotFoundError } from "./lib/providers/types";
 import { getUserRateLimitConfig, type UserRateLimitAction } from "./lib/rateLimit";
 
+// Minimum time between update notifications for the same out-of-sync paper
+const UPDATE_NOTIFICATION_COOLDOWN_MS = 30 * 60 * 1000;
+
 // Helper function to check if any dependency files have changed
 // Uses batch fetch to optimize Overleaf (single clone instead of one per file)
 // Includes retry logic to avoid unnecessary recompilation due to transient errors
@@ -15,7 +18,8 @@ async function checkDependenciesChanged(
   ctx: ActionCtx,
   gitUrl: string,
   branch: string,
-  cachedDeps: DependencyHash[]
+  cachedDeps: DependencyHash[],
+  userId?: Id<"users">
 ): Promise<boolean> {
   if (cachedDeps.length === 0) {
     return false;
@@ -32,6 +36,7 @@ async function checkDependenciesChanged(
         gitUrl,
         filePaths,
         branch,
+        userId,
       });
 
       // Compare each dependency hash
@@ -223,7 +228,8 @@ export const getUserRateLimitLock = internalQuery({
     action: v.union(
       v.literal("refresh_repository"),
       v.literal("build_paper"),
-      v.literal("refresh_all_repositories")
+      v.literal("refresh_all_repositories"),
+      v.literal("background_refresh")
     ),
   },
   handler: async (ctx, args) => {
@@ -242,7 +248,8 @@ export const countUserRateLimitAttempts = internalQuery({
     action: v.union(
       v.literal("refresh_repository"),
       v.literal("build_paper"),
-      v.literal("refresh_all_repositories")
+      v.literal("refresh_all_repositories"),
+      v.literal("background_refresh")
     ),
     windowStart: v.number(),
   },
@@ -263,7 +270,8 @@ export const insertUserRateLimitAttempt = internalMutation({
     action: v.union(
       v.literal("refresh_repository"),
       v.literal("build_paper"),
-      v.literal("refresh_all_repositories")
+      v.literal("refresh_all_repositories"),
+      v.literal("background_refresh")
     ),
     attemptedAt: v.number(),
   },
@@ -283,7 +291,8 @@ export const upsertUserRateLimitLock = internalMutation({
     action: v.union(
       v.literal("refresh_repository"),
       v.literal("build_paper"),
-      v.literal("refresh_all_repositories")
+      v.literal("refresh_all_repositories"),
+      v.literal("background_refresh")
     ),
     lockedUntil: v.number(),
   },
@@ -568,12 +577,14 @@ export const refreshRepository = action({
         gitUrl: repository.gitUrl,
         branch: repository.defaultBranch,
         knownSha: repository.lastCommitHash,
+        userId,
       });
 
       if (latestCommit.unchanged && !repository.lastCommitTime) {
         latestCommit = await ctx.runAction(internal.git.fetchLatestCommitInternal, {
           gitUrl: repository.gitUrl,
           branch: repository.defaultBranch,
+          userId,
         });
       }
 
@@ -620,6 +631,7 @@ export const refreshRepository = action({
           gitUrl: repository.gitUrl,
           baseCommit: repository.lastCommitHash,
           headCommit: latestCommit.sha,
+          userId,
         });
         console.log(`Found ${changedFiles.length} changed files between commits`);
       }
@@ -646,6 +658,10 @@ export const refreshRepository = action({
             needsSync: true,
             repositoryId: args.repositoryId,
             attemptId,
+            lastAffectedCommitHash: latestCommit.sha,
+            lastAffectedCommitTime: commitTime,
+            lastAffectedCommitMessage: latestCommit.message,
+            lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
           });
           continue;
         }
@@ -672,6 +688,7 @@ export const refreshRepository = action({
                 gitUrl: repository.gitUrl,
                 filePaths: [trackedFile.filePath],
                 branch: repository.defaultBranch,
+                userId,
               });
               const currentPdfHash = currentHashes[trackedFile.filePath];
 
@@ -691,14 +708,18 @@ export const refreshRepository = action({
           }
 
           // PDF needs re-download
-          await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
-            id: paper._id,
-            needsSync: true,
-            repositoryId: args.repositoryId,
-            attemptId,
-          });
-          continue;
-        }
+        await ctx.runMutation(internal.sync.updatePaperNeedsSync, {
+          id: paper._id,
+          needsSync: true,
+          repositoryId: args.repositoryId,
+          attemptId,
+          lastAffectedCommitHash: latestCommit.sha,
+          lastAffectedCommitTime: commitTime,
+          lastAffectedCommitMessage: latestCommit.message,
+          lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
+        });
+        continue;
+      }
 
         // For compile source type, check if any dependency file changed
         if (trackedFile && trackedFile.pdfSourceType === "compile") {
@@ -739,7 +760,8 @@ export const refreshRepository = action({
               ctx,
               repository.gitUrl,
               repository.defaultBranch,
-              paper.cachedDependencies
+              paper.cachedDependencies,
+              userId
             );
 
             if (!dependenciesChanged) {
@@ -778,6 +800,10 @@ export const refreshRepository = action({
           needsSync: true,
           repositoryId: args.repositoryId,
           attemptId,
+          lastAffectedCommitHash: latestCommit.sha,
+          lastAffectedCommitTime: commitTime,
+          lastAffectedCommitMessage: latestCommit.message,
+          lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
         });
       }
 
@@ -870,6 +896,7 @@ export const updatePaperPdfWithBuildLock = internalMutation({
       cachedPdfBlobHash: args.cachedPdfBlobHash,
       needsSync: false,
       needsSyncSetAt: undefined,
+      lastUpdateNotificationAt: undefined,
       lastSyncError: undefined,
       buildStatus: "idle", // Clear build status on success
       updatedAt: Date.now(),
@@ -991,6 +1018,7 @@ export const updatePaperCommitOnly = internalMutation({
       cachedCommitHash: args.cachedCommitHash,
       needsSync: false,
       needsSyncSetAt: undefined, // Clear the timestamp when sync completes
+      lastUpdateNotificationAt: undefined,
       lastSyncError: undefined,
       updatedAt: Date.now(),
     });
@@ -1035,20 +1063,40 @@ export const updatePaperNeedsSync = internalMutation({
     lastAffectedCommitAuthor: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, args) => {
+    const paper = await ctx.db.get(args.id);
+    if (!paper) return;
+
+    const repo = args.repositoryId
+      ? await ctx.db.get(args.repositoryId)
+      : paper.repositoryId
+        ? await ctx.db.get(paper.repositoryId)
+        : null;
+
     // If attemptId and repositoryId are provided, validate first to prevent stale updates
     if (args.attemptId && args.repositoryId) {
-      const repo = await ctx.db.get(args.repositoryId);
       if (repo && repo.currentSyncAttemptId !== args.attemptId) {
         console.log(`Skipping stale needsSync update for paper ${args.id} (attempt ${args.attemptId} superseded)`);
         return;
       }
     }
 
+    const now = Date.now();
+    const wasNeedsSync = paper.needsSync === true;
+    const previousAffectedCommit = paper.lastAffectedCommitHash ?? null;
+    const nextAffectedCommit = args.lastAffectedCommitHash ?? null;
     const patchData: Record<string, unknown> = {
       needsSync: args.needsSync,
-      // Track when needsSync was set to true (for detecting stale flags)
-      needsSyncSetAt: args.needsSync ? Date.now() : undefined,
     };
+
+    // Track when needsSync was set to true (for detecting stale flags)
+    if (args.needsSync) {
+      if (!wasNeedsSync) {
+        patchData.needsSyncSetAt = now;
+      }
+    } else {
+      patchData.needsSyncSetAt = undefined;
+      patchData.lastUpdateNotificationAt = undefined;
+    }
 
     // Update lastAffectedCommit info if provided
     if (args.lastAffectedCommitHash) {
@@ -1064,7 +1112,40 @@ export const updatePaperNeedsSync = internalMutation({
       patchData.lastAffectedCommitAuthor = args.lastAffectedCommitAuthor;
     }
 
+    const ownerUserId = paper.userId ?? repo?.userId ?? null;
+    let notificationsEnabled = true;
+    let cooldownMs = UPDATE_NOTIFICATION_COOLDOWN_MS;
+
+    if (ownerUserId) {
+      const preferences = await ctx.runQuery(internal.notifications.getPreferencesForUserInternal, {
+        userId: ownerUserId,
+      });
+      const minutes = preferences.updateCooldownMinutes ?? 30;
+      notificationsEnabled = preferences.enabled
+        && preferences.paperUpdated
+        && preferences.backgroundSync
+        && minutes >= 0;
+      cooldownMs = Math.max(0, minutes) * 60 * 1000;
+    }
+
+    const lastNotifiedAt = paper.lastUpdateNotificationAt ?? 0;
+    const cooldownElapsed = cooldownMs <= 0 || now - lastNotifiedAt >= cooldownMs;
+    const commitChanged = nextAffectedCommit && nextAffectedCommit !== previousAffectedCommit;
+    const shouldNotify = notificationsEnabled && args.needsSync && (
+      !wasNeedsSync || (commitChanged && cooldownElapsed)
+    );
+
+    if (shouldNotify) {
+      patchData.lastUpdateNotificationAt = now;
+    }
+
     await ctx.db.patch(args.id, patchData);
+
+    if (shouldNotify) {
+      await ctx.scheduler.runAfter(0, internal.notifications.notifyPaperUpdated, {
+        paperId: args.id,
+      });
+    }
   },
 });
 
@@ -1185,7 +1266,8 @@ export const buildPaper = action({
           ctx,
           repository.gitUrl,
           repository.defaultBranch,
-          paper.cachedDependencies
+          paper.cachedDependencies,
+          userId
         );
 
         if (!dependenciesChanged) {
@@ -1599,12 +1681,14 @@ export const refreshRepositoryInternal = internalAction({
         gitUrl: repository.gitUrl,
         branch: repository.defaultBranch,
         knownSha: repository.lastCommitHash,
+        userId: args.userId,
       });
 
       if (latestCommit.unchanged && !repository.lastCommitTime) {
         latestCommit = await ctx.runAction(internal.git.fetchLatestCommitInternal, {
           gitUrl: repository.gitUrl,
           branch: repository.defaultBranch,
+          userId: args.userId,
         });
       }
 
@@ -1655,6 +1739,7 @@ export const refreshRepositoryInternal = internalAction({
           gitUrl: repository.gitUrl,
           baseCommit: repository.lastCommitHash,
           headCommit: latestCommit.sha,
+          userId: args.userId,
         });
         console.log(`Found ${changedFiles.length} changed files between commits`);
       }
@@ -1681,6 +1766,10 @@ export const refreshRepositoryInternal = internalAction({
             needsSync: true,
             repositoryId: args.repositoryId,
             attemptId,
+            lastAffectedCommitHash: latestCommit.sha,
+            lastAffectedCommitTime: commitTime,
+            lastAffectedCommitMessage: latestCommit.message,
+            lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
           });
           continue;
         }
@@ -1707,6 +1796,7 @@ export const refreshRepositoryInternal = internalAction({
                 gitUrl: repository.gitUrl,
                 filePaths: [trackedFile.filePath],
                 branch: repository.defaultBranch,
+                userId: args.userId,
               });
               const currentPdfHash = currentHashes[trackedFile.filePath];
 
@@ -1731,6 +1821,10 @@ export const refreshRepositoryInternal = internalAction({
             needsSync: true,
             repositoryId: args.repositoryId,
             attemptId,
+            lastAffectedCommitHash: latestCommit.sha,
+            lastAffectedCommitTime: commitTime,
+            lastAffectedCommitMessage: latestCommit.message,
+            lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
           });
           continue;
         }
@@ -1774,7 +1868,8 @@ export const refreshRepositoryInternal = internalAction({
               ctx,
               repository.gitUrl,
               repository.defaultBranch,
-              paper.cachedDependencies
+              paper.cachedDependencies,
+              args.userId
             );
 
             if (!depsChanged) {
@@ -1809,6 +1904,10 @@ export const refreshRepositoryInternal = internalAction({
             needsSync: true,
             repositoryId: args.repositoryId,
             attemptId,
+            lastAffectedCommitHash: latestCommit.sha,
+            lastAffectedCommitTime: commitTime,
+            lastAffectedCommitMessage: latestCommit.message,
+            lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
           });
           continue;
         }
@@ -1819,6 +1918,10 @@ export const refreshRepositoryInternal = internalAction({
           needsSync: true,
           repositoryId: args.repositoryId,
           attemptId,
+          lastAffectedCommitHash: latestCommit.sha,
+          lastAffectedCommitTime: commitTime,
+          lastAffectedCommitMessage: latestCommit.message,
+          lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
         });
       }
 
@@ -2000,6 +2103,20 @@ export const backgroundRefreshForUser = internalAction({
     userId: v.id("users"),
   },
   handler: async (ctx, args) => {
+    const preferences = await ctx.runQuery(internal.notifications.getPreferencesForUserInternal, {
+      userId: args.userId,
+    });
+    if (!preferences.backgroundSync) {
+      return {
+        userId: args.userId,
+        checked: 0,
+        updated: 0,
+        failed: 0,
+        skipped: 0,
+        rateLimited: false,
+      };
+    }
+
     const rateLimitResult = await ctx.runAction(internal.sync.checkAndRecordRateLimit, {
       userId: args.userId,
       action: "background_refresh",

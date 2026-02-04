@@ -11,10 +11,22 @@ const DEFAULT_PREFERENCES = {
   buildFailure: true,
   paperUpdated: true,
   backgroundSync: true,
+  updateCooldownMinutes: 30,
 };
 
 type NotificationPreferences = typeof DEFAULT_PREFERENCES;
 type NotificationCtx = ActionCtx;
+
+const normalizeUpdateCooldownMinutes = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_PREFERENCES.updateCooldownMinutes;
+  }
+  const rounded = Math.round(value);
+  if (rounded <= -1) {
+    return -1;
+  }
+  return Math.max(0, rounded);
+};
 
 // Register or update a device token for push notifications
 export const registerDeviceToken = mutation({
@@ -98,6 +110,7 @@ export const getNotificationPreferences = query({
       buildFailure: existing.buildFailure,
       paperUpdated: existing.paperUpdated,
       backgroundSync: existing.backgroundSync,
+      updateCooldownMinutes: existing.updateCooldownMinutes ?? 30,
     };
   },
 });
@@ -109,6 +122,7 @@ export const updateNotificationPreferences = mutation({
     buildFailure: v.boolean(),
     paperUpdated: v.boolean(),
     backgroundSync: v.boolean(),
+    updateCooldownMinutes: v.optional(v.union(v.number(), v.int64())),
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
@@ -118,12 +132,25 @@ export const updateNotificationPreferences = mutation({
       .unique();
 
     const now = Date.now();
+    const updateCooldownMinutesRaw =
+      args.updateCooldownMinutes ??
+      existing?.updateCooldownMinutes ??
+      DEFAULT_PREFERENCES.updateCooldownMinutes;
+    const updateCooldownMinutesNumber = typeof updateCooldownMinutesRaw === "bigint"
+      ? Number(updateCooldownMinutesRaw)
+      : updateCooldownMinutesRaw;
+    const updateCooldownMinutes = normalizeUpdateCooldownMinutes(updateCooldownMinutesNumber);
     if (existing) {
-      await ctx.db.patch(existing._id, { ...args, updatedAt: now });
+      await ctx.db.patch(existing._id, {
+        ...args,
+        updateCooldownMinutes,
+        updatedAt: now,
+      });
     } else {
       await ctx.db.insert("notificationPreferences", {
         userId,
         ...args,
+        updateCooldownMinutes,
         updatedAt: now,
       });
     }
@@ -149,6 +176,7 @@ export const getPreferencesForUserInternal = internalQuery({
       buildFailure: existing.buildFailure,
       paperUpdated: existing.paperUpdated,
       backgroundSync: existing.backgroundSync,
+      updateCooldownMinutes: existing.updateCooldownMinutes ?? 30,
     };
   },
 });
@@ -297,7 +325,9 @@ export const notifyPaperUpdated = internalAction({
     if (!info?.userId) return { delivered: 0 };
 
     const preferences = await getPreferencesForUser(ctx, info.userId);
-    if (!preferences.enabled || !preferences.paperUpdated) return { delivered: 0 };
+    if (!preferences.enabled || !preferences.paperUpdated || !preferences.backgroundSync) {
+      return { delivered: 0 };
+    }
 
     const paperTitle = info.title || "Paper";
     return sendPushToUser(ctx, info.userId, {

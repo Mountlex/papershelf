@@ -143,7 +143,7 @@ const USER_LIMITS: Record<UserRateLimitAction, RateLimitConfig> = {
   refresh_repository: { windowMs: 60000, max: 30, lockoutMs: 60000 },      // 30/min, 1 min lockout
   build_paper: { windowMs: 60000, max: 20, lockoutMs: 60000 },             // 20/min, 1 min lockout
   refresh_all_repositories: { windowMs: 300000, max: 5, lockoutMs: 300000 }, // 5/5min, 5 min lockout
-  background_refresh: { windowMs: 3600000, max: 1, lockoutMs: 3600000 },    // 1/hour, 1 hour lockout
+  background_refresh: { windowMs: 60000, max: 1, lockoutMs: 60000 },         // TEMP: 1/min for testing
 };
 
 export function getUserRateLimitConfig(action: UserRateLimitAction): RateLimitConfig {

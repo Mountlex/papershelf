@@ -26,6 +26,9 @@ final class PushNotificationManager {
     func refreshAuthorizationStatus() async {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         authorizationStatus = settings.authorizationStatus
+        if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional {
+            registerForRemoteNotifications()
+        }
     }
 
     func requestAuthorization() async -> Bool {
@@ -57,7 +60,10 @@ final class PushNotificationManager {
 
     func setAuthenticated(_ authenticated: Bool) {
         isAuthenticated = authenticated
-        Task { await registerTokenIfPossible() }
+        Task {
+            await refreshAuthorizationStatus()
+            await registerTokenIfPossible()
+        }
     }
 
     func updateDeviceToken(_ data: Data) {
@@ -98,10 +104,13 @@ final class PushNotificationManager {
 
     private func registerTokenIfPossible() async {
         guard isAuthenticated else { return }
-        guard let token = deviceToken else { return }
-
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+            return
+        }
+
+        guard let token = deviceToken else {
+            registerForRemoteNotifications()
             return
         }
 

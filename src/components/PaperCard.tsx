@@ -105,7 +105,7 @@ export function PaperCard({
 
       {/* Info */}
       <div className="p-4">
-        <div className="flex items-start gap-1">
+        <div className="flex min-w-0 items-start gap-1">
           {isEditing ? (
             <input
               ref={inputRef}
@@ -115,11 +115,11 @@ export function PaperCard({
               onChange={(e) => onEditTitleChange(e.target.value)}
               onBlur={onSaveTitle}
               onKeyDown={onKeyDown}
-              className="flex-1 truncate rounded border border-blue-400 px-1 py-0.5 text-sm font-normal text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-800 dark:text-gray-100"
+              className="min-w-0 flex-1 truncate rounded border border-blue-400 px-1 py-0.5 text-sm font-normal text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-800 dark:text-gray-100"
             />
           ) : (
             <>
-              <h3 className="font-serif flex-1 truncate font-normal text-gray-900 group-hover:text-blue-600 dark:text-gray-100 dark:group-hover:text-blue-400">
+              <h3 className="min-w-0 flex-1 truncate font-serif font-normal text-gray-900 group-hover:text-blue-600 dark:text-gray-100 dark:group-hover:text-blue-400">
                 {paper.title}
               </h3>
               <button

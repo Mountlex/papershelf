@@ -6,6 +6,7 @@ struct PaperCard: View {
     var isOffline: Bool = false
 
     @State private var isCached: Bool?
+    @ScaledMetric(relativeTo: .subheadline) private var titleLineHeight: CGFloat = 17
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -32,6 +33,7 @@ struct PaperCard: View {
                         .font(.subheadline)
                         .fontWeight(.medium)
                         .lineLimit(2)
+                        .frame(minHeight: titleLineHeight * 2, alignment: .top)
                         .foregroundStyle(.primary)
 
                     Spacer()

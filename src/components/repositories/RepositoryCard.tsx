@@ -257,7 +257,7 @@ export function RepositoryCard({
         {/* Right section: Actions */}
         <div className="flex shrink-0 items-center gap-2 border-t border-gray-100 pt-4 dark:border-gray-800 lg:border-l lg:border-t-0 lg:py-1 lg:pl-8 lg:pt-0">
           <label className="hidden items-center gap-2 text-xs text-gray-500 dark:text-gray-400 lg:flex">
-            <span>Background refresh</span>
+            <span>Background refresh (every 5 min)</span>
             <span className="relative inline-flex h-5 w-9 items-center">
               <input
                 type="checkbox"
@@ -267,7 +267,7 @@ export function RepositoryCard({
                 disabled={isTogglingBackground}
                 aria-label="Toggle background refresh"
               />
-              <span className="absolute inset-0 rounded-full bg-gray-200 transition peer-checked:bg-primary-500 dark:bg-gray-700 dark:peer-checked:bg-primary-500" />
+              <span className="absolute inset-0 rounded-full bg-gray-200 transition peer-checked:bg-primary-400 dark:bg-gray-700 dark:peer-checked:bg-primary-400" />
               <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4 dark:bg-gray-100" />
             </span>
           </label>
@@ -328,7 +328,7 @@ export function RepositoryCard({
       )}
 
       <div className="mt-4 flex items-center justify-between gap-3 lg:hidden">
-        <span className="text-xs text-gray-500 dark:text-gray-400">Background refresh</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400">Background refresh (every 5 min)</span>
         <label className="relative inline-flex h-6 w-11 items-center">
           <input
             type="checkbox"
@@ -338,7 +338,7 @@ export function RepositoryCard({
             disabled={isTogglingBackground}
             aria-label="Toggle background refresh"
           />
-          <span className="absolute inset-0 rounded-full bg-gray-200 transition peer-checked:bg-primary-500 dark:bg-gray-700 dark:peer-checked:bg-primary-500" />
+          <span className="absolute inset-0 rounded-full bg-gray-200 transition peer-checked:bg-primary-400 dark:bg-gray-700 dark:peer-checked:bg-primary-400" />
           <span className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5 dark:bg-gray-100" />
         </label>
       </div>

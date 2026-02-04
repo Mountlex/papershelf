@@ -498,8 +498,13 @@ function RepositoriesPage() {
   return (
     <div>
       {/* Header */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 md:mb-8">
-        <h1 className="font-serif text-2xl font-normal text-gray-900 dark:text-gray-100">Repositories</h1>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3 md:mb-8">
+        <div className="flex max-w-xl flex-col gap-1">
+          <h1 className="font-serif text-2xl font-normal text-gray-900 dark:text-gray-100">Repositories</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Background refresh checks enabled repositories every 5 minutes. Toggle it per repo to keep statuses up to date.
+          </p>
+        </div>
         <div className="flex items-center gap-2">
           {/* Check All - icon only on mobile */}
           <button

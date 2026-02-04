@@ -155,6 +155,8 @@ export default defineSchema({
     needsSync: v.optional(v.boolean()),
     // Timestamp when needsSync was set to true (for detecting stale flags)
     needsSyncSetAt: v.optional(v.number()),
+    // Last time we sent an update notification for this paper
+    lastUpdateNotificationAt: v.optional(v.number()),
 
     // Paper-level build lock (for independent paper builds)
     buildStatus: v.optional(v.union(v.literal("idle"), v.literal("building"), v.literal("error"))),
@@ -233,6 +235,7 @@ export default defineSchema({
     buildFailure: v.boolean(),
     paperUpdated: v.boolean(),
     backgroundSync: v.boolean(),
+    updateCooldownMinutes: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index("by_user", ["userId"]),

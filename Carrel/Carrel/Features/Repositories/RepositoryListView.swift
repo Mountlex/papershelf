@@ -3,10 +3,19 @@ import SwiftUI
 struct RepositoryListView: View {
     @State private var viewModel = RepositoryViewModel()
     @State private var repositoryToDelete: Repository?
+    @State private var selectedRepository: Repository?
 
     var body: some View {
         repositoryListContent(viewModel: viewModel)
             .navigationTitle("Repositories")
+            .navigationDestination(item: $selectedRepository) { repository in
+                AddPaperFromRepoView(repository: repository)
+            }
+            .onAppear {
+                Task {
+                    await viewModel.loadNotificationPreferences()
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
@@ -58,24 +67,48 @@ struct RepositoryListView: View {
         if viewModel.repositories.isEmpty && !viewModel.isLoading {
             emptyState
         } else {
-            ScrollView {
-                LazyVStack(spacing: 12) {
+            VStack(spacing: 8) {
+                if !viewModel.isBackgroundRefreshEnabledGlobally {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "clock.badge.xmark")
+                            .foregroundStyle(.orange)
+                        Text("Background refresh is disabled in Settings.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                }
+
+                List {
                     ForEach(viewModel.repositories) { repository in
-                        NavigationLink(destination: AddPaperFromRepoView(repository: repository)) {
+                        Button {
+                            selectedRepository = repository
+                        } label: {
                             RepositoryCard(
                                 repository: repository,
-                                isRefreshing: viewModel.refreshingRepoId == repository.id
+                                isRefreshing: viewModel.refreshingRepoId == repository.id,
+                                showsBackgroundRefreshBadge: viewModel.isBackgroundRefreshEnabledGlobally
                             )
                             .contentShape(Rectangle())
-                            .contextMenu {
-                                Button {
-                                    Task {
-                                        await viewModel.refreshRepository(repository)
-                                    }
-                                } label: {
-                                    Label("Check for Updates", systemImage: "arrow.clockwise")
+                            .padding(.horizontal, 16)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("repository_card_\(repository.id)")
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                            Button {
+                                Task {
+                                    await viewModel.refreshRepository(repository)
                                 }
+                            } label: {
+                                Label("Update", systemImage: "arrow.clockwise")
+                            }
+                            .tint(.orange)
 
+                            if viewModel.isBackgroundRefreshEnabledGlobally {
                                 Button {
                                     Task {
                                         await viewModel.setBackgroundRefresh(
@@ -86,35 +119,28 @@ struct RepositoryListView: View {
                                 } label: {
                                     let isEnabled = repository.backgroundRefreshEnabled
                                     Label(
-                                        isEnabled ? "Disable Background Refresh" : "Enable Background Refresh",
+                                        isEnabled ? "Disable Background" : "Enable Background",
                                         systemImage: isEnabled ? "clock.badge.xmark" : "clock.arrow.circlepath"
                                     )
                                 }
-
-                                Divider()
-
-                                Button(role: .destructive) {
-                                    repositoryToDelete = repository
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
+                                .tint(.orange)
                             }
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("repository_card_\(repository.id)")
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
                                 repositoryToDelete = repository
                             } label: {
                                 Label("Delete", systemImage: "trash")
                             }
+                            .tint(.red)
                         }
                     }
                 }
-                .padding()
-            }
-            .refreshable {
-                await viewModel.checkAllRepositories()
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .refreshable {
+                    await viewModel.checkAllRepositories()
+                }
             }
         }
     }

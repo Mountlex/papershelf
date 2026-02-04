@@ -42,6 +42,10 @@ struct SettingsView: View {
                     notificationsSectionContent(viewModel: viewModel)
                 }
 
+                GlassSection(title: "Background Refresh") {
+                    backgroundRefreshSectionContent(viewModel: viewModel)
+                }
+
                 GlassSection(title: "Storage") {
                     storageSectionContent()
                 }
@@ -154,7 +158,7 @@ struct SettingsView: View {
     }
 
     private func storageSectionContent() -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) {
             LabeledContent("PDF Cache", value: formatBytes(pdfCacheSize))
             Divider()
             LabeledContent("Thumbnail Cache", value: formatBytes(thumbnailCacheSize))
@@ -218,45 +222,60 @@ struct SettingsView: View {
             Divider()
 
             Toggle("Paper Updated", isOn: preferenceBinding(\.paperUpdated, viewModel: viewModel))
-                .disabled(!viewModel.notificationPreferences.enabled)
+                .disabled(!viewModel.notificationPreferences.enabled || !viewModel.notificationPreferences.backgroundSync)
                 .onChange(of: viewModel.notificationPreferences.paperUpdated) { _, _ in
                     Task { await viewModel.updateNotificationPreferences() }
                 }
 
+            if !viewModel.notificationPreferences.backgroundSync {
+                Text("Enable Background Refresh to receive update notifications.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Divider()
 
-            Toggle("Background Refresh", isOn: preferenceBinding(\.backgroundSync, viewModel: viewModel))
-                .disabled(!viewModel.notificationPreferences.enabled)
+            VStack(alignment: .leading, spacing: 6) {
+                Picker(
+                    "Update Notification Frequency",
+                    selection: intPreferenceBinding(\.updateCooldownMinutes, viewModel: viewModel)
+                ) {
+                    ForEach(updateCooldownOptions, id: \.self) { minutes in
+                        Text(updateCooldownLabel(minutes))
+                            .tag(minutes)
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(
+                    !viewModel.notificationPreferences.enabled
+                    || !viewModel.notificationPreferences.paperUpdated
+                    || !viewModel.notificationPreferences.backgroundSync
+                )
+                .onChange(of: viewModel.notificationPreferences.updateCooldownMinutes) { _, _ in
+                    Task { await viewModel.updateNotificationPreferences() }
+                }
+
+                Text("If new commits arrive while a paper is already out of sync, we will notify you at most once per interval when Background Refresh is enabled. Choose Never to disable update notifications.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider()
+        }
+        .tint(.orange)
+    }
+
+    private func backgroundRefreshSectionContent(viewModel: SettingsViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle("Enable Background Refresh", isOn: preferenceBinding(\.backgroundSync, viewModel: viewModel))
                 .onChange(of: viewModel.notificationPreferences.backgroundSync) { _, _ in
                     Task { await viewModel.updateNotificationPreferences() }
                 }
-                .accessibilityHint("Allows silent refresh when notifications arrive")
+                .accessibilityHint("Runs periodic sync checks for enabled repositories.")
 
-            Divider()
-
-            Button {
-                Task { @MainActor in
-                    if !viewModel.notificationPreferences.enabled {
-                        viewModel.setError("Enable notifications to send a test.")
-                        return
-                    }
-                    let granted = await PushNotificationManager.shared.requestAuthorization()
-                    guard granted else {
-                        viewModel.setError("Notification permission not granted.")
-                        return
-                    }
-                    await viewModel.sendTestNotification()
-                }
-            } label: {
-                HStack {
-                    Spacer()
-                    Text("Send Test Notification")
-                    Spacer()
-                }
-                .padding(.vertical, 4)
-            }
-            .buttonStyle(.liquidGlass)
-            .disabled(viewModel.isNotificationsUpdating)
+            Text("Background refresh checks enabled repositories every 5 minutes and keeps their status up to date. You can enable it per repository, and it works independently of notifications.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .tint(.orange)
     }
@@ -269,6 +288,30 @@ struct SettingsView: View {
             get: { viewModel.notificationPreferences[keyPath: keyPath] },
             set: { viewModel.notificationPreferences[keyPath: keyPath] = $0 }
         )
+    }
+
+    private func intPreferenceBinding(
+        _ keyPath: WritableKeyPath<NotificationPreferences, Int>,
+        viewModel: SettingsViewModel
+    ) -> Binding<Int> {
+        Binding(
+            get: { viewModel.notificationPreferences[keyPath: keyPath] },
+            set: { viewModel.notificationPreferences[keyPath: keyPath] = $0 }
+        )
+    }
+
+    private var updateCooldownOptions: [Int] {
+        [0, 15, 30, 60, -1]
+    }
+
+    private func updateCooldownLabel(_ minutes: Int) -> String {
+        if minutes < 0 {
+            return "Never"
+        }
+        if minutes == 0 {
+            return "Every update"
+        }
+        return "\(minutes) minutes"
     }
 
     private func aboutSectionContent() -> some View {

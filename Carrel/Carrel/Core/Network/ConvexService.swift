@@ -353,6 +353,7 @@ final class ConvexService: ObservableObject {
                 "buildFailure": preferences.buildFailure,
                 "paperUpdated": preferences.paperUpdated,
                 "backgroundSync": preferences.backgroundSync,
+                "updateCooldownMinutes": Double(preferences.updateCooldownMinutes),
             ]
         )
     }

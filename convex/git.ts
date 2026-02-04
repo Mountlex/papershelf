@@ -532,16 +532,20 @@ export const fetchChangedFilesInternal = internalAction({
     gitUrl: v.string(),
     baseCommit: v.string(),
     headCommit: v.string(),
+    userId: v.optional(v.id("users")),
   },
   handler: async (ctx, args): Promise<string[]> => {
-    const selfHostedInstances = await getAllSelfHostedGitLabInstances(ctx);
+    const selfHostedInstances = args.userId
+      ? await getAllSelfHostedGitLabInstancesByUserId(ctx, args.userId)
+      : await getAllSelfHostedGitLabInstances(ctx);
 
     try {
       const { provider, owner, repo } = await getProvider(
         ctx,
         args.gitUrl,
         selfHostedInstances,
-        createTokenGetters()
+        createTokenGetters(),
+        args.userId
       );
 
       return provider.fetchChangedFiles(owner, repo, args.baseCommit, args.headCommit);

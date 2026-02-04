@@ -3,6 +3,7 @@ import SwiftUI
 struct RepositoryCard: View {
     let repository: Repository
     var isRefreshing: Bool = false
+    var showsBackgroundRefreshBadge: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -32,7 +33,7 @@ struct RepositoryCard: View {
                     statusBadge
                 }
 
-                if repository.backgroundRefreshEnabled {
+                if showsBackgroundRefreshBadge && repository.backgroundRefreshEnabled {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.caption)
                         .foregroundStyle(.orange)
@@ -100,7 +101,7 @@ struct RepositoryCard: View {
             components.append(statusAccessibilityLabel)
         }
 
-        if repository.backgroundRefreshEnabled {
+        if showsBackgroundRefreshBadge && repository.backgroundRefreshEnabled {
             components.append("background refresh enabled")
         }
 

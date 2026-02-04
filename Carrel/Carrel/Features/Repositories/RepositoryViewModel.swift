@@ -25,6 +25,9 @@ final class RepositoryViewModel: SubscribableViewModel {
     /// Current toast message to display
     var toastMessage: ToastMessage?
 
+    /// Global background refresh preference (from notification settings)
+    private(set) var isBackgroundRefreshEnabledGlobally = true
+
     deinit {
         Task { @MainActor [weak self] in
             self?.stopSubscription()
@@ -157,6 +160,17 @@ final class RepositoryViewModel: SubscribableViewModel {
             toastMessage = ToastMessage(text: message, type: .success)
         } catch {
             toastMessage = ToastMessage(text: "Failed to update background refresh", type: .error)
+        }
+    }
+
+    func loadNotificationPreferences() async {
+        do {
+            let preferences = try await ConvexService.shared.getNotificationPreferences()
+            isBackgroundRefreshEnabledGlobally = preferences.backgroundSync
+        } catch {
+            #if DEBUG
+            print("RepositoryViewModel: Failed to load notification preferences: \(error)")
+            #endif
         }
     }
 
