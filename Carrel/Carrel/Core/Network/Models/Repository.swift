@@ -11,6 +11,7 @@ struct Repository: Codable, Identifiable, Equatable {
     let lastCommitHash: String?
     let lastCommitTime: Date?
     let lastCommitAuthor: String?
+    let backgroundRefreshEnabled: Bool
     // Enriched fields from backend query
     let paperSyncStatus: PaperSyncStatus
     let paperCount: Int
@@ -21,6 +22,7 @@ struct Repository: Codable, Identifiable, Equatable {
         case name, gitUrl, provider, defaultBranch, syncStatus
         case lastSyncedAt, lastCommitHash, lastCommitTime, lastCommitAuthor
         case paperSyncStatus, paperCount, papersWithErrors
+        case backgroundRefreshEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -51,6 +53,11 @@ struct Repository: Codable, Identifiable, Equatable {
         }
 
         lastCommitAuthor = try container.decodeIfPresent(String.self, forKey: .lastCommitAuthor)
+
+        backgroundRefreshEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .backgroundRefreshEnabled
+        ) ?? false
     }
 }
 

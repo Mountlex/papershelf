@@ -9,6 +9,7 @@ final class PaperViewModel {
     private(set) var error: String?
     private(set) var isBuilding = false
     private(set) var isTogglingPublic = false
+    private var buildTimeoutTask: Task<Void, Never>?
 
     init(paper: Paper) {
         self.paper = paper
@@ -27,18 +28,32 @@ final class PaperViewModel {
 
     func build(force: Bool = false) async {
         isBuilding = true
+        buildTimeoutTask?.cancel()
+        buildTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            await MainActor.run {
+                guard let self else { return }
+                if self.isBuilding && self.paper.buildStatus != "building" {
+                    self.isBuilding = false
+                }
+            }
+        }
 
         do {
             try await ConvexService.shared.buildPaper(id: paper.id, force: force)
         } catch {
             self.error = error.localizedDescription
             isBuilding = false
+            buildTimeoutTask?.cancel()
+            buildTimeoutTask = nil
         }
         // Note: isBuilding will be set to false by the subscription in the view
     }
 
     func onPaperUpdate(_ updatedPaper: Paper) {
         paper = updatedPaper
+        buildTimeoutTask?.cancel()
+        buildTimeoutTask = nil
 
         // Check if build completed
         if updatedPaper.buildStatus != "building" && updatedPaper.compilationProgress == nil {

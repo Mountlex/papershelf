@@ -227,9 +227,12 @@ app.post("/compile-from-git", rateLimit, async (req, res) => {
         }
 
         // Run latexmk with -recorder to track dependencies
-        const targetPath = path.join(workDir, target);
+        const targetPath = await safePathAsync(workDir, target);
+        if (!targetPath) {
+          return res.status(400).json({ error: "Invalid target path" });
+        }
         const targetDir = path.dirname(targetPath);
-        const targetName = path.basename(target, ".tex");
+        const targetName = path.basename(targetPath, ".tex");
 
         // Check if target file exists
         try {
@@ -450,44 +453,96 @@ app.post("/git/refs", rateLimit, async (req, res) => {
 
   const authenticatedUrl = buildAuthenticatedUrl(gitUrl, auth);
 
-  const result = await spawnAsync("git", ["ls-remote", authenticatedUrl], {
-    timeout: 30000,
-    logger: req.log,
-  });
+  // Resolve default branch and HEAD SHA via symref (more accurate than main/master heuristics)
+  let headSha = null;
+  let defaultBranch = null;
 
-  if (!result.success) {
-    return res.status(400).json({ error: result.stderr || "Failed to access repository" });
+  const symrefResult = await spawnAsync(
+    "git",
+    ["ls-remote", "--symref", authenticatedUrl, "HEAD"],
+    { timeout: 30000, logger: req.log }
+  );
+
+  if (symrefResult.success && symrefResult.stdout.trim()) {
+    const symrefLines = symrefResult.stdout.trim().split("\n");
+    for (const line of symrefLines) {
+      if (line.startsWith("ref:")) {
+        const [refPart, refName] = line.split("\t");
+        if (refName === "HEAD") {
+          const ref = refPart.replace("ref:", "").trim();
+          if (ref.startsWith("refs/heads/")) {
+            defaultBranch = ref.replace("refs/heads/", "");
+          }
+        }
+        continue;
+      }
+      const [sha, ref] = line.split("\t");
+      if (ref === "HEAD") {
+        headSha = sha;
+      }
+    }
   }
 
-  // Parse refs
-  const lines = result.stdout.trim().split("\n");
-  let headSha = null;
-  let defaultBranch = "master";
+  let targetBranch = branch || defaultBranch || "master";
   let requestedSha = null;
 
-  for (const line of lines) {
-    const [sha, ref] = line.split("\t");
-    if (ref === "HEAD") {
-      headSha = sha;
-    } else if (ref === "refs/heads/master" || ref === "refs/heads/main") {
-      if (!requestedSha && (!branch || branch === "master" || branch === "main")) {
+  const branchResult = await spawnAsync(
+    "git",
+    ["ls-remote", authenticatedUrl, `refs/heads/${targetBranch}`],
+    { timeout: 30000, logger: req.log }
+  );
+
+  if (branchResult.success && branchResult.stdout.trim()) {
+    const branchLines = branchResult.stdout.trim().split("\n");
+    for (const line of branchLines) {
+      const [sha, ref] = line.split("\t");
+      if (ref === `refs/heads/${targetBranch}`) {
         requestedSha = sha;
+        break;
+      }
+    }
+  }
+
+  // Fall back to a full refs scan if symref or branch lookup failed
+  if (!requestedSha || !headSha || !defaultBranch) {
+    const result = await spawnAsync("git", ["ls-remote", authenticatedUrl], {
+      timeout: 30000,
+      logger: req.log,
+    });
+
+    if (!result.success) {
+      return res.status(400).json({ error: result.stderr || "Failed to access repository" });
+    }
+
+    const lines = result.stdout.trim().split("\n");
+    const refMap = new Map();
+    for (const line of lines) {
+      const [sha, ref] = line.split("\t");
+      refMap.set(ref, sha);
+      if (ref === "HEAD" && !headSha) {
+        headSha = sha;
+      }
+      if (!defaultBranch && (ref === "refs/heads/master" || ref === "refs/heads/main")) {
         defaultBranch = ref.replace("refs/heads/", "");
       }
     }
-    if (branch && ref === `refs/heads/${branch}`) {
-      requestedSha = sha;
+    if (!branch && defaultBranch) {
+      targetBranch = defaultBranch;
+      requestedSha = refMap.get(`refs/heads/${targetBranch}`) || requestedSha;
+    } else if (!requestedSha) {
+      requestedSha = refMap.get(`refs/heads/${targetBranch}`) || null;
     }
   }
 
-  const sha = requestedSha || headSha;
+  let resolvedSha = requestedSha || headSha;
+  const resolvedDefaultBranch = defaultBranch || targetBranch;
 
   // If SHA hasn't changed, skip the expensive commit date fetch
   // The client already has the date from the previous sync
-  if (knownSha && sha === knownSha) {
+  if (knownSha && resolvedSha === knownSha) {
     return res.json({
-      sha,
-      defaultBranch,
+      sha: resolvedSha,
+      defaultBranch: resolvedDefaultBranch,
       unchanged: true,
     });
   }
@@ -502,14 +557,13 @@ app.post("/git/refs", rateLimit, async (req, res) => {
     let authorName = null;
     let authorEmail = null;
 
-    if (sha) {
+    if (resolvedSha) {
       try {
         await fs.mkdir(workDir, { recursive: true });
 
         // Initialize bare repo and fetch just the commit we need
         await spawnAsync("git", ["init", "--bare"], { cwd: workDir, logger: req.log });
 
-        const targetBranch = branch || defaultBranch;
         const fetchResult = await spawnAsync(
           "git",
           ["fetch", "--depth=1", authenticatedUrl, `refs/heads/${targetBranch}:refs/heads/${targetBranch}`],
@@ -517,22 +571,24 @@ app.post("/git/refs", rateLimit, async (req, res) => {
         );
 
         if (fetchResult.success) {
-          // Get commit date, message, and author
-          // Format: date, author name, author email, subject
-          // Use branch reference instead of SHA - in a bare repo after shallow fetch,
-          // the SHA may not be directly resolvable but the branch ref will be
+          // Get commit hash, date, message, and author from the fetched ref
+          // Format: sha, date, author name, author email, subject
           const logResult = await spawnAsync(
             "git",
-            ["log", "-1", "--format=%cI%n%an%n%ae%n%s", `refs/heads/${targetBranch}`],
+            ["log", "-1", "--format=%H%n%cI%n%an%n%ae%n%s", `refs/heads/${targetBranch}`],
             { cwd: workDir, logger: req.log }
           );
 
           if (logResult.success && logResult.stdout.trim()) {
             const lines = logResult.stdout.trim().split("\n");
-            commitDate = lines[0];
-            authorName = lines[1] || null;
-            authorEmail = lines[2] || null;
-            commitMessage = lines.slice(3).join("\n") || "Latest commit";
+            const loggedSha = lines[0];
+            if (loggedSha) {
+              resolvedSha = loggedSha;
+            }
+            commitDate = lines[1];
+            authorName = lines[2] || null;
+            authorEmail = lines[3] || null;
+            commitMessage = lines.slice(4).join("\n") || "Latest commit";
           }
         }
       } catch (err) {
@@ -542,8 +598,8 @@ app.post("/git/refs", rateLimit, async (req, res) => {
 
     const dateIsFallback = !commitDate;
     const responseData = {
-      sha,
-      defaultBranch,
+      sha: resolvedSha,
+      defaultBranch: resolvedDefaultBranch,
       message: commitMessage,
       date: commitDate || new Date().toISOString(),
       dateIsFallback,
@@ -553,11 +609,12 @@ app.post("/git/refs", rateLimit, async (req, res) => {
 
     // Cache the result for future requests
     refsCache.set(cacheKey, {
-      sha,
-      defaultBranch,
+      sha: resolvedSha,
+      defaultBranch: resolvedDefaultBranch,
       details: {
         message: commitMessage,
         date: responseData.date,
+        dateIsFallback,
         authorName,
         authorEmail,
       },
@@ -734,6 +791,10 @@ app.post("/git/archive", rateLimit, async (req, res) => {
       for (const entry of entries) {
         if (limitExceeded) return; // Stop if limits exceeded
         if (entry.name === ".git") continue;
+        if (entry.isSymbolicLink()) {
+          req.log.warn(`Skipping symlink: ${relativePath ? `${relativePath}/${entry.name}` : entry.name}`);
+          continue;
+        }
 
         const fullPath = path.join(dirPath, entry.name);
         const relPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
@@ -866,6 +927,10 @@ app.post("/git/selective-archive", rateLimit, async (req, res) => {
       for (const entry of entries) {
         if (limitExceeded) return; // Stop if limits exceeded
         if (entry.name === ".git") continue;
+        if (entry.isSymbolicLink()) {
+          req.log.warn(`Skipping symlink: ${relativePath ? `${relativePath}/${entry.name}` : entry.name}`);
+          continue;
+        }
 
         const fullPath = path.join(dirPath, entry.name);
         const relPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;

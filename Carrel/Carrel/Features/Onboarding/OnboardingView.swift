@@ -30,59 +30,60 @@ struct OnboardingView: View {
     ]
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Page content
-            TabView(selection: $currentPage) {
-                ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
-                    OnboardingPageView(page: page)
-                        .tag(index)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-
-            // Page indicator and button
+        ZStack {
+            GlassBackdrop()
             VStack(spacing: 24) {
-                // Page dots
-                HStack(spacing: 8) {
-                    ForEach(0..<pages.count, id: \.self) { index in
-                        Circle()
-                            .fill(index == currentPage ? Color.orange : Color.white.opacity(0.3))
-                            .frame(width: 8, height: 8)
-                            .animation(.easeInOut(duration: 0.2), value: currentPage)
+                // Page content
+                TabView(selection: $currentPage) {
+                    ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
+                        OnboardingPageView(page: page)
+                            .tag(index)
                     }
                 }
+                .tabViewStyle(.page(indexDisplayMode: .never))
 
-                // Action button
-                Button {
-                    if currentPage < pages.count - 1 {
-                        withAnimation {
-                            currentPage += 1
+                // Page indicator and button
+                VStack(spacing: 24) {
+                    // Page dots
+                    HStack(spacing: 8) {
+                        ForEach(0..<pages.count, id: \.self) { index in
+                            Circle()
+                                .fill(index == currentPage ? Color.primary.opacity(0.8) : Color.primary.opacity(0.2))
+                                .frame(width: 8, height: 8)
+                                .animation(.easeInOut(duration: 0.2), value: currentPage)
                         }
-                    } else {
-                        hasCompletedOnboarding = true
                     }
-                } label: {
-                    Text(currentPage < pages.count - 1 ? "Continue" : "Get Started")
-                        .font(.headline)
-                        .foregroundStyle(.black)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Color.orange, in: RoundedRectangle(cornerRadius: 14))
-                }
-                .padding(.horizontal, 24)
 
-                // Skip button (only on non-last pages)
-                if currentPage < pages.count - 1 {
-                    Button("Skip") {
-                        hasCompletedOnboarding = true
+                    // Action button
+                    Button {
+                        if currentPage < pages.count - 1 {
+                            withAnimation {
+                                currentPage += 1
+                            }
+                        } else {
+                            hasCompletedOnboarding = true
+                        }
+                    } label: {
+                        Text(currentPage < pages.count - 1 ? "Continue" : "Get Started")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
                     }
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.6))
+                    .buttonStyle(.liquidGlass)
+                    .padding(.horizontal, 24)
+
+                    // Skip button (only on non-last pages)
+                    if currentPage < pages.count - 1 {
+                        Button("Skip") {
+                            hasCompletedOnboarding = true
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    }
                 }
+                .padding(.bottom, 32)
             }
-            .padding(.bottom, 48)
         }
-        .background(Color.black)
         .accessibilityElement(children: .contain)
     }
 }
@@ -102,26 +103,31 @@ private struct OnboardingPageView: View {
         VStack(spacing: 24) {
             Spacer()
 
-            Image(systemName: page.icon)
-                .font(.system(size: 72))
-                .foregroundStyle(.orange)
-                .accessibilityHidden(true)
+            GlassCard {
+                VStack(spacing: 16) {
+                    Image(systemName: page.icon)
+                        .font(.system(size: 64))
+                        .foregroundStyle(.primary)
+                        .accessibilityHidden(true)
 
-            VStack(spacing: 12) {
-                Text(page.title)
-                    .font(.title)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
+                    VStack(spacing: 12) {
+                        Text(page.title)
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .multilineTextAlignment(.center)
 
-                Text(page.description)
-                    .font(.body)
-                    .foregroundStyle(.white.opacity(0.7))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+                        Text(page.description)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 12)
+                    }
+                }
+                .padding(.vertical, 24)
+                .padding(.horizontal, 20)
             }
+            .padding(.horizontal, 24)
 
-            Spacer()
             Spacer()
         }
         .accessibilityElement(children: .combine)

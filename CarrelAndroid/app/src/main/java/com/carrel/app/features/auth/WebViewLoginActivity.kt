@@ -124,7 +124,6 @@ private fun WebViewLoginScreen(
                                 request: WebResourceRequest?
                             ): Boolean {
                                 val uri = request?.url ?: return false
-                                Log.d("WebViewLogin", "URL: $uri")
 
                                 // Intercept carrel:// callback
                                 if (uri.scheme == "carrel" && uri.host == "auth") {

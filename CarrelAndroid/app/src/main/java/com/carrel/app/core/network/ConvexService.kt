@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 /**
  * Service for interacting with Convex backend using the official Android SDK.
@@ -129,13 +130,15 @@ class ConvexService(
      */
     suspend fun getCurrentUser(): Result<User?> {
         return runCatching {
-            var user: User? = null
-            client.subscribe<User?>("users:viewer")
-                .collect { result ->
-                    user = result.getOrNull()
-                    throw FirstValueReceivedException(user)
-                }
-            user
+            withTimeout(10_000) {
+                var user: User? = null
+                client.subscribe<User?>("users:viewer")
+                    .collect { result ->
+                        user = result.getOrNull()
+                        throw FirstValueReceivedException(user)
+                    }
+                user
+            }
         }.recoverCatching { e ->
             if (e is FirstValueReceivedException) {
                 @Suppress("UNCHECKED_CAST")

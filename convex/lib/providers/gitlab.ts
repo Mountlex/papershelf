@@ -219,7 +219,17 @@ export class GitLabProvider implements GitProvider {
       }
 
       const data = await response.json();
-      return (data.diffs || []).map((d: { new_path: string }) => d.new_path);
+      const diffs = (data.diffs || []) as Array<{ new_path?: string; old_path?: string }>;
+      const paths: string[] = [];
+      for (const diff of diffs) {
+        if (diff.new_path) {
+          paths.push(diff.new_path);
+        }
+        if (diff.old_path) {
+          paths.push(diff.old_path);
+        }
+      }
+      return Array.from(new Set(paths));
     } catch (error) {
       console.log(`Failed to fetch changed files: ${error}`);
       return [];

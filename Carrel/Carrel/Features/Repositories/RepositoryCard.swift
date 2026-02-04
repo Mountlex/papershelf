@@ -31,6 +31,13 @@ struct RepositoryCard: View {
                 } else {
                     statusBadge
                 }
+
+                if repository.backgroundRefreshEnabled {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel("Background refresh enabled")
+                }
             }
 
             // Stats row
@@ -91,6 +98,10 @@ struct RepositoryCard: View {
             components.append("refreshing")
         } else {
             components.append(statusAccessibilityLabel)
+        }
+
+        if repository.backgroundRefreshEnabled {
+            components.append("background refresh enabled")
         }
 
         return components.joined(separator: ", ")

@@ -338,6 +338,24 @@ function RepositoriesPage() {
     }
   };
 
+  const handleToggleBackgroundRefresh = async (
+    repoId: Id<"repositories">,
+    enabled: boolean
+  ): Promise<boolean> => {
+    try {
+      await updateRepository({ id: repoId, backgroundRefreshEnabled: enabled });
+      showToast(
+        enabled ? "Background refresh enabled" : "Background refresh disabled",
+        "info"
+      );
+      return true;
+    } catch (error) {
+      console.error("Failed to update background refresh:", error);
+      showError(error, "Failed to update background refresh");
+      return false;
+    }
+  };
+
   const handleClearOverleafCredentials = () => {
     setConfirmDialog({
       isOpen: true,
@@ -455,6 +473,7 @@ function RepositoriesPage() {
       syncStatus: repo.syncStatus,
       paperSyncStatus: repo.paperSyncStatus,
       papersWithErrors: repo.papersWithErrors,
+      backgroundRefreshEnabled: repo.backgroundRefreshEnabled,
     }));
   }, [repositories]);
 
@@ -553,6 +572,7 @@ function RepositoriesPage() {
               onDelete={() => handleDelete(repo._id)}
               onConfigure={() => setConfigureRepo(repo)}
               onUpdateName={handleUpdateName}
+              onToggleBackgroundRefresh={handleToggleBackgroundRefresh}
             />
           ))}
         </div>

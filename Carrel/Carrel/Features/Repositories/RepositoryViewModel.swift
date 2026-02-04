@@ -146,6 +146,20 @@ final class RepositoryViewModel: SubscribableViewModel {
         }
     }
 
+    /// Toggle background refresh for a repository
+    func setBackgroundRefresh(_ repository: Repository, enabled: Bool) async {
+        do {
+            try await ConvexService.shared.setBackgroundRefresh(
+                repositoryId: repository.id,
+                enabled: enabled
+            )
+            let message = enabled ? "Background refresh enabled" : "Background refresh disabled"
+            toastMessage = ToastMessage(text: message, type: .success)
+        } catch {
+            toastMessage = ToastMessage(text: "Failed to update background refresh", type: .error)
+        }
+    }
+
     func clearError() {
         error = nil
     }

@@ -5,11 +5,12 @@ import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -31,6 +32,8 @@ import com.carrel.app.core.network.ConvexService
 import com.carrel.app.ui.components.StatusBadge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,9 +41,17 @@ fun PaperDetailScreen(
     paperId: String,
     convexClient: ConvexClient,
     convexService: ConvexService? = null,
+    useConvexSubscriptions: Boolean = false,
     onBackClick: () -> Unit
 ) {
-    val viewModel = remember { PaperViewModel(paperId, convexClient, convexService) }
+    val viewModel = remember {
+        PaperViewModel(
+            paperId = paperId,
+            convexClient = convexClient,
+            convexService = convexService,
+            useConvexSubscriptions = useConvexSubscriptions
+        )
+    }
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
 
@@ -304,63 +315,61 @@ private fun PdfViewer(
     pdfUrl: String,
     modifier: Modifier = Modifier
 ) {
-    var pageBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
+    var pdfFile by remember { mutableStateOf<File?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var isCached by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var pageCount by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
     val pdfCache = remember { PDFCache.getInstance(context) }
+    val bitmapCache = remember {
+        object : LruCache<Int, Bitmap>(MAX_BITMAP_CACHE_BYTES) {
+            override fun sizeOf(key: Int, value: Bitmap): Int = value.byteCount
+        }
+    }
 
     LaunchedEffect(pdfUrl) {
         isLoading = true
         isCached = pdfCache.isCached(pdfUrl)
         error = null
-        pageBitmaps = emptyList()
+        pdfFile = null
+        pageCount = 0
+        bitmapCache.evictAll()
         try {
-            val bitmaps = withContext(Dispatchers.IO) {
+            val (file, count) = withContext(Dispatchers.IO) {
                 // Fetch PDF (from cache or network)
-                val pdfFile = pdfCache.fetchPDF(pdfUrl).getOrThrow()
+                val file = pdfCache.fetchPDF(pdfUrl).getOrThrow()
 
-                // Open PDF renderer
                 val fileDescriptor = ParcelFileDescriptor.open(
-                    pdfFile,
+                    file,
                     ParcelFileDescriptor.MODE_READ_ONLY
                 )
                 val renderer = PdfRenderer(fileDescriptor)
-                pageCount = renderer.pageCount
-
-                // Render all pages
-                val result = mutableListOf<Bitmap>()
-                for (i in 0 until renderer.pageCount) {
-                    val page = renderer.openPage(i)
-                    val bmp = Bitmap.createBitmap(
-                        page.width * 2,
-                        page.height * 2,
-                        Bitmap.Config.ARGB_8888
-                    )
-                    bmp.eraseColor(android.graphics.Color.WHITE)
-                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    result.add(bmp)
-                    page.close()
+                try {
+                    file to renderer.pageCount
+                } finally {
+                    renderer.close()
+                    fileDescriptor.close()
                 }
-
-                renderer.close()
-                fileDescriptor.close()
-
-                result
             }
-            pageBitmaps = bitmaps
+            pdfFile = file
+            pageCount = count
         } catch (e: Exception) {
             error = e.message
         }
         isLoading = false
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
+        val targetWidthPx = constraints.maxWidth
+        LaunchedEffect(targetWidthPx) {
+            if (targetWidthPx > 0) {
+                bitmapCache.evictAll()
+            }
+        }
         when {
             isLoading -> {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -382,43 +391,136 @@ private fun PdfViewer(
                     )
                 }
             }
-            pageBitmaps.isNotEmpty() -> {
+            pdfFile != null && pageCount > 0 -> {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(8.dp)
                 ) {
-                    itemsIndexed(pageBitmaps) { index, bitmap ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                        ) {
-                            Column {
-                                Image(
-                                    bitmap = bitmap.asImageBitmap(),
-                                    contentDescription = "Page ${index + 1}",
-                                    modifier = Modifier.fillMaxWidth(),
-                                    contentScale = ContentScale.FillWidth
-                                )
-                                Text(
-                                    text = "Page ${index + 1} of $pageCount",
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                                        .padding(4.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
+                    items(pageCount) { index ->
+                        PdfPage(
+                            pdfFile = pdfFile!!,
+                            pageIndex = index,
+                            targetWidthPx = targetWidthPx,
+                            pageCount = pageCount,
+                            bitmapCache = bitmapCache
+                        )
                     }
                 }
             }
         }
     }
 }
+
+@Composable
+private fun PdfPage(
+    pdfFile: File,
+    pageIndex: Int,
+    targetWidthPx: Int,
+    pageCount: Int,
+    bitmapCache: LruCache<Int, Bitmap>
+) {
+    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(pdfFile, pageIndex, targetWidthPx) {
+        if (targetWidthPx <= 0) return@LaunchedEffect
+        bitmap = bitmapCache.get(pageIndex)
+        if (bitmap != null) return@LaunchedEffect
+
+        try {
+            val rendered = renderPageBitmap(pdfFile, pageIndex, targetWidthPx)
+            bitmapCache.put(pageIndex, rendered)
+            bitmap = rendered
+        } catch (e: Exception) {
+            error = e.message
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column {
+            when {
+                bitmap != null -> {
+                    Image(
+                        bitmap = bitmap!!.asImageBitmap(),
+                        contentDescription = "Page ${pageIndex + 1}",
+                        modifier = Modifier.fillMaxWidth(),
+                        contentScale = ContentScale.FillWidth
+                    )
+                }
+                error != null -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = error ?: "Failed to render page",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+                else -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+            }
+            Text(
+                text = "Page ${pageIndex + 1} of $pageCount",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+private suspend fun renderPageBitmap(
+    pdfFile: File,
+    pageIndex: Int,
+    targetWidthPx: Int
+): Bitmap = withContext(Dispatchers.IO) {
+    val fileDescriptor = ParcelFileDescriptor.open(
+        pdfFile,
+        ParcelFileDescriptor.MODE_READ_ONLY
+    )
+    val renderer = PdfRenderer(fileDescriptor)
+    try {
+        val page = renderer.openPage(pageIndex)
+        try {
+            val scale = targetWidthPx.toFloat() / page.width.toFloat()
+            val width = targetWidthPx.coerceAtLeast(1)
+            val height = (page.height * scale).roundToInt().coerceAtLeast(1)
+            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            bmp.eraseColor(android.graphics.Color.WHITE)
+            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            bmp
+        } finally {
+            page.close()
+        }
+    } finally {
+        renderer.close()
+        fileDescriptor.close()
+    }
+}
+
+private const val MAX_BITMAP_CACHE_BYTES = 20 * 1024 * 1024
 
 private fun formatTimeAgo(timestamp: Long): String {
     val now = System.currentTimeMillis()

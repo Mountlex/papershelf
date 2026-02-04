@@ -66,26 +66,42 @@ struct RepositoryListView: View {
                                 repository: repository,
                                 isRefreshing: viewModel.refreshingRepoId == repository.id
                             )
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button {
+                                    Task {
+                                        await viewModel.refreshRepository(repository)
+                                    }
+                                } label: {
+                                    Label("Check for Updates", systemImage: "arrow.clockwise")
+                                }
+
+                                Button {
+                                    Task {
+                                        await viewModel.setBackgroundRefresh(
+                                            repository,
+                                            enabled: !repository.backgroundRefreshEnabled
+                                        )
+                                    }
+                                } label: {
+                                    let isEnabled = repository.backgroundRefreshEnabled
+                                    Label(
+                                        isEnabled ? "Disable Background Refresh" : "Enable Background Refresh",
+                                        systemImage: isEnabled ? "clock.badge.xmark" : "clock.arrow.circlepath"
+                                    )
+                                }
+
+                                Divider()
+
+                                Button(role: .destructive) {
+                                    repositoryToDelete = repository
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("repository_card_\(repository.id)")
-                        .contextMenu {
-                            Button {
-                                Task {
-                                    await viewModel.refreshRepository(repository)
-                                }
-                            } label: {
-                                Label("Check for Updates", systemImage: "arrow.clockwise")
-                            }
-
-                            Divider()
-
-                            Button(role: .destructive) {
-                                repositoryToDelete = repository
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
                                 repositoryToDelete = repository

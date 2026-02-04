@@ -287,7 +287,7 @@ private fun FileList(
                     },
                     name = file.name,
                     isTracked = tracked,
-                    onClick = if (tracked) null else {{ onFileClick(file) }}
+                    onClick = if (tracked) null else ({ onFileClick(file) })
                 )
             }
         }

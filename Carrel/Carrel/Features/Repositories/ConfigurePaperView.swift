@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ConfigurePaperSheet: View {
     let repository: Repository
@@ -9,6 +10,8 @@ struct ConfigurePaperSheet: View {
     @State private var compiler: Compiler = .pdflatex
     @State private var isAdding = false
     @State private var toastMessage: ToastMessage?
+    @State private var keyboardHeight: CGFloat = 0
+    @FocusState private var focusedField: Field?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -34,46 +37,51 @@ struct ConfigurePaperSheet: View {
         !title.isEmpty && !isAdding
     }
 
+    private enum Field {
+        case title
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
                 GlassBackdrop()
-                Form {
-                    // File info section
-                    Section {
-                        HStack(spacing: 12) {
-                            Image(systemName: isTexFile ? "doc.text.fill" : "doc.fill")
-                                .font(.title2)
-                                .foregroundStyle(isTexFile ? .green : .red)
+                ScrollView {
+                    VStack(spacing: 20) {
+                        GlassSection {
+                            HStack(spacing: 12) {
+                                Image(systemName: isTexFile ? "doc.text.fill" : "doc.fill")
+                                    .font(.title2)
+                                    .foregroundStyle(isTexFile ? .green : .red)
 
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(filePath.split(separator: "/").last.map(String.init) ?? filePath)
-                                    .font(.headline)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(filePath.split(separator: "/").last.map(String.init) ?? filePath)
+                                        .font(.headline)
 
-                                Text(filePath)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-
-                    // Configuration section
-                    Section("Paper Details") {
-                        TextField("Title", text: $title)
-
-                        if isTexFile {
-                            Picker("Compiler", selection: $compiler) {
-                                ForEach(Compiler.allCases) { compiler in
-                                    Text(compiler.displayName).tag(compiler)
+                                    Text(filePath)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
                                 }
                             }
                         }
-                    }
 
-                    // Add button section
-                    Section {
+                        GlassSection(title: "Paper Details") {
+                            VStack(spacing: 12) {
+                                TextField("Title", text: $title)
+                                    .textFieldStyle(.roundedBorder)
+                                    .focused($focusedField, equals: .title)
+
+                                if isTexFile {
+                                    Picker("Compiler", selection: $compiler) {
+                                        ForEach(Compiler.allCases) { compiler in
+                                            Text(compiler.displayName).tag(compiler)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                }
+                            }
+                        }
+
                         Button {
                             Task {
                                 await addPaper()
@@ -90,11 +98,18 @@ struct ConfigurePaperSheet: View {
                                     .fontWeight(.semibold)
                                 Spacer()
                             }
+                            .padding(.vertical, 4)
                         }
+                        .buttonStyle(.liquidGlass)
                         .disabled(!canAddPaper)
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                    .padding(.bottom, 20)
                 }
-                .scrollContentBackground(.hidden)
+                .scrollDismissesKeyboard(.interactively)
+                .padding(.bottom, keyboardHeight)
+                .animation(.easeInOut(duration: 0.2), value: keyboardHeight)
             }
             .navigationTitle("Add Paper")
             .navigationBarTitleDisplayMode(.inline)
@@ -109,6 +124,13 @@ struct ConfigurePaperSheet: View {
                 ToastContainer(message: $toastMessage)
                     .padding(.top, 8)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
+            guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            keyboardHeight = max(0, frame.height - 20)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardHeight = 0
         }
     }
 

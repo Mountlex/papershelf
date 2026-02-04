@@ -67,16 +67,20 @@ async function checkDependenciesChanged(
  *
  * When the commit is unchanged (Overleaf optimization), use the repository's
  * cached lastCommitTime to ensure consistency between repo and paper timestamps.
- * Returns undefined if no cached time is available.
+ * Returns undefined if no reliable commit time is available.
  */
 function getCommitTime(
-  latestCommit: { unchanged?: boolean; date?: string },
+  latestCommit: { unchanged?: boolean; date?: string; dateIsFallback?: boolean },
   repositoryLastCommitTime: number | undefined
 ): number | undefined {
   if (latestCommit.unchanged) {
     return repositoryLastCommitTime;
   }
-  return new Date(latestCommit.date!).getTime();
+  if (!latestCommit.date || latestCommit.dateIsFallback) {
+    return undefined;
+  }
+  const parsed = Date.parse(latestCommit.date);
+  return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 /**
@@ -312,7 +316,8 @@ export const checkAndRecordRateLimit = internalAction({
     action: v.union(
       v.literal("refresh_repository"),
       v.literal("build_paper"),
-      v.literal("refresh_all_repositories")
+      v.literal("refresh_all_repositories"),
+      v.literal("background_refresh")
     ),
   },
   handler: async (ctx, args) => {
@@ -896,6 +901,10 @@ export const updatePaperPdfWithBuildLock = internalMutation({
     }
 
     await ctx.db.patch(args.id, patchData);
+    await ctx.scheduler.runAfter(0, internal.notifications.notifyBuildCompleted, {
+      paperId: args.id,
+      status: "success",
+    });
     return { success: true };
   },
 });
@@ -919,6 +928,12 @@ export const updatePaperBuildError = internalMutation({
     await ctx.db.patch(args.id, {
       lastSyncError: args.error,
       updatedAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(2_000, internal.notifications.notifyBuildCompleted, {
+      paperId: args.id,
+      status: "failure",
+      error: args.error,
+      attemptId: args.attemptId,
     });
   },
 });
@@ -954,8 +969,16 @@ export const updatePaperCommitOnly = internalMutation({
     cachedCommitHash: v.string(),
     repositoryId: v.optional(v.id("repositories")),
     attemptId: v.optional(v.string()),
+    buildAttemptId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    if (args.buildAttemptId) {
+      const paper = await ctx.db.get(args.id);
+      if (paper && paper.currentBuildAttemptId !== args.buildAttemptId) {
+        console.log(`Skipping stale build commit update for paper ${args.id} (attempt ${args.buildAttemptId} superseded)`);
+        return;
+      }
+    }
     // If attemptId and repositoryId are provided, validate first to prevent stale updates
     if (args.attemptId && args.repositoryId) {
       const repo = await ctx.db.get(args.repositoryId);
@@ -971,10 +994,13 @@ export const updatePaperCommitOnly = internalMutation({
       lastSyncError: undefined,
       updatedAt: Date.now(),
     });
+    await ctx.scheduler.runAfter(0, internal.notifications.notifyPaperUpdated, {
+      paperId: args.id,
+    });
   },
 });
 
-// Clear sync errors for all papers in a repository (called at start of refresh)
+// Clear sync errors for all papers in a repository (called after successful refresh)
 export const clearPaperSyncErrors = internalMutation({
   args: {
     repositoryId: v.id("repositories"),
@@ -1136,6 +1162,7 @@ export const buildPaper = action({
         await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
           id: args.paperId,
           cachedCommitHash: latestCommit.sha,
+          buildAttemptId: attemptId,
         });
         await ctx.runMutation(internal.sync.releaseBuildLock, {
           id: args.paperId,
@@ -1167,6 +1194,7 @@ export const buildPaper = action({
           await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
             id: args.paperId,
             cachedCommitHash: latestCommit.sha,
+            buildAttemptId: attemptId,
           });
           // Release lock
           await ctx.runMutation(internal.sync.releaseBuildLock, {
@@ -1252,6 +1280,11 @@ export const buildPaper = action({
 
       if (!updateResult.success) {
         console.log(`Build attempt ${attemptId} was superseded at paper PDF update`);
+        try {
+          await ctx.storage.delete(storageId as Id<"_storage">);
+        } catch {
+          // Storage file may already be deleted; ignore cleanup failure
+        }
         return { updated: true, commitHash: latestCommit.sha, superseded: true, dateIsFallback: latestCommit.dateIsFallback };
       }
 
@@ -1275,6 +1308,12 @@ export const buildPaper = action({
 
           // Wait 5 seconds before retry
           await new Promise((resolve) => setTimeout(resolve, 5000));
+
+          await ctx.runMutation(internal.sync.releaseBuildLock, {
+            id: args.paperId,
+            status: "idle",
+            attemptId,
+          });
 
           // Recursive call with retry flag to prevent infinite retries
           return ctx.runAction(internal.sync.buildPaper, {
@@ -1398,6 +1437,7 @@ export const buildPaperForMobile = internalAction({
         await ctx.runMutation(internal.sync.updatePaperCommitOnly, {
           id: paperId,
           cachedCommitHash: latestCommit.sha,
+          buildAttemptId: attemptId,
         });
         await ctx.runMutation(internal.sync.releaseBuildLock, {
           id: paperId,
@@ -1438,7 +1478,7 @@ export const buildPaperForMobile = internalAction({
 
       const commitTime = getCommitTime(latestCommit, repository.lastCommitTime);
 
-      await ctx.runMutation(internal.sync.updatePaperPdfWithBuildLock, {
+      const updateResult = await ctx.runMutation(internal.sync.updatePaperPdfWithBuildLock, {
         id: paperId,
         pdfFileId: storageId as Id<"_storage">,
         cachedCommitHash: latestCommit.sha,
@@ -1453,6 +1493,15 @@ export const buildPaperForMobile = internalAction({
         builtFromCommitTime: commitTime,
         builtFromCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
       });
+
+      if (!updateResult.success) {
+        try {
+          await ctx.storage.delete(storageId as Id<"_storage">);
+        } catch {
+          // Storage file may already be deleted; ignore cleanup failure
+        }
+        return { updated: true, commitHash: latestCommit.sha, superseded: true, dateIsFallback: latestCommit.dateIsFallback };
+      }
 
       // Generate thumbnail
       try {
@@ -1510,6 +1559,17 @@ export const getUserRepositories = internalQuery({
   },
 });
 
+// Internal query to list all repositories with background refresh enabled
+export const listBackgroundRefreshRepositories = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db
+      .query("repositories")
+      .withIndex("by_background_refresh", (q) => q.eq("backgroundRefreshEnabled", true))
+      .collect();
+  },
+});
+
 // Internal action to refresh a single repository without auth/rate limit checks
 // Used by refreshAllRepositories for batch operations
 export const refreshRepositoryInternal = internalAction({
@@ -1534,11 +1594,6 @@ export const refreshRepositoryInternal = internalAction({
     const attemptId = lockResult.attemptId;
 
     try {
-      // Clear stale sync errors from previous attempts at the start
-      await ctx.runMutation(internal.sync.clearPaperSyncErrors, {
-        repositoryId: args.repositoryId,
-      });
-
       // Fetch latest commit (pass knownSha to skip expensive date fetch if unchanged)
       let latestCommit = await ctx.runAction(internal.git.fetchLatestCommitInternal, {
         gitUrl: repository.gitUrl,
@@ -1575,7 +1630,11 @@ export const refreshRepositoryInternal = internalAction({
         });
         if (!result.success) {
           console.log(`Sync attempt ${attemptId} was superseded`);
+          return { updated: false, commitHash: latestCommit.sha, dateIsFallback: latestCommit.dateIsFallback };
         }
+        await ctx.runMutation(internal.sync.clearPaperSyncErrors, {
+          repositoryId: args.repositoryId,
+        });
         return { updated: false, commitHash: latestCommit.sha, dateIsFallback: latestCommit.dateIsFallback };
       }
 
@@ -1779,6 +1838,10 @@ export const refreshRepositoryInternal = internalAction({
         return { updated: true, commitHash: latestCommit.sha, superseded: true, dateIsFallback: latestCommit.dateIsFallback };
       }
 
+      await ctx.runMutation(internal.sync.clearPaperSyncErrors, {
+        repositoryId: args.repositoryId,
+      });
+
       return { updated: true, commitHash: latestCommit.sha, dateIsFallback: latestCommit.dateIsFallback };
     } catch (error) {
       // Release lock on failure
@@ -1927,5 +1990,113 @@ export const refreshAllRepositoriesForMobile = internalAction({
       updated,
       failed,
     };
+  },
+});
+
+// ==================== Background Refresh (Server-Side Cron) ====================
+
+export const backgroundRefreshForUser = internalAction({
+  args: {
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const rateLimitResult = await ctx.runAction(internal.sync.checkAndRecordRateLimit, {
+      userId: args.userId,
+      action: "background_refresh",
+    });
+
+    if (!rateLimitResult.allowed) {
+      return {
+        userId: args.userId,
+        checked: 0,
+        updated: 0,
+        failed: 0,
+        skipped: 0,
+        rateLimited: true,
+      };
+    }
+
+    const repositories = await ctx.runQuery(internal.sync.getUserRepositories, {
+      userId: args.userId,
+    });
+
+    const enabledRepos = repositories.filter((repo: Doc<"repositories">) =>
+      repo.backgroundRefreshEnabled === true
+    );
+
+    if (enabledRepos.length === 0) {
+      return {
+        userId: args.userId,
+        checked: 0,
+        updated: 0,
+        failed: 0,
+        skipped: 0,
+        rateLimited: false,
+      };
+    }
+
+    const reposToCheck = enabledRepos.filter((repo: Doc<"repositories">) => {
+      if (repo.syncStatus === "syncing") return false;
+      if (repo.lastSyncedAt && Date.now() - repo.lastSyncedAt < MIN_SYNC_INTERVAL) {
+        return false;
+      }
+      return true;
+    });
+
+    const skippedDueToState = enabledRepos.length - reposToCheck.length;
+
+    const results = await Promise.allSettled(
+      reposToCheck.map((repo: Doc<"repositories">) =>
+        ctx.runAction(internal.sync.refreshRepositoryInternal, {
+          repositoryId: repo._id,
+          userId: args.userId,
+        })
+      )
+    );
+
+    let updated = 0;
+    let failed = 0;
+    let skipped = skippedDueToState;
+
+    for (const result of results) {
+      if (result.status === "rejected") {
+        failed++;
+        console.error("Background refresh failed:", result.reason);
+      } else if (result.value.skipped) {
+        skipped++;
+      } else if (result.value.updated) {
+        updated++;
+      }
+    }
+
+    return {
+      userId: args.userId,
+      checked: reposToCheck.length,
+      updated,
+      failed,
+      skipped,
+      rateLimited: false,
+    };
+  },
+});
+
+export const backgroundRefreshTick = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const repositories = await ctx.runQuery(internal.sync.listBackgroundRefreshRepositories, {});
+
+    if (repositories.length === 0) {
+      return { usersScheduled: 0, repositories: 0 };
+    }
+
+    const uniqueUserIds = Array.from(new Set(repositories.map((repo) => repo.userId)));
+
+    for (const userId of uniqueUserIds) {
+      await ctx.scheduler.runAfter(0, internal.sync.backgroundRefreshForUser, {
+        userId,
+      });
+    }
+
+    return { usersScheduled: uniqueUserIds.length, repositories: repositories.length };
   },
 });

@@ -1,4 +1,4 @@
-import { useState, memo } from "react";
+import { useState, memo, useEffect } from "react";
 import type { Repository } from "./types";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { formatDateTime } from "../../lib/formatters";
@@ -11,6 +11,7 @@ interface RepositoryCardProps {
   onDelete: (repoId: Id<"repositories">) => void;
   onConfigure: (repo: Repository) => void;
   onUpdateName: (repoId: Id<"repositories">, name: string) => Promise<void>;
+  onToggleBackgroundRefresh: (repoId: Id<"repositories">, enabled: boolean) => Promise<boolean>;
 }
 
 // Use shorter label for selfhosted-gitlab in card context
@@ -75,12 +76,21 @@ export function RepositoryCard({
   onDelete,
   onConfigure,
   onUpdateName,
+  onToggleBackgroundRefresh,
 }: RepositoryCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(repo.name);
+  const [isTogglingBackground, setIsTogglingBackground] = useState(false);
+  const [backgroundRefreshEnabled, setBackgroundRefreshEnabled] = useState(
+    Boolean(repo.backgroundRefreshEnabled)
+  );
   const lastCheckedLabel = repo.lastSyncedAt
     ? `Checked ${formatDateTime(repo.lastSyncedAt)}`
     : "Not checked yet";
+
+  useEffect(() => {
+    setBackgroundRefreshEnabled(Boolean(repo.backgroundRefreshEnabled));
+  }, [repo.backgroundRefreshEnabled]);
 
   const handleSave = async () => {
     if (!editName.trim()) return;
@@ -91,6 +101,21 @@ export function RepositoryCard({
   const handleCancel = () => {
     setEditName(repo.name);
     setIsEditing(false);
+  };
+
+  const handleBackgroundToggle = async () => {
+    if (isTogglingBackground) return;
+    const nextValue = !backgroundRefreshEnabled;
+    setBackgroundRefreshEnabled(nextValue);
+    setIsTogglingBackground(true);
+    try {
+      const succeeded = await onToggleBackgroundRefresh(repo._id, nextValue);
+      if (!succeeded) {
+        setBackgroundRefreshEnabled(!nextValue);
+      }
+    } finally {
+      setIsTogglingBackground(false);
+    }
   };
 
   return (
@@ -231,6 +256,22 @@ export function RepositoryCard({
 
         {/* Right section: Actions */}
         <div className="flex shrink-0 items-center gap-2 border-t border-gray-100 pt-4 dark:border-gray-800 lg:border-l lg:border-t-0 lg:py-1 lg:pl-8 lg:pt-0">
+          <label className="hidden items-center gap-2 text-xs text-gray-500 dark:text-gray-400 lg:flex">
+            <span>Background refresh</span>
+            <span className="relative inline-flex h-5 w-9 items-center">
+              <input
+                type="checkbox"
+                className="peer sr-only"
+                checked={backgroundRefreshEnabled}
+                onChange={handleBackgroundToggle}
+                disabled={isTogglingBackground}
+                aria-label="Toggle background refresh"
+              />
+              <span className="absolute inset-0 rounded-full bg-gray-200 transition peer-checked:bg-primary-500 dark:bg-gray-700 dark:peer-checked:bg-primary-500" />
+              <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4 dark:bg-gray-100" />
+            </span>
+          </label>
+
           {/* Add Papers button - prominent */}
           <button
             onClick={() => onConfigure(repo)}
@@ -285,6 +326,22 @@ export function RepositoryCard({
           </span>
         </div>
       )}
+
+      <div className="mt-4 flex items-center justify-between gap-3 lg:hidden">
+        <span className="text-xs text-gray-500 dark:text-gray-400">Background refresh</span>
+        <label className="relative inline-flex h-6 w-11 items-center">
+          <input
+            type="checkbox"
+            className="peer sr-only"
+            checked={backgroundRefreshEnabled}
+            onChange={handleBackgroundToggle}
+            disabled={isTogglingBackground}
+            aria-label="Toggle background refresh"
+          />
+          <span className="absolute inset-0 rounded-full bg-gray-200 transition peer-checked:bg-primary-500 dark:bg-gray-700 dark:peer-checked:bg-primary-500" />
+          <span className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5 dark:bg-gray-100" />
+        </label>
+      </div>
     </div>
   );
 }

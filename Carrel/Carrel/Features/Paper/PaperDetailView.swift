@@ -377,6 +377,11 @@ struct PDFViewerContainer: UIViewRepresentable {
     }
 
     func updateUIView(_ pdfView: PDFView, context: Context) {
+        if context.coordinator.lastLoadedURL == url {
+            return
+        }
+        context.coordinator.lastLoadedURL = url
+
         // Cancel any existing load task
         context.coordinator.loadTask?.cancel()
 
@@ -414,6 +419,7 @@ struct PDFViewerContainer: UIViewRepresentable {
 
     class Coordinator {
         var loadTask: Task<Void, Never>?
+        var lastLoadedURL: URL?
     }
 }
 

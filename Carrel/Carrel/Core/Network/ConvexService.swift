@@ -227,6 +227,26 @@ final class ConvexService: ObservableObject {
             .eraseToAnyPublisher()
     }
 
+    /// Fetch papers once (used for background refresh)
+    func refreshPapersOnce() async throws -> [Paper] {
+        try await withCheckedThrowingContinuation { continuation in
+            var cancellable: AnyCancellable?
+            cancellable = client.subscribe(to: "papers:listMine", yielding: [Paper].self)
+                .first()
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure(let error) = completion {
+                            continuation.resume(throwing: error)
+                        }
+                        cancellable?.cancel()
+                    },
+                    receiveValue: { papers in
+                        continuation.resume(returning: papers)
+                    }
+                )
+        }
+    }
+
     /// Get a single paper by ID (uses subscription to get one-time value)
     func getPaper(id: String) async throws -> Paper {
         try await withCheckedThrowingContinuation { continuation in
@@ -301,6 +321,82 @@ final class ConvexService: ObservableObject {
         }
     }
 
+    // MARK: - Notifications
+
+    /// Fetch notification preferences for the current user
+    func getNotificationPreferences() async throws -> NotificationPreferences {
+        try await withCheckedThrowingContinuation { continuation in
+            var cancellable: AnyCancellable?
+            cancellable = client.subscribe(to: "notifications:getNotificationPreferences", yielding: NotificationPreferences.self)
+                .first()
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure(let error) = completion {
+                            continuation.resume(throwing: error)
+                        }
+                        cancellable?.cancel()
+                    },
+                    receiveValue: { preferences in
+                        continuation.resume(returning: preferences)
+                    }
+                )
+        }
+    }
+
+    /// Update notification preferences for the current user
+    func updateNotificationPreferences(_ preferences: NotificationPreferences) async throws {
+        let _: EmptyResult? = try await client.mutation(
+            "notifications:updateNotificationPreferences",
+            with: [
+                "enabled": preferences.enabled,
+                "buildSuccess": preferences.buildSuccess,
+                "buildFailure": preferences.buildFailure,
+                "paperUpdated": preferences.paperUpdated,
+                "backgroundSync": preferences.backgroundSync,
+            ]
+        )
+    }
+
+    /// Register device token for push notifications
+    func registerDeviceToken(
+        _ token: String,
+        platform: String = "ios",
+        environment: String,
+        deviceId: String?,
+        appVersion: String?
+    ) async throws {
+        var args: [String: String] = [
+            "token": token,
+            "platform": platform,
+            "environment": environment,
+        ]
+        if let deviceId {
+            args["deviceId"] = deviceId
+        }
+        if let appVersion {
+            args["appVersion"] = appVersion
+        }
+        let _: EmptyResult? = try await client.mutation(
+            "notifications:registerDeviceToken",
+            with: args
+        )
+    }
+
+    /// Unregister device token for push notifications
+    func unregisterDeviceToken(_ token: String) async throws {
+        let _: EmptyResult? = try await client.mutation(
+            "notifications:unregisterDeviceToken",
+            with: [
+                "token": token,
+            ]
+        )
+    }
+
+    /// Send a test push notification to the current user
+    func sendTestNotification() async throws -> TestNotificationResult {
+        try await client.action("notifications:sendTestNotification")
+    }
+
     // MARK: - Sync Operations
 
     /// Check all repositories for updates
@@ -325,6 +421,17 @@ final class ConvexService: ObservableObject {
     /// Refresh a single repository
     func refreshRepository(id: String) async throws -> RefreshRepositoryResult {
         try await client.action("sync:refreshRepository", with: ["repositoryId": id])
+    }
+
+    /// Update background refresh setting for a repository
+    func setBackgroundRefresh(repositoryId: String, enabled: Bool) async throws {
+        let _: EmptyResult? = try await client.mutation(
+            "repositories:update",
+            with: [
+                "id": repositoryId,
+                "backgroundRefreshEnabled": enabled,
+            ]
+        )
     }
 
     // MARK: - Repository Files
@@ -404,6 +511,11 @@ struct RefreshRepositoryResult: Codable {
     let skipped: Bool?
     let reason: String?
     let commitHash: String?
+}
+
+struct TestNotificationResult: Codable {
+    let delivered: Int
+    let reason: String?
 }
 
 struct AddTrackedFileResult: Codable {

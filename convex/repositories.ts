@@ -192,6 +192,7 @@ export const add = mutation({
       selfHostedGitLabInstanceId: instanceId,
       defaultBranch: args.defaultBranch || "main",
       syncStatus: "idle",
+      backgroundRefreshEnabled: false,
     });
 
     return repositoryId;
@@ -209,6 +210,7 @@ export const update = mutation({
     ),
     lastSyncedAt: v.optional(v.number()),
     lastCommitHash: v.optional(v.string()),
+    backgroundRefreshEnabled: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     // Authorization check: verify the caller owns this repository
@@ -438,6 +440,7 @@ export const listForMobile = internalQuery({
         papersWithErrors,
         lastSyncedAt: repo.lastSyncedAt,
         lastCommitHash: repo.lastCommitHash,
+        backgroundRefreshEnabled: repo.backgroundRefreshEnabled ?? false,
       };
     });
 

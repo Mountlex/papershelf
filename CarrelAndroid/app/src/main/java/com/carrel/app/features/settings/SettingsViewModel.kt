@@ -53,6 +53,7 @@ class SettingsViewModel(
 
     fun logout() {
         viewModelScope.launch {
+            convexService.clearAuth()
             authManager.logout()
         }
     }

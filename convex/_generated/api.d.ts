@@ -31,6 +31,7 @@ import type * as lib_rateLimit from "../lib/rateLimit.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as mobileAuth from "../mobileAuth.js";
 import type * as mobileEmailAuth from "../mobileEmailAuth.js";
+import type * as notifications from "../notifications.js";
 import type * as papers from "../papers.js";
 import type * as passwordActions from "../passwordActions.js";
 import type * as repositories from "../repositories.js";
@@ -69,6 +70,7 @@ declare const fullApi: ApiFromModules<{
   "lib/validation": typeof lib_validation;
   mobileAuth: typeof mobileAuth;
   mobileEmailAuth: typeof mobileEmailAuth;
+  notifications: typeof notifications;
   papers: typeof papers;
   passwordActions: typeof passwordActions;
   repositories: typeof repositories;

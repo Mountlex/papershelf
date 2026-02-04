@@ -67,9 +67,11 @@ export default defineSchema({
       v.literal("syncing"),
       v.literal("error")
     ),
+    backgroundRefreshEnabled: v.optional(v.boolean()),
   })
     .index("by_user", ["userId"])
-    .index("by_git_url", ["gitUrl"]),
+    .index("by_git_url", ["gitUrl"])
+    .index("by_background_refresh", ["backgroundRefreshEnabled"]),
 
   // Tracked files within repositories
   trackedFiles: defineTable({
@@ -209,6 +211,32 @@ export default defineSchema({
     .index("by_refresh_token_hash", ["refreshTokenHash"])
     .index("by_user_and_device", ["userId", "deviceId"]),
 
+  // Mobile device tokens for push notifications
+  deviceTokens: defineTable({
+    userId: v.id("users"),
+    token: v.string(),
+    platform: v.union(v.literal("ios"), v.literal("android")),
+    environment: v.optional(v.union(v.literal("production"), v.literal("sandbox"))),
+    deviceId: v.optional(v.string()),
+    appVersion: v.optional(v.string()),
+    createdAt: v.number(),
+    lastSeenAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_token", ["token"]),
+
+  // Notification preferences (per user)
+  notificationPreferences: defineTable({
+    userId: v.id("users"),
+    enabled: v.boolean(),
+    buildSuccess: v.boolean(),
+    buildFailure: v.boolean(),
+    paperUpdated: v.boolean(),
+    backgroundSync: v.boolean(),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"]),
+
   // Link intents for secure OAuth account linking (prevents CSRF/tampering)
   linkIntents: defineTable({
     userId: v.id("users"),
@@ -243,7 +271,8 @@ export default defineSchema({
     action: v.union(
       v.literal("refresh_repository"),
       v.literal("build_paper"),
-      v.literal("refresh_all_repositories")
+      v.literal("refresh_all_repositories"),
+      v.literal("background_refresh")
     ),
     attempts: v.number(),
     windowStart: v.number(),
@@ -257,7 +286,8 @@ export default defineSchema({
     action: v.union(
       v.literal("refresh_repository"),
       v.literal("build_paper"),
-      v.literal("refresh_all_repositories")
+      v.literal("refresh_all_repositories"),
+      v.literal("background_refresh")
     ),
     attemptedAt: v.number(),
   })
@@ -268,7 +298,8 @@ export default defineSchema({
     action: v.union(
       v.literal("refresh_repository"),
       v.literal("build_paper"),
-      v.literal("refresh_all_repositories")
+      v.literal("refresh_all_repositories"),
+      v.literal("background_refresh")
     ),
     lockedUntil: v.number(),
   })

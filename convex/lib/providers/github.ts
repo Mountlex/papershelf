@@ -161,7 +161,26 @@ export class GitHubProvider implements GitProvider {
       }
 
       const data = await response.json();
-      return (data.files || []).map((f: { filename: string }) => f.filename);
+      const files = (data.files || []) as Array<{
+        filename: string;
+        previous_filename?: string;
+      }>;
+
+      if (typeof data.total_files === "number" && data.total_files > files.length) {
+        console.log(`GitHub compare results truncated (${files.length}/${data.total_files}); falling back to full checks`);
+        return [];
+      }
+
+      const paths: string[] = [];
+      for (const file of files) {
+        if (file.filename) {
+          paths.push(file.filename);
+        }
+        if (file.previous_filename) {
+          paths.push(file.previous_filename);
+        }
+      }
+      return Array.from(new Set(paths));
     } catch (error) {
       console.log(`Failed to fetch changed files: ${error}`);
       return [];

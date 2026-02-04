@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.HttpURLConnection
 import java.net.URL
 
 /**
@@ -91,7 +92,23 @@ class PDFCache private constructor(private val cacheDir: File) {
         var lastError: Exception? = null
         repeat(maxRetries) { attempt ->
             try {
-                return URL(url).openStream().use { it.readBytes() }
+                val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 15_000
+                    readTimeout = 30_000
+                    instanceFollowRedirects = true
+                }
+                try {
+                    if (connection.responseCode !in 200..299) {
+                        throw PDFCacheException.NetworkError(
+                            Exception("HTTP ${connection.responseCode}")
+                        )
+                    }
+                    return connection.inputStream.use { stream ->
+                        stream.readBytes()
+                    }
+                } finally {
+                    connection.disconnect()
+                }
             } catch (e: Exception) {
                 lastError = e
                 if (attempt < maxRetries - 1) {

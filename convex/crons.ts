@@ -10,4 +10,11 @@ crons.daily(
   internal.sessionCleanup.cleanupExpiredSessions
 );
 
+// Run hourly background refresh for repositories with background refresh enabled
+crons.hourly(
+  "background-repository-refresh",
+  { minuteUTC: 10 },
+  internal.sync.backgroundRefreshTick
+);
+
 export default crons;

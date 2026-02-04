@@ -25,7 +25,8 @@ data class PaperDetailUiState(
 class PaperViewModel(
     private val paperId: String,
     private val convexClient: ConvexClient,
-    private val convexService: ConvexService? = null
+    private val convexService: ConvexService? = null,
+    private val useConvexSubscriptions: Boolean = false
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PaperDetailUiState())
@@ -33,8 +34,8 @@ class PaperViewModel(
     private var subscriptionJob: Job? = null
 
     init {
-        if (convexService != null) {
-            startSubscription()
+        if (convexService != null && useConvexSubscriptions) {
+            observeConvexAuth()
         } else {
             loadPaper()
         }
@@ -44,6 +45,7 @@ class PaperViewModel(
      * Start real-time subscription to the paper.
      */
     private fun startSubscription() {
+        if (subscriptionJob?.isActive == true) return
         subscriptionJob?.cancel()
         _uiState.update { it.copy(isLoading = true, error = null) }
 
@@ -66,6 +68,23 @@ class PaperViewModel(
                         error = e.message,
                         isLoading = false
                     )
+                }
+            }
+        }
+    }
+
+    /**
+     * Wait for Convex auth before subscribing.
+     * If Convex auth is not available, fall back to HTTP.
+     */
+    private fun observeConvexAuth() {
+        _uiState.update { it.copy(isLoading = true, error = null) }
+        viewModelScope.launch {
+            convexService?.isAuthenticated?.collect { isAuthenticated ->
+                if (isAuthenticated) {
+                    startSubscription()
+                } else {
+                    _uiState.update { it.copy(isLoading = true) }
                 }
             }
         }
@@ -112,10 +131,7 @@ class PaperViewModel(
                     }
             } else {
                 // Fallback to polling when no ConvexService available
-                var pollingJob: Job? = null
-
-                // Start polling for progress updates
-                pollingJob = viewModelScope.launch {
+                val pollingJob = viewModelScope.launch {
                     while (true) {
                         delay(1500) // 1.5 seconds
                         convexClient.paper(paperId)
@@ -123,24 +139,21 @@ class PaperViewModel(
                                 _uiState.update { it.copy(paper = paper) }
                                 // Stop polling if build completed
                                 if (paper.compilationProgress == null && paper.status != PaperStatus.BUILDING) {
-                                    pollingJob?.cancel()
+                                    return@launch
                                 }
                             }
                     }
                 }
 
-                convexClient.buildPaper(paperId, force)
-                    .onSuccess {
-                        // Build started successfully
+                val buildResult = convexClient.buildPaper(paperId, force)
+                buildResult.onError { exception ->
+                    _uiState.update { state ->
+                        state.copy(error = exception.message)
                     }
-                    .onError { exception ->
-                        _uiState.update { state ->
-                            state.copy(error = exception.message)
-                        }
-                    }
+                    pollingJob.cancel()
+                }
 
-                // Stop polling and do final refresh
-                pollingJob.cancel()
+                pollingJob.join()
                 loadPaper()
                 _uiState.update { it.copy(isBuilding = false) }
             }

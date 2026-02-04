@@ -50,12 +50,12 @@ fun NavGraph(
         if (isAuthenticated) {
             // Clear back stack and go to Gallery
             navController.navigate(Screen.Gallery.route) {
-                popUpTo(0) { inclusive = true }
+                popUpTo(navController.graph.startDestinationId) { inclusive = true }
             }
         } else {
             // Clear back stack and go to Login
             navController.navigate(Screen.Login.route) {
-                popUpTo(0) { inclusive = true }
+                popUpTo(navController.graph.startDestinationId) { inclusive = true }
             }
         }
     }
@@ -100,6 +100,7 @@ fun NavGraph(
                 paperId = paperId,
                 convexClient = container.convexClient,
                 convexService = container.convexService,
+                useConvexSubscriptions = container.authManager.hasConvexAuth(),
                 onBackClick = { navController.popBackStack() }
             )
         }

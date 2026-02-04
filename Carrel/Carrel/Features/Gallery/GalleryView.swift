@@ -5,6 +5,7 @@ struct GalleryView: View {
     @State private var selectedPaper: Paper?
     @State private var searchText = ""
     @State private var isOffline = false
+    private let searchBarTopInset: CGFloat = 6
 
     private let columns = [
         GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 16)
@@ -24,6 +25,9 @@ struct GalleryView: View {
         galleryContent(viewModel: viewModel)
             .navigationTitle("Papers")
             .searchable(text: $searchText, prompt: "Search papers")
+            .safeAreaInset(edge: .top) {
+                Color.clear.frame(height: searchBarTopInset)
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     HStack(spacing: 12) {

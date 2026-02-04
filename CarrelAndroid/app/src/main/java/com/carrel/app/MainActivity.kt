@@ -14,11 +14,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.lifecycleScope
 import com.carrel.app.core.auth.OAuthCallbackResult
 import com.carrel.app.core.auth.OAuthHandler
 import com.carrel.app.ui.navigation.NavGraph
 import com.carrel.app.ui.theme.CarrelTheme
-import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -82,14 +82,14 @@ class MainActivity : ComponentActivity() {
         val uri = intent?.data ?: return
         if (uri.scheme != "carrel" || uri.host != "auth") return
 
-        Log.d(TAG, "Handling OAuth callback: $uri")
+        Log.d(TAG, "Handling OAuth callback")
 
         when (val result = OAuthHandler.parseCallbackUri(uri)) {
             is OAuthCallbackResult.ConvexAuth -> {
                 Log.d(TAG, "Received Convex Auth token, exchanging for 90-day token...")
                 // Handle OAuth login (GitHub/GitLab)
                 // Exchange token and set up ConvexService with the exchanged token
-                MainScope().launch {
+                lifecycleScope.launch {
                     container.authManager.handleConvexAuthCallback(result.token)
 
                     // Use the exchanged token (or original if exchange failed)

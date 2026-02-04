@@ -734,14 +734,7 @@ export const removeTrackedFile = mutation({
       .first();
 
     if (paper) {
-      // Delete stored files
-      if (paper.pdfFileId) {
-        await ctx.storage.delete(paper.pdfFileId);
-      }
-      if (paper.thumbnailFileId) {
-        await ctx.storage.delete(paper.thumbnailFileId);
-      }
-      await ctx.db.delete(paper._id);
+      await deletePaperAndAssociatedData(ctx, paper);
     }
 
     await ctx.db.delete(args.id);

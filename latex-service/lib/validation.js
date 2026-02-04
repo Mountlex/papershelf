@@ -65,13 +65,9 @@ async function safePathAsync(workDir, userPath) {
   }
 
   try {
-    // Check if the path exists and is a symlink pointing outside workDir
-    const stat = await fs.lstat(resolved).catch(() => null);
-    if (stat && stat.isSymbolicLink()) {
-      const realPath = await fs.realpath(resolved);
-      if (!realPath.startsWith(workDir + path.sep) && realPath !== workDir) {
-        return null;
-      }
+    const realPath = await fs.realpath(resolved);
+    if (!realPath.startsWith(workDir + path.sep) && realPath !== workDir) {
+      return null;
     }
   } catch {
     // Path doesn't exist yet, that's fine for write operations

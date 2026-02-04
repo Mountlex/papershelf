@@ -14,6 +14,9 @@ struct ContentView: View {
         .task {
             await authManager.loadStoredTokens()
         }
+        .onChange(of: authManager.isAuthenticated) { _, isAuthenticated in
+            PushNotificationManager.shared.setAuthenticated(isAuthenticated)
+        }
     }
 }
 

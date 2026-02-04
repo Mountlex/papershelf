@@ -71,6 +71,9 @@ class GalleryViewModel(
                     // Logged out - clear papers
                     subscriptionJob?.cancel()
                     _uiState.update { GalleryUiState() }
+                } else if (!authManager.hasConvexAuth() && !_uiState.value.isSubscribed) {
+                    // JWT auth path - load via HTTP
+                    loadPapersViaHttp()
                 }
             }
         }

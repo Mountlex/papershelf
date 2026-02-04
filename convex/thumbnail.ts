@@ -113,6 +113,22 @@ export const generateThumbnail = internalAction({
     }
 
     try {
+      const existingPaper = await ctx.runQuery(internal.git.getPaper, { id: args.paperId });
+      if (!existingPaper) {
+        return {
+          success: false,
+          error: "INVALID_PDF",
+          errorMessage: "Paper not found",
+        };
+      }
+      if (existingPaper.pdfFileId !== args.pdfFileId) {
+        return {
+          success: false,
+          error: "INVALID_PDF",
+          errorMessage: "Paper PDF changed before thumbnail generation",
+        };
+      }
+
       // Fetch the PDF from storage
       const pdfUrl = await ctx.storage.getUrl(args.pdfFileId);
       if (!pdfUrl) {
@@ -166,11 +182,39 @@ export const generateThumbnail = internalAction({
       const thumbnailBlob = new Blob([thumbnailBuffer], { type: "image/png" });
       const thumbnailFileId = await ctx.storage.store(thumbnailBlob);
 
+      const latestPaper = await ctx.runQuery(internal.git.getPaper, { id: args.paperId });
+      if (!latestPaper || latestPaper.pdfFileId !== args.pdfFileId) {
+        try {
+          await ctx.storage.delete(thumbnailFileId);
+        } catch {
+          // Ignore cleanup failure
+        }
+        return {
+          success: false,
+          error: "INVALID_PDF",
+          errorMessage: "Paper changed during thumbnail generation",
+        };
+      }
+
       // Update the paper with the thumbnail
-      await ctx.runMutation(internal.thumbnail.updatePaperThumbnail, {
-        id: args.paperId,
-        thumbnailFileId,
-      });
+      try {
+        await ctx.runMutation(internal.thumbnail.updatePaperThumbnail, {
+          id: args.paperId,
+          thumbnailFileId,
+        });
+      } catch (error) {
+        try {
+          await ctx.storage.delete(thumbnailFileId);
+        } catch {
+          // Ignore cleanup failure
+        }
+        const classified = classifyError(error);
+        return {
+          success: false,
+          error: classified.type,
+          errorMessage: classified.message,
+        };
+      }
 
       return {
         success: true,
