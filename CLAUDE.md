@@ -15,12 +15,13 @@ bun run dev:convex    # Start Convex backend only
 bun run dev:all       # Start both frontend and backend concurrently
 
 # Production
-bun run build         # TypeScript check + Vite production build
+bun run build         # Vite production build
 
 # Code quality
 bun run lint          # Run ESLint
 bun run test          # Run tests in watch mode
 bun run test:run      # Run tests once
+bun run test <file>   # Run a specific test file (e.g., bun run test convex/lib/gitProviders.test.ts)
 
 # Convex
 npx convex dev        # Start Convex dev server (also generates types)
