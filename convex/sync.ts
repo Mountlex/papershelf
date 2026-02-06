@@ -6,7 +6,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { auth } from "./auth";
 import { sleep, type DependencyHash } from "./lib/http";
 import { isFileNotFoundError } from "./lib/providers/types";
-import { getUserRateLimitConfig, type UserRateLimitAction } from "./lib/rateLimit";
+import { checkUserRateLimit, type UserRateLimitAction } from "./lib/rateLimit";
 import { resolveBackgroundRefreshEnabled, resolveCacheMode } from "./lib/settings";
 
 // Minimum time between update notifications for the same out-of-sync paper
@@ -223,7 +223,9 @@ export const releaseSyncLock = internalMutation({
   },
 });
 
-export const getUserRateLimitLock = internalQuery({
+// Rate limit check as a single mutation (replaces the multi-step internalAction).
+// All DB reads and writes happen in one transaction, saving 2-4 function calls per invocation.
+export const checkAndRecordRateLimit = internalMutation({
   args: {
     userId: v.id("users"),
     action: v.union(
@@ -234,143 +236,7 @@ export const getUserRateLimitLock = internalQuery({
     ),
   },
   handler: async (ctx, args) => {
-    return await ctx.db
-      .query("userRateLimitLocks")
-      .withIndex("by_user_action", (q) =>
-        q.eq("userId", args.userId).eq("action", args.action)
-      )
-      .first();
-  },
-});
-
-export const countUserRateLimitAttempts = internalQuery({
-  args: {
-    userId: v.id("users"),
-    action: v.union(
-      v.literal("refresh_repository"),
-      v.literal("build_paper"),
-      v.literal("refresh_all_repositories"),
-      v.literal("background_refresh")
-    ),
-    windowStart: v.number(),
-  },
-  handler: async (ctx, args) => {
-    const attempts = await ctx.db
-      .query("userRateLimitAttempts")
-      .withIndex("by_user_action_time", (q) =>
-        q.eq("userId", args.userId).eq("action", args.action).gte("attemptedAt", args.windowStart)
-      )
-      .collect();
-    return attempts.length;
-  },
-});
-
-export const insertUserRateLimitAttempt = internalMutation({
-  args: {
-    userId: v.id("users"),
-    action: v.union(
-      v.literal("refresh_repository"),
-      v.literal("build_paper"),
-      v.literal("refresh_all_repositories"),
-      v.literal("background_refresh")
-    ),
-    attemptedAt: v.number(),
-  },
-  handler: async (ctx, args) => {
-    await ctx.db.insert("userRateLimitAttempts", {
-      userId: args.userId,
-      action: args.action,
-      attemptedAt: args.attemptedAt,
-    });
-  },
-});
-
-export const upsertUserRateLimitLock = internalMutation({
-  args: {
-    lockId: v.optional(v.id("userRateLimitLocks")),
-    userId: v.id("users"),
-    action: v.union(
-      v.literal("refresh_repository"),
-      v.literal("build_paper"),
-      v.literal("refresh_all_repositories"),
-      v.literal("background_refresh")
-    ),
-    lockedUntil: v.number(),
-  },
-  handler: async (ctx, args) => {
-    if (args.lockId) {
-      await ctx.db.patch(args.lockId, { lockedUntil: args.lockedUntil });
-      return;
-    }
-    await ctx.db.insert("userRateLimitLocks", {
-      userId: args.userId,
-      action: args.action,
-      lockedUntil: args.lockedUntil,
-    });
-  },
-});
-
-export const deleteUserRateLimitLock = internalMutation({
-  args: {
-    id: v.id("userRateLimitLocks"),
-  },
-  handler: async (ctx, args) => {
-    await ctx.db.delete(args.id);
-  },
-});
-
-// Internal action for rate limit checking (avoid OCC on attempts table)
-export const checkAndRecordRateLimit = internalAction({
-  args: {
-    userId: v.id("users"),
-    action: v.union(
-      v.literal("refresh_repository"),
-      v.literal("build_paper"),
-      v.literal("refresh_all_repositories"),
-      v.literal("background_refresh")
-    ),
-  },
-  handler: async (ctx, args) => {
-    const config = getUserRateLimitConfig(args.action as UserRateLimitAction);
-    const now = Date.now();
-    const lock = await ctx.runQuery(internal.sync.getUserRateLimitLock, {
-      userId: args.userId,
-      action: args.action,
-    });
-
-    if (lock?.lockedUntil && now < lock.lockedUntil) {
-      return { allowed: false, retryAfter: lock.lockedUntil - now };
-    }
-
-    if (lock?.lockedUntil && now >= lock.lockedUntil) {
-      await ctx.runMutation(internal.sync.deleteUserRateLimitLock, { id: lock._id });
-    }
-
-    const windowStart = now - config.windowMs;
-    const attemptCount = await ctx.runQuery(internal.sync.countUserRateLimitAttempts, {
-      userId: args.userId,
-      action: args.action,
-      windowStart,
-    });
-
-    if (attemptCount >= config.max) {
-      const lockedUntil = now + config.lockoutMs;
-      await ctx.runMutation(internal.sync.upsertUserRateLimitLock, {
-        lockId: lock?._id,
-        userId: args.userId,
-        action: args.action,
-        lockedUntil,
-      });
-      return { allowed: false, retryAfter: config.lockoutMs };
-    }
-
-    await ctx.runMutation(internal.sync.insertUserRateLimitAttempt, {
-      userId: args.userId,
-      action: args.action,
-      attemptedAt: now,
-    });
-
-    return { allowed: true, remaining: config.max - attemptCount - 1 };
+    return await checkUserRateLimit(ctx, args.userId, args.action as UserRateLimitAction);
   },
 });
 
@@ -545,7 +411,7 @@ export const refreshRepository = action({
     }
 
     // Check rate limit for refresh operations
-    const rateLimitResult = await ctx.runAction(internal.sync.checkAndRecordRateLimit, {
+    const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
       userId,
       action: "refresh_repository",
     });
@@ -645,6 +511,17 @@ export const refreshRepository = action({
       const trackedFiles = await ctx.runQuery(internal.sync.getTrackedFilesByIds, { ids: trackedFileIds });
       const trackedFileMap = new Map(trackedFiles.map(tf => [tf._id, tf]));
 
+      // Pre-fetch notification preferences once for the user (avoids N lookups in the paper loop)
+      const preferences = await ctx.runQuery(internal.notifications.getPreferencesForUserInternal, {
+        userId,
+      });
+      const prefMinutes = preferences.updateCooldownMinutes ?? 30;
+      const cachedNotificationsEnabled = preferences.enabled
+        && preferences.paperUpdated
+        && preferences.backgroundSync
+        && prefMinutes >= 0;
+      const cachedNotificationCooldownMs = Math.max(0, prefMinutes) * 60 * 1000;
+
       // Process each paper
       for (const paper of papers) {
         // Skip papers without tracked files
@@ -663,6 +540,8 @@ export const refreshRepository = action({
             lastAffectedCommitTime: commitTime,
             lastAffectedCommitMessage: latestCommit.message,
             lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
+            cachedNotificationsEnabled,
+            cachedNotificationCooldownMs,
           });
           continue;
         }
@@ -718,6 +597,8 @@ export const refreshRepository = action({
           lastAffectedCommitTime: commitTime,
           lastAffectedCommitMessage: latestCommit.message,
           lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
+          cachedNotificationsEnabled,
+          cachedNotificationCooldownMs,
         });
         continue;
       }
@@ -751,6 +632,8 @@ export const refreshRepository = action({
               lastAffectedCommitTime: commitTime,
               lastAffectedCommitMessage: latestCommit.message,
               lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
+              cachedNotificationsEnabled,
+              cachedNotificationCooldownMs,
             });
             continue;
           }
@@ -788,6 +671,8 @@ export const refreshRepository = action({
               lastAffectedCommitTime: commitTime,
               lastAffectedCommitMessage: latestCommit.message,
               lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
+              cachedNotificationsEnabled,
+              cachedNotificationCooldownMs,
             });
             continue;
           }
@@ -805,6 +690,8 @@ export const refreshRepository = action({
           lastAffectedCommitTime: commitTime,
           lastAffectedCommitMessage: latestCommit.message,
           lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
+          cachedNotificationsEnabled,
+          cachedNotificationCooldownMs,
         });
       }
 
@@ -956,7 +843,7 @@ export const updatePaperBuildError = internalMutation({
       }
     }
     await ctx.db.patch(args.id, {
-      lastSyncError: args.error,
+      lastSyncError: args.error?.slice(0, 1000),
       updatedAt: Date.now(),
     });
     await ctx.scheduler.runAfter(2_000, internal.notifications.notifyBuildCompleted, {
@@ -986,7 +873,7 @@ export const updatePaperSyncError = internalMutation({
       }
     }
     await ctx.db.patch(args.id, {
-      lastSyncError: args.error,
+      lastSyncError: args.error?.slice(0, 1000),
       updatedAt: Date.now(),
     });
   },
@@ -1054,6 +941,8 @@ export const clearPaperSyncErrors = internalMutation({
 });
 
 // Update paper's needsSync flag (used during quick sync)
+// Accepts optional cachedNotificationsEnabled/cachedNotificationCooldownMs to avoid
+// redundant preference lookups when called in a loop for the same user.
 export const updatePaperNeedsSync = internalMutation({
   args: {
     id: v.id("papers"),
@@ -1064,6 +953,9 @@ export const updatePaperNeedsSync = internalMutation({
     lastAffectedCommitTime: v.optional(v.number()),
     lastAffectedCommitMessage: v.optional(v.string()),
     lastAffectedCommitAuthor: v.optional(v.union(v.string(), v.null())),
+    // Pre-fetched notification settings (avoids per-paper preference lookups)
+    cachedNotificationsEnabled: v.optional(v.boolean()),
+    cachedNotificationCooldownMs: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const paper = await ctx.db.get(args.id);
@@ -1115,20 +1007,29 @@ export const updatePaperNeedsSync = internalMutation({
       patchData.lastAffectedCommitAuthor = args.lastAffectedCommitAuthor;
     }
 
-    const ownerUserId = paper.userId ?? repo?.userId ?? null;
-    let notificationsEnabled = true;
-    let cooldownMs = UPDATE_NOTIFICATION_COOLDOWN_MS;
+    // Use cached notification settings if provided, otherwise fetch them
+    let notificationsEnabled: boolean;
+    let cooldownMs: number;
 
-    if (ownerUserId) {
-      const preferences = await ctx.runQuery(internal.notifications.getPreferencesForUserInternal, {
-        userId: ownerUserId,
-      });
-      const minutes = preferences.updateCooldownMinutes ?? 30;
-      notificationsEnabled = preferences.enabled
-        && preferences.paperUpdated
-        && preferences.backgroundSync
-        && minutes >= 0;
-      cooldownMs = Math.max(0, minutes) * 60 * 1000;
+    if (args.cachedNotificationsEnabled !== undefined && args.cachedNotificationCooldownMs !== undefined) {
+      notificationsEnabled = args.cachedNotificationsEnabled;
+      cooldownMs = args.cachedNotificationCooldownMs;
+    } else {
+      const ownerUserId = paper.userId ?? repo?.userId ?? null;
+      notificationsEnabled = true;
+      cooldownMs = UPDATE_NOTIFICATION_COOLDOWN_MS;
+
+      if (ownerUserId) {
+        const preferences = await ctx.runQuery(internal.notifications.getPreferencesForUserInternal, {
+          userId: ownerUserId,
+        });
+        const minutes = preferences.updateCooldownMinutes ?? 30;
+        notificationsEnabled = preferences.enabled
+          && preferences.paperUpdated
+          && preferences.backgroundSync
+          && minutes >= 0;
+        cooldownMs = Math.max(0, minutes) * 60 * 1000;
+      }
     }
 
     const lastNotifiedAt = paper.lastUpdateNotificationAt ?? 0;
@@ -1167,7 +1068,7 @@ export const buildPaper = action({
     }
 
     // Check rate limit for build operations
-    const rateLimitResult = await ctx.runAction(internal.sync.checkAndRecordRateLimit, {
+    const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
       userId,
       action: "build_paper",
     });
@@ -1476,7 +1377,7 @@ export const buildPaperForMobile = internalAction({
     const userId = args.userId as Id<"users">;
 
     // Check rate limit for build operations
-    const rateLimitResult = await ctx.runAction(internal.sync.checkAndRecordRateLimit, {
+    const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
       userId,
       action: "build_paper",
     });
@@ -1790,6 +1691,17 @@ export const refreshRepositoryInternal = internalAction({
       const trackedFiles = await ctx.runQuery(internal.sync.getTrackedFilesByIds, { ids: trackedFileIds });
       const trackedFileMap = new Map(trackedFiles.map(tf => [tf._id, tf]));
 
+      // Pre-fetch notification preferences once for the user (avoids N lookups in the paper loop)
+      const preferences = await ctx.runQuery(internal.notifications.getPreferencesForUserInternal, {
+        userId: args.userId,
+      });
+      const prefMinutes = preferences.updateCooldownMinutes ?? 30;
+      const cachedNotificationsEnabled = preferences.enabled
+        && preferences.paperUpdated
+        && preferences.backgroundSync
+        && prefMinutes >= 0;
+      const cachedNotificationCooldownMs = Math.max(0, prefMinutes) * 60 * 1000;
+
       // Process each paper
       for (const paper of papers) {
         // Skip papers without tracked files
@@ -1808,6 +1720,8 @@ export const refreshRepositoryInternal = internalAction({
             lastAffectedCommitTime: commitTime,
             lastAffectedCommitMessage: latestCommit.message,
             lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
+            cachedNotificationsEnabled,
+            cachedNotificationCooldownMs,
           });
           continue;
         }
@@ -1863,6 +1777,8 @@ export const refreshRepositoryInternal = internalAction({
             lastAffectedCommitTime: commitTime,
             lastAffectedCommitMessage: latestCommit.message,
             lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
+            cachedNotificationsEnabled,
+            cachedNotificationCooldownMs,
           });
           continue;
         }
@@ -1896,6 +1812,8 @@ export const refreshRepositoryInternal = internalAction({
               lastAffectedCommitTime: commitTime,
               lastAffectedCommitMessage: latestCommit.message,
               lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
+              cachedNotificationsEnabled,
+              cachedNotificationCooldownMs,
             });
             continue;
           }
@@ -1932,6 +1850,8 @@ export const refreshRepositoryInternal = internalAction({
               lastAffectedCommitTime: commitTime,
               lastAffectedCommitMessage: latestCommit.message,
               lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
+              cachedNotificationsEnabled,
+              cachedNotificationCooldownMs,
             });
             continue;
           }
@@ -1946,6 +1866,8 @@ export const refreshRepositoryInternal = internalAction({
             lastAffectedCommitTime: commitTime,
             lastAffectedCommitMessage: latestCommit.message,
             lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
+            cachedNotificationsEnabled,
+            cachedNotificationCooldownMs,
           });
           continue;
         }
@@ -1960,6 +1882,8 @@ export const refreshRepositoryInternal = internalAction({
           lastAffectedCommitTime: commitTime,
           lastAffectedCommitMessage: latestCommit.message,
           lastAffectedCommitAuthor: getCommitAuthor(latestCommit, repository.lastCommitAuthor),
+          cachedNotificationsEnabled,
+          cachedNotificationCooldownMs,
         });
       }
 
@@ -1996,8 +1920,12 @@ export const refreshRepositoryInternal = internalAction({
   },
 });
 
-// Minimum sync interval (in milliseconds)
+// Minimum sync interval for user-initiated refreshes (in milliseconds)
 const MIN_SYNC_INTERVAL = 10000;
+
+// Minimum sync interval for background cron refreshes (~13 minutes).
+// Repos synced within this window (manually or by previous cron tick) are skipped.
+const BACKGROUND_MIN_SYNC_INTERVAL = 780000;
 
 // Batch refresh all repositories for a user - much faster than individual calls
 // Does auth and rate limit check once, then processes all repos in parallel
@@ -2010,7 +1938,7 @@ export const refreshAllRepositories = action({
     }
 
     // Single rate limit check for the batch operation
-    const rateLimitResult = await ctx.runAction(internal.sync.checkAndRecordRateLimit, {
+    const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
       userId,
       action: "refresh_all_repositories",
     });
@@ -2155,7 +2083,7 @@ export const backgroundRefreshForUser = internalAction({
       };
     }
 
-    const rateLimitResult = await ctx.runAction(internal.sync.checkAndRecordRateLimit, {
+    const rateLimitResult = await ctx.runMutation(internal.sync.checkAndRecordRateLimit, {
       userId: args.userId,
       action: "background_refresh",
     });
@@ -2200,7 +2128,9 @@ export const backgroundRefreshForUser = internalAction({
 
     const reposToCheck = enabledRepos.filter((repo: Doc<"repositories">) => {
       if (repo.syncStatus === "syncing") return false;
-      if (repo.lastSyncedAt && Date.now() - repo.lastSyncedAt < MIN_SYNC_INTERVAL) {
+      // Use longer interval for background refresh to skip repos synced recently
+      // (e.g. by manual refresh or a previous cron tick)
+      if (repo.lastSyncedAt && Date.now() - repo.lastSyncedAt < BACKGROUND_MIN_SYNC_INTERVAL) {
         return false;
       }
       return true;

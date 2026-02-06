@@ -46,7 +46,7 @@ function ConfigureRepositoryModalWrapper({
 }
 
 function RepositoriesPage() {
-  const { user, isLoading: isUserLoading, isAuthenticated, linkWithGitLab, signOut } = useUser();
+  const { user, isLoading: isUserLoading, isAuthenticated, linkWithGitLab, signOut, selfHostedGitLabInstances } = useUser();
   const navigate = useNavigate();
   const repositories = useQuery(
     api.repositories.list,
@@ -69,10 +69,7 @@ function RepositoriesPage() {
   const saveOverleafCredentials = useMutation(api.users.saveOverleafCredentials);
   const clearOverleafCredentials = useMutation(api.users.clearOverleafCredentials);
 
-  // Self-hosted GitLab instance management
-  const selfHostedGitLabInstances = useQuery(api.users.getSelfHostedGitLabInstances) as
-    | Array<{ _id: Id<"selfHostedGitLabInstances">; name: string; url: string }>
-    | undefined;
+  // Self-hosted GitLab instance management (selfHostedGitLabInstances from useUser() above)
   const addSelfHostedGitLabInstance = useAction(api.git.addSelfHostedGitLabInstanceWithTest);
   const deleteSelfHostedGitLabInstance = useMutation(api.users.deleteSelfHostedGitLabInstance);
 
@@ -151,25 +148,18 @@ function RepositoriesPage() {
     return true;
   }, [navigate, linkWithGitLab, signOut, setConfirmDialog]);
 
-  // Quick check all repositories on page load
+  // Quick check all repositories on page load (single batch call)
   useEffect(() => {
     let isMounted = true;
 
     if (repositories && repositories.length > 0 && !hasQuickSyncedRef.current) {
       hasQuickSyncedRef.current = true;
-      let hasErrors = false;
-      const checkPromises = repositories
-        .filter((repo: Repository) => repo.syncStatus !== "syncing")
-        .map((repo: Repository) =>
-          refreshRepository({ repositoryId: repo._id }).catch((err) => {
-            console.error(`Quick check failed for ${repo.name}:`, err);
-            hasErrors = true;
-          })
-        );
-      Promise.all(checkPromises).then(() => {
-        if (isMounted && hasErrors) {
+      refreshAllRepositories({}).then((result) => {
+        if (isMounted && result.failed > 0) {
           showToast("Some repositories failed to check", "info");
         }
+      }).catch((err) => {
+        console.error("Quick check failed:", err);
       });
     }
 

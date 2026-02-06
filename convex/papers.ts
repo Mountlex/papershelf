@@ -92,8 +92,19 @@ export const listMine = query({
 });
 
 // List all papers for a user with pagination (gallery)
+// Supports optional server-side search and sort to avoid loading all pages client-side.
 export const listPaginated = query({
-  args: { userId: v.id("users"), paginationOpts: paginationOptsValidator },
+  args: {
+    userId: v.id("users"),
+    paginationOpts: paginationOptsValidator,
+    search: v.optional(v.string()),
+    sortBy: v.optional(v.union(
+      v.literal("recent"),
+      v.literal("least-recent"),
+      v.literal("a-z"),
+      v.literal("repository"),
+    )),
+  },
   handler: async (ctx, args) => {
     const authenticatedUserId = await auth.getUserId(ctx);
     if (!authenticatedUserId || authenticatedUserId !== args.userId) {
@@ -101,7 +112,53 @@ export const listPaginated = query({
     }
 
     const base = await fetchUserPapersBase(ctx, args.userId);
-    const sortedPapers = sortPapersByTime(base.papers);
+    let filteredPapers = base.papers;
+
+    // Server-side search filter
+    if (args.search && args.search.trim()) {
+      const query = args.search.toLowerCase();
+      filteredPapers = filteredPapers.filter((paper) => {
+        const titleMatch = paper.title.toLowerCase().includes(query);
+        const authorsMatch = paper.authors?.some((author: string) =>
+          author.toLowerCase().includes(query)
+        );
+        return titleMatch || authorsMatch;
+      });
+    }
+
+    // Server-side sort
+    const sortBy = args.sortBy ?? "recent";
+    const getSortTime = (paper: typeof filteredPapers[0]) => {
+      if (paper.repositoryId) {
+        return paper.lastAffectedCommitTime ?? paper.updatedAt ?? 0;
+      }
+      return paper._creationTime;
+    };
+
+    filteredPapers.sort((a, b) => {
+      switch (sortBy) {
+        case "recent":
+          return getSortTime(b) - getSortTime(a);
+        case "least-recent":
+          return getSortTime(a) - getSortTime(b);
+        case "a-z":
+          return a.title.localeCompare(b.title);
+        case "repository": {
+          const repoA = a.repositoryId ? base.repositoryMap.get(a.repositoryId)?.name ?? "" : "";
+          const repoB = b.repositoryId ? base.repositoryMap.get(b.repositoryId)?.name ?? "" : "";
+          if (repoA !== repoB) {
+            if (!repoA) return 1;
+            if (!repoB) return -1;
+            return repoA.localeCompare(repoB);
+          }
+          return getSortTime(b) - getSortTime(a);
+        }
+        default:
+          return 0;
+      }
+    });
+
+    const sortedPapers = filteredPapers;
 
     const parsedCursor = args.paginationOpts.cursor
       ? Number.parseInt(args.paginationOpts.cursor, 10)

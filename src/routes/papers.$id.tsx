@@ -38,7 +38,7 @@ export const Route = createFileRoute("/papers/$id")({
 function PaperDetailPage() {
   const { id } = Route.useParams();
   const navigate = useNavigate();
-  const { linkWithGitLab, signOut } = useUser();
+  const { linkWithGitLab, signOut, selfHostedGitLabInstances } = useUser();
   const [isLocallyBuilding, setIsLocallyBuilding] = useState(false);
   const [buildError, setBuildError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -54,7 +54,7 @@ function PaperDetailPage() {
   }>({ isOpen: false, title: "", message: "", onConfirm: () => {} });
 
   const paper = useQuery(api.papers.get, { id: id as Id<"papers"> });
-  const selfHostedInstances = useQuery(api.users.getSelfHostedGitLabInstances, {}) as SelfHostedGitLabInstance[] | undefined;
+  const selfHostedInstances = selfHostedGitLabInstances as SelfHostedGitLabInstance[] | undefined;
   const versions = useQuery(
     api.papers.listVersions,
     showVersionHistory ? { paperId: id as Id<"papers"> } : "skip"

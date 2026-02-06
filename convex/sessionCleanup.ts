@@ -6,6 +6,9 @@ const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 // Rate limit window expiry: 24 hours
 const RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+// Maximum records to process per table per run (prevents bandwidth spikes)
+const CLEANUP_BATCH_SIZE = 500;
+
 /**
  * Internal mutation to clean up expired sessions and tokens.
  * Called daily by the cron job.
@@ -17,6 +20,9 @@ const RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000;
  * - Expired linkIntents (by expiresAt)
  * - Used or expired passwordChangeCodes
  * - Stale emailRateLimits (window > 24 hours old)
+ *
+ * Each table is limited to CLEANUP_BATCH_SIZE records per run.
+ * Remaining records will be cleaned up on the next daily run.
  */
 export const cleanupExpiredSessions = internalMutation({
   args: {},
@@ -40,7 +46,7 @@ export const cleanupExpiredSessions = internalMutation({
     const oldSessions = await ctx.db
       .query("authSessions")
       .filter((q) => q.lt(q.field("_creationTime"), sessionCutoff))
-      .collect();
+      .take(CLEANUP_BATCH_SIZE);
 
     for (const session of oldSessions) {
       await ctx.db.delete(session._id);
@@ -48,7 +54,7 @@ export const cleanupExpiredSessions = internalMutation({
     }
 
     // Clean up expired or revoked mobile tokens
-    const allMobileTokens = await ctx.db.query("mobileTokens").collect();
+    const allMobileTokens = await ctx.db.query("mobileTokens").take(CLEANUP_BATCH_SIZE);
     for (const token of allMobileTokens) {
       if (token.isRevoked || token.expiresAt < now) {
         await ctx.db.delete(token._id);
@@ -57,7 +63,7 @@ export const cleanupExpiredSessions = internalMutation({
     }
 
     // Clean up expired link intents
-    const allLinkIntents = await ctx.db.query("linkIntents").collect();
+    const allLinkIntents = await ctx.db.query("linkIntents").take(CLEANUP_BATCH_SIZE);
     for (const intent of allLinkIntents) {
       if (intent.expiresAt < now) {
         await ctx.db.delete(intent._id);
@@ -66,7 +72,7 @@ export const cleanupExpiredSessions = internalMutation({
     }
 
     // Clean up used or expired password change codes
-    const allPasswordCodes = await ctx.db.query("passwordChangeCodes").collect();
+    const allPasswordCodes = await ctx.db.query("passwordChangeCodes").take(CLEANUP_BATCH_SIZE);
     for (const code of allPasswordCodes) {
       if (code.used || code.expiresAt < now) {
         await ctx.db.delete(code._id);
@@ -75,7 +81,7 @@ export const cleanupExpiredSessions = internalMutation({
     }
 
     // Clean up stale email rate limits (window older than 24 hours)
-    const allRateLimits = await ctx.db.query("emailRateLimits").collect();
+    const allRateLimits = await ctx.db.query("emailRateLimits").take(CLEANUP_BATCH_SIZE);
     for (const limit of allRateLimits) {
       if (limit.windowStart < rateLimitCutoff) {
         await ctx.db.delete(limit._id);
@@ -83,7 +89,7 @@ export const cleanupExpiredSessions = internalMutation({
       }
     }
 
-    const allUserRateLimits = await ctx.db.query("userRateLimits").collect();
+    const allUserRateLimits = await ctx.db.query("userRateLimits").take(CLEANUP_BATCH_SIZE);
     for (const limit of allUserRateLimits) {
       if (limit.windowStart < rateLimitCutoff) {
         await ctx.db.delete(limit._id);
@@ -91,7 +97,7 @@ export const cleanupExpiredSessions = internalMutation({
       }
     }
 
-    const allUserRateLimitAttempts = await ctx.db.query("userRateLimitAttempts").collect();
+    const allUserRateLimitAttempts = await ctx.db.query("userRateLimitAttempts").take(CLEANUP_BATCH_SIZE);
     for (const attempt of allUserRateLimitAttempts) {
       if (attempt.attemptedAt < rateLimitCutoff) {
         await ctx.db.delete(attempt._id);
@@ -99,7 +105,7 @@ export const cleanupExpiredSessions = internalMutation({
       }
     }
 
-    const allUserRateLimitLocks = await ctx.db.query("userRateLimitLocks").collect();
+    const allUserRateLimitLocks = await ctx.db.query("userRateLimitLocks").take(CLEANUP_BATCH_SIZE);
     for (const lock of allUserRateLimitLocks) {
       if (lock.lockedUntil < now) {
         await ctx.db.delete(lock._id);

@@ -31,19 +31,35 @@ function GalleryPage() {
   const { user, isLoading: isUserLoading, isAuthenticated, linkWithGitLab, signOut } = useUser();
   const navigate = useNavigate();
   const pageSize = 24;
+
+  // Search, sort, and filter state (declared before paginated query so they can be passed as args)
+  const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
+  const [sortBy, setSortBy] = useState<"recent" | "least-recent" | "a-z" | "repository">("recent");
+  const [showMobileSearch, setShowMobileSearch] = useState(false);
+  const [showMobileActions, setShowMobileActions] = useState(false);
+
   const {
     results: paginatedPapers,
     status: papersStatus,
     loadMore,
   } = usePaginatedQuery(
     api.papers.listPaginated,
-    isAuthenticated && user ? { userId: user._id } : "skip",
+    isAuthenticated && user
+      ? {
+          userId: user._id,
+          search: debouncedSearchQuery.trim() || undefined,
+          sortBy: sortBy !== "recent" ? sortBy : undefined,
+        }
+      : "skip",
     { initialNumItems: pageSize }
   );
   const papers = useMemo(() => paginatedPapers ?? [], [paginatedPapers]);
+  // Only subscribe to metadata when user wants to refresh outdated papers
+  const [needsMetadata, setNeedsMetadata] = useState(false);
   const paperMetadata = useQuery(
     api.papers.listMetadata,
-    isAuthenticated && user ? { userId: user._id } : "skip"
+    needsMetadata && isAuthenticated && user ? { userId: user._id } : "skip"
   ) as PaperMetadata[] | undefined;
   const repositories = useQuery(api.repositories.list, isAuthenticated && user ? { userId: user._id } : "skip");
   const updatePaper = useMutation(api.papers.update);
@@ -61,13 +77,6 @@ function GalleryPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // Search, sort, and filter state
-  const [searchQuery, setSearchQuery] = useState("");
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
-  const [sortBy, setSortBy] = useState<"recent" | "least-recent" | "a-z" | "repository">("recent");
-  const [showMobileSearch, setShowMobileSearch] = useState(false);
-  const [showMobileActions, setShowMobileActions] = useState(false);
 
   // Toast state using hook
   const { toast, showError, showToast, clearToast } = useToast();
@@ -195,64 +204,8 @@ function GalleryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repositories]);
 
-  // Filter and sort papers
-  const filteredPapers = useMemo(() => {
-    if (!papers) return [];
-
-    let result = [...papers];
-
-    // Apply search filter with debounced query
-    if (debouncedSearchQuery.trim()) {
-      const query = debouncedSearchQuery.toLowerCase();
-      result = result.filter((paper) => {
-        const titleMatch = paper.title.toLowerCase().includes(query);
-        const authorsMatch = paper.authors?.some((author: string) =>
-          author.toLowerCase().includes(query)
-        );
-        return titleMatch || authorsMatch;
-      });
-    }
-
-    // Apply sorting
-    // For uploaded papers (no repository), use _creationTime (upload date)
-    // For repository papers, use lastAffectedCommitTime (when content changed)
-    const getSortTime = (paper: typeof result[0]) => {
-      if (paper.repository) {
-        return paper.lastAffectedCommitTime ?? paper.updatedAt ?? 0;
-      }
-      // Uploaded paper - use creation time (upload date)
-      return paper._creationTime;
-    };
-
-    result.sort((a, b) => {
-      switch (sortBy) {
-        case "recent": {
-          return getSortTime(b) - getSortTime(a);
-        }
-        case "least-recent": {
-          return getSortTime(a) - getSortTime(b);
-        }
-        case "a-z":
-          return a.title.localeCompare(b.title);
-        case "repository": {
-          // Group by repository, then by date within each group
-          const repoA = a.repository?.name ?? "";
-          const repoB = b.repository?.name ?? "";
-          if (repoA !== repoB) {
-            // Papers with repos first, then alphabetically by repo name
-            if (!repoA) return 1;
-            if (!repoB) return -1;
-            return repoA.localeCompare(repoB);
-          }
-          return getSortTime(b) - getSortTime(a);
-        }
-        default:
-          return 0;
-      }
-    });
-
-    return result;
-  }, [papers, debouncedSearchQuery, sortBy]);
+  // Papers are already filtered and sorted on the backend via listPaginated args
+  const filteredPapers = papers;
 
   // Screen reader announcement for search results
   const searchResultsMessage = useMemo(() => {
@@ -260,13 +213,6 @@ function GalleryPage() {
     return `${filteredPapers.length} paper${filteredPapers.length === 1 ? "" : "s"} found`;
   }, [debouncedSearchQuery, filteredPapers.length]);
 
-  const shouldLoadAll = debouncedSearchQuery.trim().length > 0 || sortBy !== "recent";
-
-  useEffect(() => {
-    if (shouldLoadAll && canLoadMorePapers) {
-      loadMore(pageSize);
-    }
-  }, [shouldLoadAll, canLoadMorePapers, loadMore, pageSize]);
 
   // Handle file drop
   const handleFileDrop = useCallback(
@@ -402,19 +348,22 @@ function GalleryPage() {
     setIsSyncing(false);
   };
 
-  // Refresh all papers that are not up to date
-  const handleRefreshAll = async () => {
-    if (!paperMetadata || isRefreshing) return;
+  // Refresh all papers that are not up to date.
+  // Metadata subscription is lazy - only activated when user clicks "Refresh All".
+  const [pendingRefresh, setPendingRefresh] = useState(false);
 
-    setShowMobileActions(false);
+  // When metadata arrives after being requested, run the refresh
+  useEffect(() => {
+    if (!pendingRefresh || !paperMetadata || isRefreshing) return;
+    setPendingRefresh(false);
 
-    // Filter papers that are not up to date and have a repository
     const papersToRefresh = paperMetadata.filter(
       (paper) => paper.repository && paper.isUpToDate === false && paper.buildStatus !== "building"
     );
 
     if (papersToRefresh.length === 0) {
       showToast("All papers are up to date", "info");
+      setNeedsMetadata(false);
       return;
     }
 
@@ -423,7 +372,6 @@ function GalleryPage() {
 
     let failedCount = 0;
 
-    // Refresh papers in parallel
     const refreshPromises = papersToRefresh.map(async (paper) => {
       try {
         await buildPaper({ paperId: paper._id });
@@ -432,20 +380,29 @@ function GalleryPage() {
         handleGitLabAuthError(err);
         failedCount++;
       }
-      // Use functional update to avoid race conditions
       setRefreshProgress((prev) => prev ? { ...prev, current: prev.current + 1 } : null);
     });
 
-    await Promise.all(refreshPromises);
+    Promise.all(refreshPromises).then(() => {
+      setIsRefreshing(false);
+      setRefreshProgress(null);
+      setNeedsMetadata(false);
 
-    setIsRefreshing(false);
-    setRefreshProgress(null);
+      if (failedCount > 0) {
+        showToast(`${failedCount} ${failedCount === 1 ? "paper" : "papers"} failed to refresh`, "error");
+      } else {
+        showToast(`Refreshed ${papersToRefresh.length} ${papersToRefresh.length === 1 ? "paper" : "papers"}`, "info");
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingRefresh, paperMetadata, isRefreshing]);
 
-    if (failedCount > 0) {
-      showToast(`${failedCount} ${failedCount === 1 ? "paper" : "papers"} failed to refresh`, "error");
-    } else {
-      showToast(`Refreshed ${papersToRefresh.length} ${papersToRefresh.length === 1 ? "paper" : "papers"}`, "info");
-    }
+  const handleRefreshAll = () => {
+    if (isRefreshing) return;
+    setShowMobileActions(false);
+    // Activate the metadata subscription and mark refresh as pending
+    setNeedsMetadata(true);
+    setPendingRefresh(true);
   };
 
   const handleUploadClick = () => {
@@ -817,14 +774,9 @@ function GalleryPage() {
         </div>
       )}
 
-      {shouldLoadAll && (isLoadingMorePapers || canLoadMorePapers) && (
-        <div className="mt-4 text-center text-xs text-gray-500 dark:text-gray-400">
-          {isLoadingMorePapers ? "Loading more results..." : "Fetching more results..."}
-        </div>
-      )}
       </DropZone>
 
-      {!shouldLoadAll && canLoadMorePapers && (
+      {canLoadMorePapers && (
         <div className="mt-8 flex justify-center">
           <button
             onClick={() => loadMore(pageSize)}

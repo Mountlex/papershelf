@@ -28,6 +28,7 @@ import type * as lib_providers_index from "../lib/providers/index.js";
 import type * as lib_providers_overleaf from "../lib/providers/overleaf.js";
 import type * as lib_providers_types from "../lib/providers/types.js";
 import type * as lib_rateLimit from "../lib/rateLimit.js";
+import type * as lib_settings from "../lib/settings.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as mobileAuth from "../mobileAuth.js";
 import type * as mobileEmailAuth from "../mobileEmailAuth.js";
@@ -67,6 +68,7 @@ declare const fullApi: ApiFromModules<{
   "lib/providers/overleaf": typeof lib_providers_overleaf;
   "lib/providers/types": typeof lib_providers_types;
   "lib/rateLimit": typeof lib_rateLimit;
+  "lib/settings": typeof lib_settings;
   "lib/validation": typeof lib_validation;
   mobileAuth: typeof mobileAuth;
   mobileEmailAuth: typeof mobileEmailAuth;

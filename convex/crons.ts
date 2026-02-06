@@ -10,10 +10,10 @@ crons.daily(
   internal.sessionCleanup.cleanupExpiredSessions
 );
 
-// Run background refresh every 5 minutes
+// Run background refresh every 15 minutes
 crons.interval(
   "background-repository-refresh",
-  { minutes: 5 },
+  { minutes: 15 },
   internal.sync.backgroundRefreshTick
 );
 
